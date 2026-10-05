@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    .box { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; background: var(--card); }
+    .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted-foreground); margin-bottom: 8px; }
+    .arrow { color: var(--muted-foreground); font-size: 16px; display: flex; align-items: center; justify-content: center; }
+    .service-tag { display: inline-block; font-family: monospace; font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+    .port-tag { font-size: 10px; font-family: monospace; padding: 1px 6px; border-radius: 4px; background: #1f2937; color: #9ca3af; }
+  </style>
+</head>
+<body class="bg-transparent text-[var(--foreground)] antialiased">
+<div class="p-4 space-y-5">
+
+  <div>
+    <h2 class="font-bold text-lg text-[var(--foreground)]">Deployment Architecture</h2>
+    <p class="text-[var(--muted-foreground)] text-sm">Single VPS · Docker Compose · GitHub Actions CI/CD</p>
+  </div>
+
+  <!-- Traffic Flow -->
+  <div class="box">
+    <div class="section-title">Traffic Flow</div>
+    <div class="flex items-center gap-2 flex-wrap text-sm">
+      <div class="box text-center" style="min-width:90px">
+        🌐<br><span class="font-semibold">Internet</span><br><span class="text-xs text-[var(--muted-foreground)]">User / Browser</span>
+      </div>
+      <div class="arrow">→</div>
+      <div class="box text-center" style="min-width:120px; border-color:#60a5fa55; background:#1e3a5f22;">
+        🔒<br><span class="font-semibold text-[#60a5fa]">Nginx</span><br><span class="text-xs text-[var(--muted-foreground)]">Port 80 / 443<br>SSL: Let's Encrypt</span>
+      </div>
+      <div class="flex flex-col gap-2 ml-2">
+        <div class="flex items-center gap-2">
+          <div class="arrow">→</div>
+          <div class="box" style="min-width:160px; border-color:#34d39955; background:#06503022;">
+            <span class="text-xs font-mono text-[var(--muted-foreground)]">/api/*</span><br>
+            <span class="font-semibold text-[#34d399]">Django (Gunicorn)</span><br>
+            <span class="port-tag">:8000 internal</span>
+          </div>
+          <div class="arrow">→</div>
+          <div class="box" style="min-width:110px; border-color:#a78bfa55; background:#7c3aed22;">
+            <span class="font-semibold text-[#a78bfa]">PostgreSQL</span><br>
+            <span class="port-tag">:5432 internal</span>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="arrow">→</div>
+          <div class="box" style="min-width:160px; border-color:#fbbf2455; background:#78350f22;">
+            <span class="text-xs font-mono text-[var(--muted-foreground)]">/*</span><br>
+            <span class="font-semibold text-[#fbbf24]">Next.js</span><br>
+            <span class="port-tag">:3000 internal</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="mt-3 text-xs text-[var(--muted-foreground)]">
+      📦 Images & assets → Served directly from <span class="font-mono">Cloudflare R2</span> CDN (bypasses VPS)
+    </div>
+  </div>
+
+  <!-- Docker Compose Services -->
+  <div class="box">
+    <div class="section-title">Docker Compose Services</div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs" style="border-collapse:collapse;">
+        <thead>
+          <tr style="background:var(--sidebar);">
+            <th class="p-2 text-left text-[var(--muted-foreground)]">Service</th>
+            <th class="p-2 text-left text-[var(--muted-foreground)]">Image</th>
+            <th class="p-2 text-left text-[var(--muted-foreground)]">Port</th>
+            <th class="p-2 text-left text-[var(--muted-foreground)]">Role</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-top:1px solid var(--border)">
+            <td class="p-2"><span class="service-tag" style="background:#1e3a5f;color:#60a5fa">nginx</span></td>
+            <td class="p-2 font-mono">nginx:alpine</td>
+            <td class="p-2 font-mono">80, 443</td>
+            <td class="p-2">Reverse proxy + SSL termination</td>
+          </tr>
+          <tr style="border-top:1px solid var(--border)">
+            <td class="p-2"><span class="service-tag" style="background:#065f46;color:#34d399">backend</span></td>
+            <td class="p-2 font-mono">custom Django</td>
+            <td class="p-2 font-mono">8000 (int.)</td>
+            <td class="p-2">Django + Gunicorn + DRF API</td>
+          </tr>
+          <tr style="border-top:1px solid var(--border)">
+            <td class="p-2"><span class="service-tag" style="background:#78350f;color:#fbbf24">frontend</span></td>
+            <td class="p-2 font-mono">custom Next.js</td>
+            <td class="p-2 font-mono">3000 (int.)</td>
+            <td class="p-2">Next.js App Router (PWA + Dashboard)</td>
+          </tr>
+          <tr style="border-top:1px solid var(--border)">
+            <td class="p-2"><span class="service-tag" style="background:#2d1b69;color:#a78bfa">db</span></td>
+            <td class="p-2 font-mono">postgres:16-alpine</td>
+            <td class="p-2 font-mono">5432 (int.)</td>
+            <td class="p-2">PostgreSQL database</td>
+          </tr>
+          <tr style="border-top:1px solid var(--border)">
+            <td class="p-2"><span class="service-tag" style="background:#1f2937;color:#9ca3af">backup</span></td>
+            <td class="p-2 font-mono">custom cron</td>
+            <td class="p-2 font-mono">—</td>
+            <td class="p-2">Daily pg_dump → upload to Cloudflare R2</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- CI/CD Pipeline -->
+  <div class="box">
+    <div class="section-title">CI/CD Pipeline — GitHub Actions</div>
+    <div class="flex flex-col gap-2 text-sm">
+      <div class="flex items-center gap-2">
+        <div class="box text-center px-3 py-2" style="min-width:130px; border-color:#34d39955;">
+          📝 <span class="font-semibold">git push → main</span>
+        </div>
+        <div class="arrow">→</div>
+        <div class="box px-3 py-2" style="border-color:#60a5fa55;">
+          <span class="font-semibold">GitHub Actions</span> triggers workflow
+        </div>
+      </div>
+      <div class="ml-8 border-l-2 pl-4 space-y-2" style="border-color:var(--border)">
+        <div class="flex items-center gap-2 text-xs">
+          <span class="w-5 h-5 rounded-full flex items-center justify-center font-bold text-white text-xs" style="background:#34d399;flex-shrink:0">1</span>
+          Run Django tests (<span class="font-mono">pytest</span>)
+        </div>
+        <div class="flex items-center gap-2 text-xs">
+          <span class="w-5 h-5 rounded-full flex items-center justify-center font-bold text-white text-xs" style="background:#60a5fa;flex-shrink:0">2</span>
+          Build Docker images (backend + frontend)
+        </div>
+        <div class="flex items-center gap-2 text-xs">
+          <span class="w-5 h-5 rounded-full flex items-center justify-center font-bold text-white text-xs" style="background:#fbbf24;flex-shrink:0">3</span>
+          SSH into VPS
+        </div>
+        <div class="flex items-center gap-2 text-xs">
+          <span class="w-5 h-5 rounded-full flex items-center justify-center font-bold text-white text-xs" style="background:#a78bfa;flex-shrink:0">4</span>
+          <span class="font-mono">docker-compose pull && docker-compose up -d</span>
+        </div>
+        <div class="flex items-center gap-2 text-xs">
+          <span class="w-5 h-5 rounded-full flex items-center justify-center font-bold text-white text-xs" style="background:#f87171;flex-shrink:0">5</span>
+          <span class="font-mono">python manage.py migrate</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Backup Strategy -->
+  <div class="box">
+    <div class="section-title">Backup Strategy</div>
+    <div class="flex items-center gap-3 flex-wrap text-sm">
+      <div class="box text-center px-3 py-2" style="border-color:#a78bfa55;">
+        🕛 <span class="font-semibold">Daily Cron</span><br>
+        <span class="text-xs text-[var(--muted-foreground)]">Runs at 02:00 UTC</span>
+      </div>
+      <div class="arrow">→</div>
+      <div class="box px-3 py-2" style="border-color:#34d39955;">
+        <span class="font-mono text-xs">pg_dump tartus_db</span><br>
+        <span class="text-xs text-[var(--muted-foreground)]">Compressed .gz dump</span>
+      </div>
+      <div class="arrow">→</div>
+      <div class="box px-3 py-2" style="border-color:#f59e0b55;">
+        ☁️ <span class="font-semibold">Cloudflare R2</span><br>
+        <span class="text-xs text-[var(--muted-foreground)]">backups/YYYY-MM-DD.sql.gz</span>
+      </div>
+    </div>
+    <div class="mt-3 text-xs text-[var(--muted-foreground)]">
+      ✅ Retention: Last 30 daily backups kept. Older files auto-deleted via R2 lifecycle rules.
+    </div>
+  </div>
+
+  <!-- Nginx Routing Rules -->
+  <div class="box">
+    <div class="section-title">Nginx Routing Rules</div>
+    <div class="text-xs font-mono space-y-1" style="color:var(--foreground)">
+      <div><span class="text-[#60a5fa]">location /api/</span>  <span class="text-[var(--muted-foreground)]">→</span>  <span class="text-[#34d399]">proxy_pass http://backend:8000</span></div>
+      <div><span class="text-[#60a5fa]">location /admin/ </span> <span class="text-[var(--muted-foreground)]">→</span>  <span class="text-[#34d399]">proxy_pass http://backend:8000</span>  <span class="text-[var(--muted-foreground)]"># Django Admin</span></div>
+      <div><span class="text-[#60a5fa]">location /        </span> <span class="text-[var(--muted-foreground)]">→</span>  <span class="text-[#fbbf24]">proxy_pass http://frontend:3000</span></div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
