@@ -14,7 +14,7 @@ All architectural decisions have been locked in. Below is a summary of every dec
 | Backend | Django + Django REST Framework |
 | Frontend | Next.js (single app — Route Groups for admin + customer) |
 | Database | PostgreSQL — shared schema, `cafe_id` isolation + RLS |
-| Auth | JWT via `djangorestframework-simplejwt` |
+| Auth | JWT via `djangorestframework-simplejwt` — access 15 min, refresh 1 day, rotation + blacklist after rotation |
 | Storage | Cloudflare R2 (10GB free, no egress fees, built-in CDN) |
 | Multi-tenancy | Shared tables + `cafe_id` FK on every tenant-owned table |
 | Localization | Arabic + English, stored as JSONB: `{"ar": "...", "en": "..."}` |
@@ -23,18 +23,20 @@ All architectural decisions have been locked in. Below is a summary of every dec
 | Item fields | name, description (both bilingual), price, image, is_available, is_featured, is_new |
 | Delete policy | Soft delete (categories, items) · Hard delete (cafes, billing_events) |
 | Reorder algorithm | Gapped Integer (100, 200, 300…) — minimizes DB writes |
-| QR Code URL | `/menu/[cafe-slug]?table=N` — table number is display-only, not a DB entity |
-| QR PDF | Generated on Django backend using `reportlab` |
+| QR Code URL | `/menu/[cafe-slug]?table=N` — the `table` parameter is display-only; tables themselves are persisted (see "Tables") |
+| QR PDF | Generated on Django backend using `reportlab` from the persisted active tables |
+| Tables | Persisted `CafeTable` (`cafe_id`, `table_number`, `qr_token`, `is_active`); UNIQUE (`cafe_id`, `table_number`); table count derived from active rows; no `table_count` column |
+| Slug changes | Super Admin only |
 | Billing model | Monthly subscription: Basic / Pro plans |
-| Plan enforcement | Enforced in Service Layer (`services.py`) — returns `403` on violation |
+| Plan enforcement | Enforced in Service Layer (`services.py`) — uses capability flags (`allows_images`, `allows_branding`), returns `403` on violation |
 | Billing activation | Manual by Super Admin via admin dashboard |
 | Inactive cafe behavior | Customer sees "Temporarily Unavailable" page |
 | Analytics | **Deferred — not in MVP** |
-| Routing | Path-based: `menu.domain.com/[cafe-slug]` |
+| Routing | Host `menu.domain.com`; customer page route `/menu/[cafe-slug]` |
 | Theming | Logo (Pro) + Primary Color (Pro) injected as CSS variable |
 | Caching | Next.js ISR (no Redis in MVP) |
 | SEO | `noindex, nofollow` on all customer pages |
-| Super Admin screens | Stats · Cafe list · Create cafe · Edit cafe · Billing history · Analytics per cafe |
+| Super Admin screens | Stats · Cafe list · Create cafe · Edit cafe/slug · Billing history |
 | Cafe Owner screens | Categories · Items · QR Codes · Settings |
 | API versioning | `/api/v1/` from day one |
 | API errors | Standard DRF format: `{"detail": "..."}` |
@@ -49,15 +51,15 @@ All architectural decisions have been locked in. Below is a summary of every dec
 
 ### 1. System Design Document
 Full database schema (ERD), API contract with request/response examples, user flows for all 3 actors, and security considerations.
-→ [system_design.md](file:///C:/Users/alisy/.gemini/antigravity/brain/db1a109d-fa2c-4ae0-823b-c86fd7876a33/system_design.md)
+→ [system_design.md](system_design.md)
 
 ### 2. ERD Diagram (Interactive)
-Visual entity-relationship diagram showing all 6 tables, their columns, data types, badges (PK/FK/U), relationships, and delete policies.
-→ [erd_diagram.html](file:///C:/Users/alisy/.gemini/antigravity/brain/db1a109d-fa2c-4ae0-823b-c86fd7876a33/erd_diagram.html)
+Visual entity-relationship diagram showing all 7 tables, their columns, data types, badges (PK/FK/U), relationships, and delete policies.
+→ [erd_diagram.html](erd_diagram.html)
 
 ### 3. Deployment Architecture (Interactive)
 Docker Compose service stack, Nginx routing rules, GitHub Actions CI/CD pipeline, and backup strategy diagram.
-→ [deployment_architecture.html](file:///C:/Users/alisy/.gemini/antigravity/brain/db1a109d-fa2c-4ae0-823b-c86fd7876a33/deployment_architecture.html)
+→ [deployment_architecture.html](deployment_architecture.html)
 
 ---
 

@@ -8,7 +8,7 @@
 | Backend | Django + DRF |
 | Frontend | Next.js (single app, Route Groups) |
 | Database | PostgreSQL (shared schema, `cafe_id` isolation) |
-| Auth | JWT via `simplejwt` |
+| Auth | JWT via `simplejwt` — access 15 min, refresh 1 day, rotation + blacklist after rotation |
 | Storage | Cloudflare R2 |
 | Multi-tenancy | Shared tables + RLS + `cafe_id` FK |
 | Languages | Arabic + English (JSONB fields) |
@@ -16,6 +16,8 @@
 | Menu levels | 2 levels: Category → Item |
 | QR URL | `/menu/[cafe-slug]?table=N` |
 | QR PDF | Django (`reportlab`) |
+| Tables | Persisted `CafeTable` per physical table (unique `table_number` per cafe + `qr_token`); table count is derived from active rows, no `table_count` column |
+| Slug changes | Super Admin only |
 | Billing | Manual activation by Super Admin |
 | Analytics | Deferred — not in MVP |
 | Reverse Proxy | Nginx + Let's Encrypt |
@@ -32,12 +34,14 @@
 ### 2.1 Users & Auth
 
 ```
-users (Django default auth_user)
+users (custom User model `users.User`; every FK to "auth_user.id" in this document refers to this model)
 ├── id (PK)
-├── email
-├── password (hashed)
-├── is_staff (True = Super Admin)
-└── is_active
+├── email          UNIQUE
+├── password       (hashed)
+├── role           VARCHAR(20)  -- 'SYSTEM_ADMIN' (Super Admin) | 'CAFE_OWNER' | 'CAFE_STAFF' (out of MVP scope)
+├── is_staff       BOOLEAN      -- True for SYSTEM_ADMIN only; Django admin site access
+├── is_active
+└── date_joined
 ```
 
 ### 2.2 Core Tables
@@ -45,9 +49,11 @@ users (Django default auth_user)
 ```
 subscription_plans
 ├── id (PK)
-├── name          VARCHAR(50)   -- 'basic' | 'pro'
-├── max_categories INT          -- NULL = unlimited
-└── max_items      INT          -- NULL = unlimited
+├── name             VARCHAR(50)   -- 'basic' | 'pro'
+├── max_categories   INT           -- NULL = unlimited
+├── max_items        INT           -- NULL = unlimited
+├── allows_images    BOOLEAN       -- item images
+└── allows_branding  BOOLEAN       -- logo + primary color
 ```
 
 ```
@@ -65,6 +71,20 @@ cafes
 ├── created_at      TIMESTAMPTZ  DEFAULT now()
 └── updated_at      TIMESTAMPTZ  DEFAULT now()
 ```
+
+```
+cafe_tables
+├── id            PK
+├── cafe_id       FK → cafes.id  (CASCADE DELETE)
+├── table_number  INT            -- 1..200
+├── qr_token      UUID           -- UNIQUE, uuid4, generated once, never regenerated
+├── is_active     BOOLEAN        DEFAULT true
+├── created_at    TIMESTAMPTZ    DEFAULT now()
+├── updated_at    TIMESTAMPTZ    DEFAULT now()
+└── UNIQUE (cafe_id, table_number)
+```
+
+> `cafes` has NO `table_count` column. The table count is always `COUNT(*)` of `cafe_tables` rows with `is_active = true` for the cafe.
 
 ```
 categories
@@ -111,6 +131,7 @@ billing_events
 | Table | Delete Policy | Isolation |
 |---|---|---|
 | `cafes` | Hard delete (cascades) | `owner_id` |
+| `cafe_tables` | Deactivate (`is_active = false`); rows are removed only by the cafe CASCADE | `cafe_id` |
 | `categories` | **Soft delete** (`deleted_at`) | `cafe_id` |
 | `menu_items` | **Soft delete** (`deleted_at`) | `cafe_id` |
 | `billing_events` | Hard delete (audit log, not user-facing) | `cafe_id` |
@@ -124,8 +145,9 @@ billing_events
 | Method | Endpoint | Actor | Description |
 |---|---|---|---|
 | POST | `/api/v1/auth/login/` | Any | Obtain JWT access + refresh tokens |
-| POST | `/api/v1/auth/refresh/` | Any | Refresh access token |
+| POST | `/api/v1/auth/refresh/` | Any | Exchange refresh token for a new access + refresh pair (old refresh is blacklisted) |
 | POST | `/api/v1/auth/logout/` | Any | Blacklist refresh token |
+| POST | `/api/v1/auth/change-password/` | Any | Change own password; blacklists all outstanding refresh tokens |
 
 **Login Request:**
 ```json
@@ -136,7 +158,7 @@ billing_events
 {
   "access": "<jwt_access_token>",
   "refresh": "<jwt_refresh_token>",
-  "role": "cafe_owner"
+  "role": "CAFE_OWNER"
 }
 ```
 
@@ -149,8 +171,8 @@ billing_events
 | GET | `/api/v1/admin/cafes/` | List all cafes (paginated) |
 | POST | `/api/v1/admin/cafes/` | Create a new cafe + owner account |
 | GET | `/api/v1/admin/cafes/{id}/` | Get cafe details |
-| PATCH | `/api/v1/admin/cafes/{id}/` | Update cafe details / plan |
-| DELETE | `/api/v1/admin/cafes/{id}/` | Hard delete a cafe |
+| PATCH | `/api/v1/admin/cafes/{id}/` | Update cafe details / plan / slug (not is_active) |
+| DELETE | `/api/v1/admin/cafes/{id}/` | Hard delete a cafe and its owner user |
 | POST | `/api/v1/admin/cafes/{id}/activate/` | Activate subscription |
 | POST | `/api/v1/admin/cafes/{id}/deactivate/` | Deactivate subscription |
 | GET | `/api/v1/admin/cafes/{id}/billing/` | Get billing history |
@@ -204,31 +226,34 @@ billing_events
 
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/v1/dashboard/qr/generate/` | Set table count, generate QR URLs |
-| GET | `/api/v1/dashboard/qr/preview/` | List all QR codes for the cafe |
-| GET | `/api/v1/dashboard/qr/download-pdf/` | Download print-ready PDF (reportlab) |
+| POST | `/api/v1/dashboard/qr/generate/` | Sync tables to `table_count` (create/reactivate 1..N, deactivate > N); returns active tables |
+| GET | `/api/v1/dashboard/qr/preview/` | List active tables with QR codes (read-only) |
+| GET | `/api/v1/dashboard/qr/download-pdf/` | Download print-ready PDF of active tables (`reportlab`) |
 
-**Generate QR Request:**
+**Generate QR Request** (integer, 1–200):
 ```json
 { "table_count": 12 }
 ```
 
-**Generate QR Response:**
+**Generate / Preview Response (200):**
 ```json
 {
+  "table_count": 12,
   "tables": [
-    { "table_number": 1, "url": "https://menu.domain.com/tartus-coffee?table=1", "qr_image_url": "..." },
-    { "table_number": 2, "url": "https://menu.domain.com/tartus-coffee?table=2", "qr_image_url": "..." }
+    { "id": 1, "table_number": 1, "url": "https://menu.domain.com/menu/tartus-coffee?table=1", "qr_token": "<uuid4>", "qr_image_url": "data:image/png;base64,..." },
+    { "id": 2, "table_number": 2, "url": "https://menu.domain.com/menu/tartus-coffee?table=2", "qr_token": "<uuid4>", "qr_image_url": "data:image/png;base64,..." }
   ]
 }
 ```
+
+`qr_token` is stored and returned but is not part of the URL in the MVP.
 
 #### Cafe Settings
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/v1/dashboard/settings/` | Get cafe profile |
-| PATCH | `/api/v1/dashboard/settings/` | Update name, slug, primary_color |
+| GET | `/api/v1/dashboard/settings/` | Get cafe profile + plan flags + is_active (answers 200 even when inactive) |
+| PATCH | `/api/v1/dashboard/settings/` | Update name, primary_color (slug is Super Admin only) |
 | POST | `/api/v1/dashboard/settings/logo/` | Upload logo → R2 |
 
 ---
@@ -307,7 +332,6 @@ Login
         │     └── Download Print-Ready PDF
         └── Settings
               ├── Update Cafe Name (ar/en)
-              ├── Update Slug
               ├── Change Primary Color
               └── Upload Logo
 ```
@@ -373,12 +397,14 @@ git push → main branch
 |---|---|---|
 | Max categories | Limited (e.g., 5) | Unlimited |
 | Max items | Limited (e.g., 20) | Unlimited |
-| Item images | ❌ | ✅ |
-| Custom logo | ❌ | ✅ |
-| Custom primary color | ❌ | ✅ |
+| Item images | ❌ | ✅ requires allows_images |
+| Custom logo | ❌ | governed by allows_branding |
+| Custom primary color | ❌ | governed by allows_branding |
 | QR Code PDF export | ✅ | ✅ |
+| Change cafe slug | Super Admin only | Super Admin only |
 
 Enforcement is done in the **Service Layer** (`services.py`) before any create/update operation. The API returns `403 Forbidden` with a message like `{"detail": "Your plan does not support item images. Upgrade to Pro."}` when a limit is exceeded.
+Enforcement uses the plan flags (`allows_images`, `allows_branding`, `max_categories`, `max_items`), never the plan name. Limits count only rows with `deleted_at IS NULL`.
 
 ---
 
@@ -387,8 +413,9 @@ Enforcement is done in the **Service Layer** (`services.py`) before any create/u
 | Concern | Mitigation |
 |---|---|
 | Tenant data leakage | `cafe_id` filter on every queryset + PostgreSQL RLS |
-| JWT token theft | Short-lived access tokens (15 min) + refresh token rotation |
+| Cross-tenant access | Resources of another cafe answer 404 (never 403) |
+| JWT token theft | Short-lived access tokens (15 min) + refresh token rotation with blacklist after rotation |
 | Image upload abuse | File type validation (MIME), max size limit (2MB), store on R2 (not server disk) |
-| Admin impersonation | `is_staff` flag on `auth_user` required for all `/admin/` endpoints |
+| Admin impersonation | `role = SYSTEM_ADMIN` required for all `/api/v1/admin/` endpoints |
 | Price scraping | `noindex, nofollow` meta tag on all customer pages |
 | SQL injection | Django ORM parameterized queries |

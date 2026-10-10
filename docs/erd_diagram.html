@@ -36,10 +36,11 @@
 
     <!-- auth_user -->
     <div class="table-card">
-      <div class="table-header" style="background: #7c3aed22; color: #a78bfa;">auth_user <span style="font-weight:400;font-size:11px;opacity:0.7">(Django built-in)</span></div>
+      <div class="table-header" style="background: #7c3aed22; color: #a78bfa;">auth_user <span style="font-weight:400;font-size:11px;opacity:0.7">(custom User model)</span></div>
       <div class="table-row"><span class="col-name">id</span><span class="col-type">BIGINT</span><span class="badge badge-pk">PK</span></div>
       <div class="table-row"><span class="col-name">email</span><span class="col-type">VARCHAR</span><span class="badge badge-u">U</span></div>
       <div class="table-row"><span class="col-name">password</span><span class="col-type">VARCHAR (hashed)</span></div>
+      <div class="table-row"><span class="col-name">role</span><span class="col-type">VARCHAR(20)</span></div>
       <div class="table-row"><span class="col-name">is_staff</span><span class="col-type">BOOLEAN</span></div>
       <div class="table-row"><span class="col-name">is_active</span><span class="col-type">BOOLEAN</span></div>
       <div class="table-row"><span class="col-name">date_joined</span><span class="col-type">TIMESTAMPTZ</span></div>
@@ -71,6 +72,19 @@
       <div class="table-row"><span class="col-name">subscription_end_at</span><span class="col-type">TIMESTAMPTZ</span></div>
       <div class="table-row"><span class="col-name">created_at</span><span class="col-type">TIMESTAMPTZ</span></div>
       <div class="table-row"><span class="col-name">updated_at</span><span class="col-type">TIMESTAMPTZ</span></div>
+    </div>
+
+    <!-- cafe_tables -->
+    <div class="table-card">
+      <div class="table-header" style="background: #0e749022; color: #22d3ee;">cafe_tables</div>
+      <div class="table-row"><span class="col-name">id</span><span class="col-type">BIGINT</span><span class="badge badge-pk">PK</span></div>
+      <div class="table-row"><span class="col-name">cafe_id</span><span class="col-type">BIGINT</span><span class="badge badge-fk">FK</span></div>
+      <div class="table-row"><span class="col-name">table_number</span><span class="col-type">INT (1–200)</span></div>
+      <div class="table-row"><span class="col-name">qr_token</span><span class="col-type">UUID</span><span class="badge badge-u">U</span></div>
+      <div class="table-row"><span class="col-name">is_active</span><span class="col-type">BOOLEAN</span></div>
+      <div class="table-row"><span class="col-name">created_at</span><span class="col-type">TIMESTAMPTZ</span></div>
+      <div class="table-row"><span class="col-name">updated_at</span><span class="col-type">TIMESTAMPTZ</span></div>
+      <div class="table-row"><span class="col-name">UNIQUE (cafe_id, table_number)</span><span class="col-type">constraint</span><span class="badge badge-u">U</span></div>
     </div>
 
     <!-- categories -->
@@ -169,6 +183,13 @@
             <td class="p-2">CASCADE</td>
           </tr>
           <tr style="border-top:1px solid var(--border)">
+            <td class="p-2 font-mono">cafe_tables</td>
+            <td class="p-2 font-mono text-[#60a5fa]">cafe_id</td>
+            <td class="p-2 font-mono">cafes</td>
+            <td class="p-2">Many-to-One</td>
+            <td class="p-2">CASCADE</td>
+          </tr>
+          <tr style="border-top:1px solid var(--border)">
             <td class="p-2 font-mono">billing_events</td>
             <td class="p-2 font-mono text-[#60a5fa]">cafe_id</td>
             <td class="p-2 font-mono">cafes</td>
@@ -202,6 +223,10 @@
       <div class="flex items-center gap-2 text-xs">
         <span class="w-3 h-3 rounded-full inline-block" style="background:#60a5fa"></span>
         <span class="font-mono">cafes</span> — Hard delete (cascades to children)
+      </div>
+      <div class="flex items-center gap-2 text-xs">
+        <span class="w-3 h-3 rounded-full inline-block" style="background:#22d3ee"></span>
+        <span class="font-mono">cafe_tables</span> — Deactivate (<span class="font-mono">is_active</span>); removed only by cafe cascade
       </div>
       <div class="flex items-center gap-2 text-xs">
         <span class="w-3 h-3 rounded-full inline-block" style="background:#9ca3af"></span>
