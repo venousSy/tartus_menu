@@ -120,4 +120,5 @@ class BillingEvent(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"{self.cafe.slug} - {self.get_action_display()} at {self.created_at.date()}"
+        # Using self.cafe_id instead of self.cafe.slug prevents an implicit DB query for the related object
+        return f"Cafe {self.cafe_id} - {self.get_action_display()} at {self.created_at.date()}"

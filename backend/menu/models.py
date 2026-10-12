@@ -10,7 +10,7 @@ class ActiveManager(models.Manager):
 class Category(models.Model):
     """
     Groups menu items together.
-    Uses soft deletion to preserve order history and analytics.
+    Uses soft deletion (deleted_at): deleted rows are hidden from normal queries, not removed.
     """
     cafe = models.ForeignKey(
         'cafes.Cafe',
@@ -72,6 +72,14 @@ class MenuItem(models.Model):
     class Meta:
         db_table = 'menu_items'
         ordering = ['sort_order', 'id']
+
+    def save(self, *args, **kwargs):
+        # Tenant-isolation invariant: the denormalized cafe must equal the category's cafe.
+        # Fail loudly instead of saving an item that would leak into another cafe's menu.
+        # Note: QuerySet.update() and bulk_update() bypass save(); never change cafe/category with them.
+        if self.cafe_id != self.category.cafe_id:
+            raise ValueError("MenuItem.cafe must match MenuItem.category.cafe.")
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.name.get('en', self.name.get('ar', f'MenuItem {self.id}'))
