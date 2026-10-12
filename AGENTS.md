@@ -29,9 +29,10 @@ Rules:
 - Create, edit, rename or delete at most ONE file per turn. Generated files (migrations, lock files) count as files.
 - Reading files and running read-only or verification commands does not count as editing (see Section 7).
 - If a feature needs several files, do ONLY the next file in the build order (Section 4), explain it, and STOP. List the queued files in the status block.
-- A migration is its own turn: generate it with `makemigrations`, never hand-write it, and show its content for review.
+- A migration is its own turn: generate it with `makemigrations`, never hand-write it, and show its content for review. If the generated file touches models from a previous turn (broader scope than expected), show the diff and ask before proceeding.
 - A test file is its own turn.
 - `requirements.txt` is a file: adding a dependency needs its own turn, and you must ask before adding any dependency.
+- URL step = the app-level `urls.py` only. Including it in the root `urls.py` is a separate turn if that file needs to change.
 
 ## 4. Architecture Rules (Modular Monolith + Service Layer)
 
@@ -67,7 +68,7 @@ Details live in the docs; these are the rules agents most often break.
 - Plan rules are enforced in `services.py` using plan flags and limits (`allows_images`, `allows_branding`, `max_categories`, `max_items`) — never by comparing the plan name.
 - Authorization for admin endpoints uses `role == SYSTEM_ADMIN`, not `is_staff`.
 - API prefix is `/api/v1/`. Errors use DRF format `{"detail": "..."}`. Currency is SYP, hardcoded; there is no currency field.
-- No secrets in code. Read configuration from environment variables.
+- No secrets in code. Read configuration from environment variables. When a new environment variable is introduced, update `.env.example` in the same turn — this does not count toward the one-file limit because it is documentation, not logic.
 - Out of MVP scope — do not build or hint at: `CAFE_STAFF` features, analytics, Redis, table sessions or ordering.
 
 ## 6. Response Format
@@ -82,7 +83,7 @@ Use these five sections, in this order:
 4. **Connections** — what data comes in, what calls this file, what it calls.
 5. **Code Implementation** — clean, commented code for this one file.
 
-### Tier B — config, docs, migrations, small edits (about 20 lines or fewer)
+### Tier B — config, docs, migrations, URL files, small edits (about 20 lines or fewer)
 Use three short sections:
 1. **What changed and why**
 2. **Impact on other files**
@@ -110,7 +111,8 @@ File writing:
 Commands:
 - Allowed inside a turn: read-only inspection, `python manage.py check`, `python manage.py makemigrations --check --dry-run`, and running the tests relevant to the current file.
 - Run Django commands from the backend folder with the virtual environment active.
-- Never run `git commit`, `git push` or any destructive command. At the end of an approved turn, you may suggest a one-line commit message.
+- You may run `git add`, `git commit` and `git push` when the user asks. Stage files by name, never `__pycache__/`, `.env` or other generated or secret files. Use a one-line Conventional Commit message (for example `fix(users): ...`). Never commit or push directly to `main`; use a branch.
+- Never run a destructive git command: no `push --force`, `reset --hard`, `clean -f`, `branch -D`, and no rewriting of pushed history.
 
 ## 8. Stop and Wait for Approval
 
@@ -121,7 +123,7 @@ Commands:
 ## 9. Scope Control
 
 - Do only what the turn asks. No drive-by fixes, renames, formatting changes or refactors.
-- If you notice another problem, do not fix it. Add it under `Observations (not changed)` before the status block (maximum 5 lines).
+- If you notice another problem, do not fix it. Add it under `Observations (not changed)` before the status block (maximum 5 lines). Observations form a lightweight backlog — the user may address any of them by saying "fix observation N".
 - Never edit `AGENTS.md` or `GEMINI.md` unless the user explicitly asks.
 
 ## 10. Language Standard
