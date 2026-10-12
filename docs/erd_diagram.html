@@ -66,12 +66,13 @@
       <div class="table-row"><span class="col-name">slug</span><span class="col-type">VARCHAR(100)</span><span class="badge badge-u">U</span></div>
       <div class="table-row"><span class="col-name">name</span><span class="col-type">JSONB {ar, en}</span></div>
       <div class="table-row"><span class="col-name">primary_color</span><span class="col-type">VARCHAR(7)</span></div>
-      <div class="table-row"><span class="col-name">logo_url</span><span class="col-type">TEXT (R2)</span></div>
+      <div class="table-row"><span class="col-name">logo_url</span><span class="col-type">TEXT (R2, '' = none)</span></div>
       <div class="table-row"><span class="col-name">is_active</span><span class="col-type">BOOLEAN</span></div>
       <div class="table-row"><span class="col-name">subscription_start_at</span><span class="col-type">TIMESTAMPTZ</span></div>
       <div class="table-row"><span class="col-name">subscription_end_at</span><span class="col-type">TIMESTAMPTZ</span></div>
       <div class="table-row"><span class="col-name">created_at</span><span class="col-type">TIMESTAMPTZ</span></div>
       <div class="table-row"><span class="col-name">updated_at</span><span class="col-type">TIMESTAMPTZ</span></div>
+      <div class="table-row"><span class="col-name">CHECK (primary_color = '' OR #RRGGBB)</span><span class="col-type">constraint</span></div>
     </div>
 
     <!-- cafe_tables -->
@@ -85,6 +86,7 @@
       <div class="table-row"><span class="col-name">created_at</span><span class="col-type">TIMESTAMPTZ</span></div>
       <div class="table-row"><span class="col-name">updated_at</span><span class="col-type">TIMESTAMPTZ</span></div>
       <div class="table-row"><span class="col-name">UNIQUE (cafe_id, table_number)</span><span class="col-type">constraint</span><span class="badge badge-u">U</span></div>
+      <div class="table-row"><span class="col-name">CHECK (table_number BETWEEN 1 AND 200)</span><span class="col-type">constraint</span></div>
     </div>
 
     <!-- categories -->
@@ -109,7 +111,7 @@
       <div class="table-row"><span class="col-name">name</span><span class="col-type">JSONB {ar, en}</span></div>
       <div class="table-row"><span class="col-name">description</span><span class="col-type">JSONB {ar, en}</span></div>
       <div class="table-row"><span class="col-name">price</span><span class="col-type">NUMERIC(10,2)</span></div>
-      <div class="table-row"><span class="col-name">image_url</span><span class="col-type">TEXT (R2, nullable)</span></div>
+      <div class="table-row"><span class="col-name">image_url</span><span class="col-type">TEXT (R2, '' = none)</span></div>
       <div class="table-row"><span class="col-name">is_available</span><span class="col-type">BOOLEAN</span></div>
       <div class="table-row"><span class="col-name">is_featured</span><span class="col-type">BOOLEAN</span></div>
       <div class="table-row"><span class="col-name">is_new</span><span class="col-type">BOOLEAN</span></div>
@@ -117,6 +119,7 @@
       <div class="table-row"><span class="col-name">deleted_at</span><span class="col-type">TIMESTAMPTZ (soft)</span></div>
       <div class="table-row"><span class="col-name">created_at</span><span class="col-type">TIMESTAMPTZ</span></div>
       <div class="table-row"><span class="col-name">updated_at</span><span class="col-type">TIMESTAMPTZ</span></div>
+      <div class="table-row"><span class="col-name">CHECK (price &gt;= 0)</span><span class="col-type">constraint</span></div>
     </div>
 
     <!-- billing_events -->

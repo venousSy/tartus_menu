@@ -33,7 +33,7 @@
         <div class="flex items-center gap-2">
           <div class="arrow">→</div>
           <div class="box" style="min-width:160px; border-color:#34d39955; background:#06503022;">
-            <span class="text-xs font-mono text-[var(--muted-foreground)]">/api/*</span><br>
+            <span class="text-xs font-mono text-[var(--muted-foreground)]">/api/* + admin path</span><br>
             <span class="font-semibold text-[#34d399]">Django (Gunicorn)</span><br>
             <span class="port-tag">:8000 internal</span>
           </div>
@@ -123,7 +123,7 @@
       <div class="ml-8 border-l-2 pl-4 space-y-2" style="border-color:var(--border)">
         <div class="flex items-center gap-2 text-xs">
           <span class="w-5 h-5 rounded-full flex items-center justify-center font-bold text-white text-xs" style="background:#34d399;flex-shrink:0">1</span>
-          Run Django tests (<span class="font-mono">pytest</span>)
+          Run Django tests (<span class="font-mono">pytest</span>, on PostgreSQL) + <span class="font-mono">check --deploy</span> + <span class="font-mono">makemigrations --check --dry-run</span>
         </div>
         <div class="flex items-center gap-2 text-xs">
           <span class="w-5 h-5 rounded-full flex items-center justify-center font-bold text-white text-xs" style="background:#60a5fa;flex-shrink:0">2</span>
@@ -139,7 +139,7 @@
         </div>
         <div class="flex items-center gap-2 text-xs">
           <span class="w-5 h-5 rounded-full flex items-center justify-center font-bold text-white text-xs" style="background:#f87171;flex-shrink:0">5</span>
-          <span class="font-mono">python manage.py migrate</span>
+          <span class="font-mono">python manage.py migrate && python manage.py createcachetable</span>
         </div>
       </div>
     </div>
@@ -167,6 +167,9 @@
     <div class="mt-3 text-xs text-[var(--muted-foreground)]">
       ✅ Retention: Last 30 daily backups kept. Older files auto-deleted via R2 lifecycle rules.
     </div>
+    <div class="mt-1 text-xs text-[var(--muted-foreground)]">
+      Also daily: <span class="font-mono">python manage.py flushexpiredtokens</span> (removes expired JWT rows from the blacklist tables).
+    </div>
   </div>
 
   <!-- Nginx Routing Rules -->
@@ -174,8 +177,13 @@
     <div class="section-title">Nginx Routing Rules</div>
     <div class="text-xs font-mono space-y-1" style="color:var(--foreground)">
       <div><span class="text-[#60a5fa]">location /api/</span>  <span class="text-[var(--muted-foreground)]">→</span>  <span class="text-[#34d399]">proxy_pass http://backend:8000</span></div>
-      <div><span class="text-[#60a5fa]">location /admin/ </span> <span class="text-[var(--muted-foreground)]">→</span>  <span class="text-[#34d399]">proxy_pass http://backend:8000</span>  <span class="text-[var(--muted-foreground)]"># Django Admin</span></div>
+      <div><span class="text-[#60a5fa]">location /$DJANGO_ADMIN_PATH </span> <span class="text-[var(--muted-foreground)]">→</span>  <span class="text-[#34d399]">proxy_pass http://backend:8000</span>  <span class="text-[var(--muted-foreground)]"># Django Admin (non-obvious path from env)</span></div>
+      <div><span class="text-[#60a5fa]">location /static/ </span> <span class="text-[var(--muted-foreground)]">→</span>  <span class="text-[#34d399]">collected static files</span>  <span class="text-[var(--muted-foreground)]"># Django admin assets</span></div>
+      <div><span class="text-[#60a5fa]">location /internal/ </span> <span class="text-[var(--muted-foreground)]">→</span>  <span class="text-[#f87171]">return 404</span>  <span class="text-[var(--muted-foreground)]"># Next.js revalidation, Docker network only</span></div>
       <div><span class="text-[#60a5fa]">location /        </span> <span class="text-[var(--muted-foreground)]">→</span>  <span class="text-[#fbbf24]">proxy_pass http://frontend:3000</span></div>
+    </div>
+    <div class="mt-3 text-xs text-[var(--muted-foreground)]">
+      limit_req on login paths · client_max_body_size 3m · X-Robots-Tag "noindex, nofollow" on /menu/ · X-Forwarded-For via $proxy_add_x_forwarded_for
     </div>
   </div>
 
