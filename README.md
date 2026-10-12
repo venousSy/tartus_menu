@@ -11,7 +11,7 @@ tartus_menu/
 │   ├── implementation_plan.md        # Technical decisions roadmap and verification plan
 │   ├── erd_diagram.html              # Interactive ERD diagram
 │   └── deployment_architecture.html  # Visual Docker Compose & CI/CD deployment architecture
-├── backend/                          # Django + Django REST Framework (Upcoming)
+├── backend/                          # Django + Django REST Framework
 └── frontend/                         # Next.js App Router (Upcoming)
 ```
 
