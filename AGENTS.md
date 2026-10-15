@@ -1,4 +1,4 @@
-# Repository Rules: Educational Single-File Execution Mode
+# Repository Rules: Educational Step-by-Step Execution Mode
 
 Project: Tartus Smart Digital Menu — a multi-tenant digital menu platform for cafes (Django + DRF backend, Next.js frontend, PostgreSQL, Cloudflare R2).
 
@@ -24,15 +24,55 @@ Rules:
 - If the code you are asked to write conflicts with the docs, or the docs conflict with each other, or something is ambiguous: STOP. Make no edits. Quote the problem and ask exactly ONE question.
 - Never silently choose between two conflicting sources. Never edit a doc to match your code. A doc changes only when the user asks, and in its own turn.
 
-## 3. One File Per Turn (Hard Constraint)
+## 3. One Step Per Turn (Hard Constraint)
 
-- Create, edit, rename or delete at most ONE file per turn. Generated files (migrations, lock files) count as files.
-- Reading files and running read-only or verification commands does not count as editing (see Section 7).
-- If a feature needs several files, do ONLY the next file in the build order (Section 4), explain it, and STOP. List the queued files in the status block.
-- A migration is its own turn: generate it with `makemigrations`, never hand-write it, and show its content for review. If the generated file touches models from a previous turn (broader scope than expected), show the diff and ask before proceeding.
-- A test file is its own turn.
-- `requirements.txt` is a file: adding a dependency needs its own turn, and you must ask before adding any dependency.
-- URL step = the app-level `urls.py` only. Including it in the root `urls.py` is a separate turn if that file needs to change.
+Goal: every turn is small enough that the developer can read, understand and review ALL of it in a few minutes. We count steps, not files.
+
+A **step** is one row of the build order (Section 4) for one feature — for example "the service for categories". A bug fix with one root cause is also one step.
+
+Limits per turn:
+- **One main file.** Only ONE file per turn may receive new logic (a model, service, serializer, permission, view or test). This is the file you explain in Section 6.
+- **Up to 2 companion edits.** A companion edit is a small, mechanical change in another file that the main file needs in order to work. Each one must be about 10 lines or fewer and contain no business logic. Examples:
+  - including the app-level `urls.py` in the root `urls.py`;
+  - adding an app to `INSTALLED_APPS`;
+  - an empty `__init__.py`;
+  - a new variable in `.env.example`;
+  - the migration generated for the model you just changed (see below).
+- **Size budget: about 150 changed lines per turn** (new plus modified code, all files together). If a step is bigger, split it before you start — for example one service function per turn — and say how you split it.
+- **No hidden changes.** List every touched file in the status block, companions included. If a companion edit grows beyond "small and mechanical", it becomes the next turn instead.
+- Reading files and running read-only or verification commands do not count (see Section 7).
+
+Always their own turn (never a companion):
+- A test file.
+- Adding or upgrading a dependency in `requirements.txt` — and ask before adding any dependency.
+- Renaming or deleting a file.
+- Any change to a doc in `docs/` (see Section 2).
+
+Migrations:
+- Generate with `makemigrations`; never hand-write one. Show its content for review.
+- It may be a companion of the model change that caused it.
+- If the generated migration touches models from an earlier turn (broader scope than expected), STOP, show the diff and ask before going on.
+
+Bug fixes across files:
+- If one root cause needs edits in up to 3 files, and the total is about 50 lines or fewer, fix it in one turn. Explain the cause once, then show each file's change.
+- Otherwise fix the main file only and queue the rest.
+
+Exceptions (approval first):
+- Sometimes a limit above is not practical. Examples: a change that only works if two logic files change together, or a step that cannot be split well under the size budget.
+- In that case, make NO edits yet. Ask for an exception in this format, then STOP and wait:
+  ```
+  EXCEPTION REQUEST
+  Rule: <which limit you need to break>
+  Why: <one or two sentences — why splitting is worse here>
+  Files: <every file you will touch>
+  Size: <about how many lines>
+  Reply "approve" to go ahead, or "split" to keep the normal limits.
+  ```
+- Only an explicit "approve" from the user counts. An approval covers that one turn only; it does not carry over to later turns.
+- After an approved exception, explain each logic file with the Section 6 format, and write `Exception: approved (<rule>)` in the status block.
+- Never use an exception to skip the rules in Sections 2 and 5, or to add a dependency without asking.
+
+When in doubt, do less: finish the main file, list the remaining work under "Queued next", and STOP.
 
 ## 4. Architecture Rules (Modular Monolith + Service Layer)
 
@@ -46,8 +86,8 @@ Each Django app (`users`, `cafes`, `menu`) follows this layering. Dependencies p
 | Service | `services.py` | Business rules: plan limits, transactions, multi-step operations. |
 | Model | `models.py` | Data, constraints, simple invariants. |
 
-Build order for a feature (one file per step, each its own turn):
-model → migration → service → serializer → permission → view → URL → test.
+Build order for a feature (one step per turn, see Section 3):
+model (+ its migration) → service → serializer → permission → view → URL (+ root include) → test.
 
 Design discipline:
 - Prefer Django and DRF built-ins. Do NOT add abstractions (interfaces, repositories, factories, base classes, DI containers) unless the code already has a second concrete use, or a doc requires it.
@@ -68,12 +108,12 @@ Details live in the docs; these are the rules agents most often break.
 - Plan rules are enforced in `services.py` using plan flags and limits (`allows_images`, `allows_branding`, `max_categories`, `max_items`) — never by comparing the plan name.
 - Authorization for admin endpoints uses `role == SYSTEM_ADMIN`, not `is_staff`.
 - API prefix is `/api/v1/`. Errors use DRF format `{"detail": "..."}`. Currency is SYP, hardcoded; there is no currency field.
-- No secrets in code. Read configuration from environment variables. When a new environment variable is introduced, update `.env.example` in the same turn — this does not count toward the one-file limit because it is documentation, not logic.
+- No secrets in code. Read configuration from environment variables. When a new environment variable is introduced, update `.env.example` in the same turn as a companion edit (Section 3).
 - Out of MVP scope — do not build or hint at: `CAFE_STAFF` features, analytics, Redis, table sessions or ordering.
 
 ## 6. Response Format
 
-Pick the tier by file type.
+Pick the tier by the type of the turn's main file.
 
 ### Tier A — new files with logic (models, services, serializers, permissions, views, tests)
 Use these five sections, in this order:
@@ -81,7 +121,7 @@ Use these five sections, in this order:
 2. **Key Concepts & Trade-offs** — the logic, and WHY this design was chosen over alternatives. Name any SOLID principle or pattern actually applied.
 3. **Real-World Analogy** — only the first time a new pattern appears. Skip it otherwise.
 4. **Connections** — what data comes in, what calls this file, what it calls.
-5. **Code Implementation** — clean, commented code for this one file.
+5. **Code Implementation** — clean, commented code for the main file, then each companion edit with one line saying why it is needed.
 
 ### Tier B — config, docs, migrations, URL files, small edits (about 20 lines or fewer)
 Use three short sections:
@@ -93,10 +133,11 @@ Use three short sections:
 ```
 STATUS: COMPLETE | INCOMPLETE
 Done: <what was finished>
+Files changed: <main file> (+ <companion files, if any>) — about <N> lines
 Missing: <what is not finished — only if INCOMPLETE>
 Verification: <commands run and their results, or "none run">
-Queued next (NOT started): <next file in the build order>
-Reply "proceed / next" to continue, or ask questions about this file.
+Queued next (NOT started): <next step in the build order>
+Reply "proceed / next" to continue, or ask questions about this step.
 ```
 
 ## 7. Safe Execution
@@ -116,8 +157,8 @@ Commands:
 
 ## 8. Stop and Wait for Approval
 
-- After the single file, its explanation and the status block, STOP. Do not call more tools and do not write the next file.
-- Never design or write the next file until the user types "proceed / next".
+- After the step, its explanation and the status block, STOP. Do not call more tools and do not start the next step.
+- Never design or write the next step until the user types "proceed / next".
 - A test turn is approved only after its tests pass. If they fail, report the failure and fix the same file in the next turn.
 
 ## 9. Scope Control
