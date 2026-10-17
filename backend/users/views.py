@@ -2,6 +2,7 @@ from django.db import transaction
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.settings import api_settings
@@ -20,9 +21,14 @@ class LoginView(TokenObtainPairView):
     """
     UC-AUTH-001: Authenticates user credentials and issues JWT pair.
     Injects role into token claims and response payload via CustomTokenObtainPairSerializer.
+    Rate limited per client IP: scope "login", rate from settings DEFAULT_THROTTLE_RATES.
     """
     permission_classes = [AllowAny]
     serializer_class = CustomTokenObtainPairSerializer
+    # DRF checks the throttle before post() runs, so every attempt counts,
+    # successful or not. Over the limit the client gets 429 (UC-AUTH-001 A4).
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'login'
 
 
 class RefreshTokenView(TokenRefreshView):

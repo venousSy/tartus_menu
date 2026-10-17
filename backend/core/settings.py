@@ -105,6 +105,18 @@ DATABASES = {
 }
 
 
+# Cache
+# DatabaseCache stores entries in a PostgreSQL table, so every Gunicorn worker shares them.
+# The login throttle counters need this (the default in-memory cache is per process; no Redis in MVP).
+# Create the table once per database: python manage.py createcachetable
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+        'LOCATION': 'django_cache',
+    }
+}
+
+
 # Custom User Model definition
 AUTH_USER_MODEL = 'users.User'
 
@@ -163,6 +175,13 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    # Rates for ScopedRateThrottle. A view opts in with throttle_scope (UC-AUTH-001 uses "login").
+    'DEFAULT_THROTTLE_RATES': {
+        'login': os.getenv('LOGIN_THROTTLE_RATE', '5/min'),
+    },
+    # Number of trusted proxies in front of Django; throttling reads the client IP with it.
+    # Production (Nginx): 1. Default 0 ignores X-Forwarded-For, so a client cannot fake its IP.
+    'NUM_PROXIES': int(os.getenv('DJANGO_NUM_PROXIES', '0')),
 }
 
 # Simple JWT Configuration
