@@ -25,3 +25,6 @@ npm-debug.log*
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local learning notes (personal copy, not shared)
+docs/code_overview.html
