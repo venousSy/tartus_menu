@@ -8,6 +8,16 @@ class CustomUserManager(BaseUserManager):
     Custom manager for the User model where email is the unique identifier
     for authentication instead of usernames.
     """
+    @classmethod
+    def normalize_email(cls, email):
+        # Lowercase the whole address (Django only lowercases the domain part),
+        # so "Owner@Cafe.com" and "owner@cafe.com" cannot become two accounts.
+        return super().normalize_email(email).lower()
+
+    def get_by_natural_key(self, username):
+        # Case-insensitive login lookup; used by Django's authenticate() and simplejwt.
+        return self.get(**{f"{self.model.USERNAME_FIELD}__iexact": username})
+
     def create_user(self, email, password=None, **extra_fields):
         if not email:
             raise ValueError(_("The Email must be set"))
@@ -59,6 +69,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     REQUIRED_FIELDS = [] # Email and password are required by default
 
     objects = CustomUserManager()
+
+    def clean(self):
+        # Forms (e.g., the Django admin) call clean() but bypass create_user(),
+        # so normalize the email here as well.
+        super().clean()
+        self.email = self.__class__.objects.normalize_email(self.email)
 
     def __str__(self):
         return self.email

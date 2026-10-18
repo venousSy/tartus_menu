@@ -1,0 +1,30 @@
+# Secrets and local configuration (never commit)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+*.sqlite3
+
+# Django
+staticfiles/
+media/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+npm-debug.log*
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local learning notes (personal copy, not shared)
+docs/code_overview.html

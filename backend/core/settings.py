@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -13,7 +14,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Load environment variables from a .env file if it exists
 load_dotenv(BASE_DIR / '.env')
 
-from django.core.exceptions import ImproperlyConfigured
+
+def env_list(name):
+    """Read a comma-separated environment variable as a list, ignoring spaces and empty items."""
+    return [value.strip() for value in os.getenv(name, '').split(',') if value.strip()]
+
 
 # SECURITY WARNING: don't run with debug turned on in production!
 # Default to False for safety. Must explicitly set DJANGO_DEBUG=True in .env for development.
@@ -27,8 +32,7 @@ if not SECRET_KEY:
     else:
         raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set in production.")
 
-ALLOWED_HOSTS_ENV = os.getenv('DJANGO_ALLOWED_HOSTS')
-ALLOWED_HOSTS = ALLOWED_HOSTS_ENV.split(',') if ALLOWED_HOSTS_ENV else []
+ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS')
 if not DEBUG and not ALLOWED_HOSTS:
     raise ImproperlyConfigured("DJANGO_ALLOWED_HOSTS must be set in production.")
 
@@ -101,6 +105,18 @@ DATABASES = {
 }
 
 
+# Cache
+# DatabaseCache stores entries in a PostgreSQL table, so every Gunicorn worker shares them.
+# The login throttle counters need this (the default in-memory cache is per process; no Redis in MVP).
+# Create the table once per database: python manage.py createcachetable
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+        'LOCATION': 'django_cache',
+    }
+}
+
+
 # Custom User Model definition
 AUTH_USER_MODEL = 'users.User'
 
@@ -128,12 +144,19 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 # Cloudflare R2 / AWS S3 Configuration for Media
 USE_S3 = os.getenv('USE_S3', 'False') == 'True'
 if USE_S3:
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    # Django 4.2+ selects file storage through STORAGES (DEFAULT_FILE_STORAGE was removed in 5.1).
+    # Both aliases must be defined once STORAGES is set.
+    STORAGES = {
+        'default': {'BACKEND': 'storages.backends.s3.S3Storage'},
+        'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
+    }
     AWS_ACCESS_KEY_ID = os.getenv('R2_ACCESS_KEY_ID')
     AWS_SECRET_ACCESS_KEY = os.getenv('R2_SECRET_ACCESS_KEY')
     AWS_STORAGE_BUCKET_NAME = os.getenv('R2_BUCKET_NAME')
     AWS_S3_ENDPOINT_URL = os.getenv('R2_ENDPOINT_URL') # Custom Cloudflare R2 endpoint
     AWS_S3_CUSTOM_DOMAIN = os.getenv('R2_CUSTOM_DOMAIN')
+    AWS_S3_REGION_NAME = 'auto'  # Cloudflare R2 uses the region name "auto"
+    AWS_S3_SIGNATURE_VERSION = 's3v4'
 else:
     # Fallback to local storage for early development
     MEDIA_URL = 'media/'
@@ -152,6 +175,13 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    # Rates for ScopedRateThrottle. A view opts in with throttle_scope (UC-AUTH-001 uses "login").
+    'DEFAULT_THROTTLE_RATES': {
+        'login': os.getenv('LOGIN_THROTTLE_RATE', '5/min'),
+    },
+    # Number of trusted proxies in front of Django; throttling reads the client IP with it.
+    # Production (Nginx): 1. Default 0 ignores X-Forwarded-For, so a client cannot fake its IP.
+    'NUM_PROXIES': int(os.getenv('DJANGO_NUM_PROXIES', '0')),
 }
 
 # Simple JWT Configuration
@@ -165,4 +195,13 @@ SIMPLE_JWT = {
 
 # CORS Configuration for Next.js Frontend
 CORS_ALLOW_ALL_ORIGINS = DEBUG
-CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', '').split(',') if not DEBUG else []
+# In production Nginx serves the frontend and /api/ on the same domain, so this list may be empty.
+CORS_ALLOWED_ORIGINS = [] if DEBUG else env_list('CORS_ALLOWED_ORIGINS')
+
+# Production HTTPS settings.
+# Nginx terminates TLS and must always set X-Forwarded-Proto, otherwise this header can be spoofed.
+# The HTTP -> HTTPS redirect and HSTS are left to Nginx (deployment step).
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True

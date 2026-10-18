@@ -62,6 +62,7 @@ The User model also defines the role CAFE_STAFF. CAFE_STAFF is OUT OF SCOPE for 
 - 401 Unauthorized: missing, invalid or expired credentials or token.
 - 403 Forbidden: the caller is authenticated but not allowed because of role, plan or subscription status.
 - 404 Not Found: the resource does not exist OR belongs to another cafe. A cafe-scoped endpoint must never answer 403 for a resource owned by another cafe (ownership masking). The body is always {"detail": "Not found."}.
+- 429 Too Many Requests: a rate limit was exceeded (see UC-AUTH-001). The body is DRF's standard throttle message: {"detail": "Request was throttled. Expected available in N seconds."}.
 
 **3. Plan limits and plan features**
 
@@ -73,6 +74,51 @@ The User model also defines the role CAFE_STAFF. CAFE_STAFF is OUT OF SCOPE for 
 **4. Public menu URL**
 
 https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is display-only.
+
+**5. Active cafe (subscription) rule**
+
+- Every /api/v1/dashboard/ endpoint requires the owner's cafe to be active (cafe.is_active = true). The only exception is GET /api/v1/dashboard/settings/ (UC-OWNER-014), which answers 200 even when the cafe is inactive.
+- An inactive cafe gets 403 Forbidden — {"detail": "Your subscription is inactive. Please contact support."}.
+- The role check runs first, then the active check. A caller who is not a Cafe Owner gets the role error, never the subscription message.
+- Auth endpoints (/api/v1/auth/) never check the subscription. The owner of an inactive cafe can still log in, refresh, log out and change the password.
+
+**6. Bilingual text fields**
+
+The fields name (cafes, categories, menu items) and description (menu items) are JSON objects with the keys "ar" (Arabic) and "en" (English).
+
+- name: "ar" is required and must be a non-empty string. "en" is optional: it may be missing or an empty string.
+- description: optional. When present, "ar" and "en" are both optional strings.
+- Any other key is rejected: 400 Bad Request — {"<field>": ["Only the keys \"ar\" and \"en\" are allowed."]}.
+- Other validation errors (missing or blank "ar", a value that is not a string) use DRF's standard field-level errors under the field name, for example {"name": {"ar": ["This field is required."]}}.
+- Display fallback: when the reader chose English and the "en" value is missing or empty, the "ar" value is shown.
+
+**7. Plan features after a plan change**
+
+- A plan change never deletes stored feature data. Item images (image_url), the logo (logo_url) and the primary color (primary_color) stay in the database and on R2.
+- The public menu (UC-GUEST-001) shows them only while the current plan allows them: image_url is returned as "" when plan.allows_images is false; logo_url and primary_color are returned as "" when plan.allows_branding is false (the frontend then uses the default theme).
+- Dashboard responses (UC-OWNER-013, UC-OWNER-014) return the stored values together with the plan flags, so the UI can explain that they are hidden on the current plan.
+- Upgrading again makes the stored values visible again. Nothing has to be uploaded again.
+- An empty string "" means "none" for image_url, logo_url and primary_color. These fields never use NULL.
+
+**8. Concurrency**
+
+Every service operation that checks a plan limit, assigns a sort_order, reorders rows or syncs tables runs inside one database transaction and first locks the cafe row (SELECT ... FOR UPDATE, Django select_for_update()). A second request for the same cafe waits until the first one commits. This stops two parallel requests from both passing a limit check or receiving the same sort_order. Requests for other cafes are not blocked.
+
+**9. Public menu freshness**
+
+The customer menu page is cached by Next.js (ISR). To keep it fresh:
+
+- After the database commit of every successful write that changes what the public menu shows, the backend asks the frontend to revalidate (rebuild) the page /menu/[slug] of that cafe (system_design.md §3.5).
+- Triggers: UC-OWNER-001 to UC-OWNER-006, UC-OWNER-009, UC-OWNER-010, UC-ADMIN-004, UC-ADMIN-005, UC-ADMIN-006 and UC-ADMIN-007. When UC-ADMIN-006 changes the slug, both the old and the new slug are revalidated.
+- The call runs after the commit and never changes the API response. If it fails, the error is logged and the request still succeeds.
+- Fallback: the page is also rebuilt on a time basis at most every 5 minutes, so a lost call heals itself.
+- Expected result: a change is visible on the public menu within a few seconds.
+
+**10. Prices**
+
+- Prices are in Syrian pounds (SYP) after the redenomination of 2026-01-01 (100 old pounds = 1 new pound; the ISO code stays SYP). The currency is hardcoded; there is no currency field.
+- Stored as NUMERIC(10,2). A price must be 0 or greater. The API returns the price as a string with two decimals, for example "50.00".
+- Display rule (frontend): Western digits (0-9) in both languages, trailing ".00" hidden ("50", "12.50"), followed by the currency label (the Arabic abbreviation of Syrian pound in Arabic, "SYP" in English).
 
 ---
 
@@ -92,7 +138,7 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 | **Postconditions (Success)** | JWT access token + refresh token are returned; role field contains the stored User.role value in uppercase (for example SYSTEM_ADMIN or CAFE_OWNER) |
 | **Postconditions (Failure)** | No tokens issued; error message returned |
 | **API** | POST /api/v1/auth/login/ |
-| **Architectural Note** | Handled by simplejwt. The role field is injected via a custom token serializer. No Service Layer involvement. |
+| **Architectural Note** | Handled by simplejwt. The role field is injected via a custom token serializer. No Service Layer involvement. Rate limited with DRF ScopedRateThrottle (scope "login", default 5 requests per minute per client IP, configurable with the LOGIN_THROTTLE_RATE environment variable). Throttle counters are stored in Django's DatabaseCache, which all Gunicorn workers share (no Redis). Behind the proxies, the client IP is read from X-Forwarded-For with DRF NUM_PROXIES (system_design.md §3.6). Nginx adds a second limit (limit_req) in front of the API. |
 
 **Main Flow:**
 1. User provides email and password.
@@ -101,9 +147,10 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 4. System returns { access, refresh, role }.
 
 **Alternate Flows:**
-- **A1 — Wrong credentials:** System returns 401 Unauthorized with {"detail": "No active account found with the given credentials."}.
+- **A1 — Wrong credentials:** System returns 401 Unauthorized with {"detail": "No active account found with the given credentials"} (simplejwt's standard message; it has no final period).
 - **A2 — Inactive account:** System returns 401 Unauthorized. (Admin must re-activate the account.)
 - **A3 — Missing fields:** System returns 400 Bad Request with field-level validation errors.
+- **A4 — Too many attempts:** 429 Too Many Requests — {"detail": "Request was throttled. Expected available in N seconds."} (N = seconds until a new attempt is allowed). Every attempt counts, successful or not.
 
 ---
 
@@ -118,7 +165,7 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 | **Preconditions** | A valid, non-blacklisted refresh token exists |
 | **Postconditions (Success)** | A new access token and a new refresh token are returned; the submitted refresh token is blacklisted |
 | **API** | POST /api/v1/auth/refresh/ |
-| **Architectural Note** | Handled by simplejwt with ROTATE_REFRESH_TOKENS = True and BLACKLIST_AFTER_ROTATION = True. Requires rest_framework_simplejwt.token_blacklist in INSTALLED_APPS. Refresh token lifetime: 1 day. |
+| **Architectural Note** | Handled by simplejwt with ROTATE_REFRESH_TOKENS = True and BLACKLIST_AFTER_ROTATION = True. Requires rest_framework_simplejwt.token_blacklist in INSTALLED_APPS. Refresh token lifetime: 1 day. Because each refresh token works only once, the frontend (Next.js BFF, system_design.md §3.6) must run at most one refresh call at a time per session (single-flight) and let other waiting requests reuse its result. Otherwise a parallel refresh gets 401 (A2) and logs the user out. |
 
 **Main Flow:**
 1. Client sends { refresh: "<token>" }.
@@ -212,6 +259,7 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 - **A2 — Duplicate owner email:** 400 Bad Request — {"owner.email": ["A user with this email already exists."]}.
 - **A3 — Invalid plan name:** 400 Bad Request.
 - **A4 — Non-admin caller:** 403 Forbidden.
+- **A5 — Invalid name (for example missing or blank "ar", or an unknown key):** 400 Bad Request with field-level errors under name (Global Convention 6).
 
 ---
 
@@ -321,18 +369,22 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 | **Preconditions** | Cafe exists |
 | **Postconditions (Success)** | Cafe record updated; if plan changed, a BillingEvent(action='plan_changed') is created |
 | **API** | PATCH /api/v1/admin/cafes/{id}/ |
-| **Architectural Note** | Service Layer checks if plan field changed and conditionally creates the BillingEvent. This keeps the audit trail clean. is_active cannot be changed through this endpoint; use UC-ADMIN-004 and UC-ADMIN-005 so that a BillingEvent is always recorded. Changing the slug invalidates every QR code already printed for the cafe (there is no redirect from the old slug in the MVP). |
+| **Architectural Note** | Service Layer checks if plan field changed and conditionally creates the BillingEvent. This keeps the audit trail clean. is_active cannot be changed through this endpoint; use UC-ADMIN-004 and UC-ADMIN-005 so that a BillingEvent is always recorded. Changing the slug invalidates every QR code already printed for the cafe (there is no redirect from the old slug in the MVP). logo_url cannot be changed through this endpoint: logos come only from the owner's upload (UC-OWNER-010), so every logo is a validated file on our R2 storage. A primary_color set by the Super Admin is stored even when the plan has allows_branding = false; it stays hidden from customers until the plan allows it (Global Convention 7). |
 
 **Main Flow:**
-1. Admin sends partial update (any combination of: name, slug, primary_color, logo_url, plan).
+1. Admin sends partial update (any combination of: name, slug, primary_color, plan).
 2. System validates slug uniqueness (if changed).
 3. If plan changed, system logs a BillingEvent.
 4. Returns updated cafe.
 
 **Alternate Flows:**
 - **A1 — Duplicate slug:** 400 Bad Request.
-- **A2 — Downgrading plan while cafe exceeds new limits:** 400 Bad Request — Service Layer enforces this. Only non-deleted categories and items are counted. e.g., "Cannot downgrade to Basic: cafe has 8 categories (max 5)."
+- **A2 — Downgrading plan while cafe exceeds new limits:** 400 Bad Request — Service Layer enforces this. Only non-deleted categories and items are counted. e.g., "Cannot downgrade to Basic: cafe has 8 categories (max 5)." Item images, the logo and the primary color never block a downgrade: they are kept and hidden from customers (Global Convention 7).
 - **A3 — Request body contains is_active:** 400 Bad Request — {"is_active": ["Use the activate or deactivate endpoint."]}.
+- **A4 — Request body contains logo_url:** 400 Bad Request — {"logo_url": ["This field cannot be changed here. The cafe owner uploads the logo."]}.
+- **A5 — primary_color is not "#RRGGBB" or "":** 400 Bad Request — {"primary_color": ["Enter a color in #RRGGBB format."]}.
+- **A6 — Invalid name:** 400 Bad Request with field-level errors under name (Global Convention 6).
+- **A7 — Cafe not found:** 404 Not Found.
 
 ---
 
@@ -347,7 +399,7 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 | **Preconditions** | Cafe exists |
 | **Postconditions (Success)** | Cafe, its owner user account, and all related data (categories, menu items, tables, billing events) are hard-deleted |
 | **API** | DELETE /api/v1/admin/cafes/{id}/ |
-| **Architectural Note** | Hard delete — no soft delete for cafes per the design. Service Layer method CafeService.delete_cafe(cafe) runs in one DB transaction (atomic): it deletes the cafe (DB CASCADE removes categories, menu items, cafe tables and billing events) and then deletes the owner User, so no orphan account remains. Irreversible. Billing history is deleted together with the cafe. |
+| **Architectural Note** | Hard delete — no soft delete for cafes per the design. Service Layer method CafeService.delete_cafe(cafe) runs in one DB transaction (atomic): it deletes the cafe (DB CASCADE removes categories, menu items, cafe tables and billing events) and then deletes the owner User, so no orphan account remains. Irreversible. Billing history is deleted together with the cafe. After the commit, the backend deletes every R2 object under the prefix cafes/<cafe_id>/ (item images and logos, see UC-OWNER-006). This cleanup is best effort: a failure is logged and the response is still 204. |
 
 **Main Flow:**
 1. Admin confirms deletion.
@@ -416,7 +468,7 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 | **Preconditions** | Owner is authenticated; cafe is_active = true; plan limits not exceeded (for create) |
 | **Postconditions (Success)** | Category is created / updated / soft-deleted (together with its items); sort_order assigned automatically (gapped: 100, 200, ...) |
 | **APIs** | POST /api/v1/dashboard/categories/ · PATCH /api/v1/dashboard/categories/{id}/ · DELETE /api/v1/dashboard/categories/{id}/ |
-| **Architectural Note** | Service Layer (CategoryService) enforces plan limits on CREATE. Soft delete sets deleted_at = now() and excludes the category from all future queries. cafe_id is injected from request.user.cafe — never from the request body (security). Soft-deleted categories and items never count toward plan limits. |
+| **Architectural Note** | Service Layer (CategoryService) enforces plan limits on CREATE. Soft delete sets deleted_at = now() and excludes the category from all future queries. cafe_id is injected from request.user.cafe — never from the request body (security). Soft-deleted categories and items never count toward plan limits. The plan-limit check and the sort_order assignment run under the cafe row lock (Global Convention 8). name follows Global Convention 6. |
 
 **Main Flow (Create):**
 1. Owner provides name (ar/en) and optional is_visible.
@@ -438,6 +490,7 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 - **A1 — Plan limit exceeded (Basic):** 403 Forbidden — {"detail": "Your Basic plan allows a maximum of 5 categories. Upgrade to Pro for unlimited."}.
 - **A2 — Category belongs to another cafe:** 404 Not Found (ownership masking — attacker sees no difference from "not found").
 - **A3 — Cafe inactive:** 403 Forbidden — {"detail": "Your subscription is inactive. Please contact support."}.
+- **A4 — Invalid name:** 400 Bad Request with field-level errors under name (Global Convention 6).
 
 ---
 
@@ -452,7 +505,7 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 | **Preconditions** | Owner is authenticated; cafe active; category exists and belongs to this cafe |
 | **Postconditions (Success)** | Item created/updated/soft-deleted |
 | **APIs** | POST /api/v1/dashboard/items/ · PATCH /api/v1/dashboard/items/{id}/ · DELETE /api/v1/dashboard/items/{id}/ |
-| **Architectural Note** | cafe_id is denormalized on menu_items for RLS performance. The Service Layer (ItemService) validates: (1) category ownership, (2) item plan limits, (3) image upload permission (plan.allows_images must be true). |
+| **Architectural Note** | cafe_id is denormalized on menu_items for RLS performance. The Service Layer (ItemService) validates: (1) category ownership, (2) item plan limits, (3) image upload permission (plan.allows_images must be true). The plan-limit check and the sort_order assignment run under the cafe row lock (Global Convention 8). name and description follow Global Convention 6; price follows Global Convention 10. image_url, sort_order and cafe are read-only here and ignored if sent: images are set only through UC-OWNER-006, order only through UC-OWNER-004, and the cafe always comes from request.user.cafe. |
 
 **Main Flow (Create):**
 1. Owner provides: category_id, name (ar/en), description (ar/en), price, is_featured, is_new.
@@ -474,6 +527,8 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 - **A1 — Plan item limit exceeded (Basic):** 403 Forbidden.
 - **A2 — Category not found or belongs to another cafe:** 404 Not Found.
 - **A3 — Price is negative:** 400 Bad Request.
+- **A4 — Invalid name or description:** 400 Bad Request with field-level errors (Global Convention 6).
+- **A5 — Cafe inactive:** 403 Forbidden — {"detail": "Your subscription is inactive. Please contact support."} (Global Convention 5).
 
 ---
 
@@ -488,7 +543,7 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 | **Preconditions** | At least 2 categories exist |
 | **Postconditions (Success)** | sort_order values are updated using the Gapped Integer algorithm |
 | **API** | POST /api/v1/dashboard/categories/reorder/ |
-| **Architectural Note** | Body: { ordered_ids: [3, 1, 2] }. Service reassigns sort_order as 100, 200, 300.... Uses bulk_update() for efficiency. All IDs must belong to this cafe — partial ownership = reject all. |
+| **Architectural Note** | Body: { ordered_ids: [3, 1, 2] }. Service reassigns sort_order as 100, 200, 300.... Uses bulk_update() for efficiency. All IDs must belong to this cafe — partial ownership = reject all. Runs under the cafe row lock (Global Convention 8). |
 
 **Main Flow:**
 1. Client sends the full ordered list of category IDs.
@@ -499,6 +554,7 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 **Alternate Flows:**
 - **A1 — ID list contains a foreign category:** 404 Not Found — {"detail": "Not found."}; the entire operation is rejected and nothing is updated.
 - **A2 — ID list is incomplete (missing categories):** 400 Bad Request — must include all non-deleted categories.
+- **A3 — Cafe inactive:** 403 Forbidden — {"detail": "Your subscription is inactive. Please contact support."} (Global Convention 5).
 
 ---
 
@@ -511,7 +567,7 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 | **Actor** | Cafe Owner |
 | **Trigger** | Owner reorders items via drag-and-drop |
 | **API** | POST /api/v1/dashboard/items/reorder/ |
-| **Architectural Note** | Same Gapped Integer algorithm as UC-OWNER-003. Items can only be reordered within a single category per call. |
+| **Architectural Note** | Same Gapped Integer algorithm as UC-OWNER-003. Items can only be reordered within a single category per call. Runs under the cafe row lock (Global Convention 8). |
 
 **Main Flow:**
 1. Client sends { ordered_ids: [12, 10, 11] }.
@@ -522,6 +578,7 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 **Alternate Flows:**
 - **A1 — IDs span multiple categories:** 400 Bad Request — reorder must be within one category.
 - **A2 — Foreign item ID included:** 404 Not Found — {"detail": "Not found."}; the entire operation is rejected and nothing is updated.
+- **A3 — Cafe inactive:** 403 Forbidden — {"detail": "Your subscription is inactive. Please contact support."} (Global Convention 5).
 
 ---
 
@@ -534,7 +591,7 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 | **Actor** | Cafe Owner |
 | **Trigger** | Owner taps the availability toggle on an item |
 | **Preconditions** | Item exists and belongs to this cafe |
-| **Postconditions (Success)** | is_available is flipped; change is immediately reflected on the public menu |
+| **Postconditions (Success)** | is_available is set to the sent value; the change appears on the public menu within a few seconds through on-demand revalidation (Global Convention 9) |
 | **API** | PATCH /api/v1/dashboard/items/{id}/availability/ |
 | **Architectural Note** | Dedicated endpoint (not the general PATCH) to signal intent clearly and allow optimistic UI updates. Body: { is_available: false }. Service updates only this field. |
 
@@ -545,6 +602,7 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 
 **Alternate Flows:**
 - **A1 — Item not found / foreign:** 404 Not Found.
+- **A2 — Cafe inactive:** 403 Forbidden — {"detail": "Your subscription is inactive. Please contact support."} (Global Convention 5).
 
 ---
 
@@ -556,24 +614,28 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 |---|---|
 | **Actor** | Cafe Owner (Pro plan only) |
 | **Trigger** | Owner selects and uploads an image file |
-| **Preconditions** | Owner is on Pro plan; item exists and belongs to this cafe |
-| **Postconditions (Success)** | Image is uploaded to Cloudflare R2; item.image_url is updated |
+| **Preconditions** | Cafe is active; cafe.plan.allows_images is true; item exists, is not soft-deleted and belongs to this cafe |
+| **Postconditions (Success)** | A processed WebP image is stored on Cloudflare R2; item.image_url is updated; the old image is removed from R2 |
 | **API** | POST /api/v1/dashboard/items/{id}/image/ |
-| **Architectural Note** | Service Layer checks that cafe.plan.allows_images is true before upload. File validated for: MIME type (jpeg/png/webp only), max size 2MB. Uses django-storages + boto3 for R2 upload. The old image is deleted from R2 if one existed. |
+| **Architectural Note** | Service Layer checks that cafe.plan.allows_images is true before upload. The file is validated by its content, not by the client's Content-Type header or file name: Pillow opens it with a format allowlist (JPEG, PNG, WebP). The file must be 2 MB or smaller and at most 25 megapixels (width x height); the pixel limit protects against decompression bombs (small files that expand to huge images in memory). The image is then processed: resized so the longest side is at most 1200 px (never enlarged), all metadata removed (EXIF, including the GPS location), and saved as WebP. It is stored on R2 under a new random key cafes/<cafe_id>/items/<uuid4>.webp with Cache-Control: public, max-age=31536000, immutable, and served from the R2 custom domain. Uses django-storages + boto3. The old image is deleted from R2 after the database commit (transaction.on_commit); if that delete fails, the error is logged and the request still succeeds. |
 
 **Main Flow:**
 1. Client sends multipart/form-data with image field.
 2. Service validates that cafe.plan.allows_images is true.
-3. Service validates file: MIME type and size.
-4. Service uploads to R2, gets back a URL.
-5. Service deletes old image from R2 (if any).
-6. Updates item.image_url and returns updated item.
+3. Service validates the file: size, format detected by Pillow, pixel count.
+4. Service resizes the image, removes its metadata and converts it to WebP.
+5. Service uploads it to R2 under a new random key and gets back its public URL.
+6. Service updates item.image_url and returns the updated item.
+7. After the commit, the old image (if any) is deleted from R2.
 
 **Alternate Flows:**
 - **A1 — Basic plan:** 403 Forbidden — {"detail": "Item images require a Pro plan."}.
-- **A2 — Invalid MIME type:** 400 Bad Request — {"detail": "Only JPEG, PNG, and WebP images are allowed."}.
+- **A2 — Not a JPEG, PNG or WebP image (including files Pillow cannot read):** 400 Bad Request — {"detail": "Only JPEG, PNG, and WebP images are allowed."}.
 - **A3 — File too large (>2MB):** 400 Bad Request — {"detail": "Image must be under 2MB."}.
 - **A4 — R2 upload failure:** 502 Bad Gateway — logged server-side; user sees {"detail": "Image upload failed. Please try again."}.
+- **A5 — Image larger than 25 megapixels:** 400 Bad Request — {"detail": "Image dimensions are too large."}.
+- **A6 — Cafe inactive:** 403 Forbidden — {"detail": "Your subscription is inactive. Please contact support."} (Global Convention 5).
+- **A7 — Item not found, soft-deleted or belongs to another cafe:** 404 Not Found — {"detail": "Not found."}.
 
 ---
 
@@ -585,10 +647,10 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 |---|---|
 | **Actor** | Cafe Owner |
 | **Trigger** | Owner sets table count and clicks Generate |
-| **Preconditions** | Owner is authenticated; cafe has a valid slug |
+| **Preconditions** | Owner is authenticated; cafe is active; cafe has a valid slug |
 | **Postconditions (Success)** | Active CafeTable rows exist for table numbers 1 through table_count and for no other number; the response lists them with table number, URL, QR token and QR image |
 | **API** | POST /api/v1/dashboard/qr/generate/ |
-| **Architectural Note** | Tables are persisted in the CafeTable model (fields: cafe, table_number, qr_token, is_active, created_at, updated_at; UNIQUE per cafe on table_number). Service Layer method TableService.sync_tables(cafe, table_count) runs in one DB transaction (atomic). It never deletes rows: tables above the requested count are deactivated (is_active = false), so their qr_token survives re-activation. table_count is NOT stored anywhere; it is always derived as the number of active CafeTable rows. QR URL format: https://menu.domain.com/menu/[cafe-slug]?table=N. The qr_token is stored and returned but is NOT part of the URL in the MVP; the table query parameter stays display-only (see UC-GUEST-001). qr_image_url is a base64 data URL produced with the qrcode library; nothing is stored on R2. |
+| **Architectural Note** | Tables are persisted in the CafeTable model (fields: cafe, table_number, qr_token, is_active, created_at, updated_at; UNIQUE per cafe on table_number). Service Layer method TableService.sync_tables(cafe, table_count) runs in one DB transaction (atomic). It never deletes rows: tables above the requested count are deactivated (is_active = false), so their qr_token survives re-activation. table_count is NOT stored anywhere; it is always derived as the number of active CafeTable rows. QR URL format: https://menu.domain.com/menu/[cafe-slug]?table=N. The qr_token is stored and returned but is NOT part of the URL in the MVP; the table query parameter stays display-only (see UC-GUEST-001). qr_image_url is a base64 data URL produced with the qrcode library; nothing is stored on R2. sync_tables runs under the cafe row lock (Global Convention 8). QR codes use error correction level Q (still readable when part of the printed code is dirty or damaged) and a quiet zone (empty border) of 4 modules. |
 
 **Main Flow:**
 1. Owner sends { "table_count": 12 }.
@@ -598,9 +660,10 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 
 **Alternate Flows:**
 - **A1 — table_count missing, not an integer, 0 or negative:** 400 Bad Request with a field-level error on table_count.
-- **A2 — table_count > 200:** 400 Bad Request — {"detail": "Maximum 200 tables supported."}.
+- **A2 — table_count > 200:** 400 Bad Request — {"table_count": ["Ensure this value is less than or equal to 200."]} (DRF's built-in max_value message; same field-level format as A1).
 - **A3 — Same table_count sent again:** 200 OK; no rows are created, every qr_token is unchanged (idempotent).
 - **A4 — Smaller table_count than before:** the tables above it are deactivated and disappear from the preview and the PDF; they are not deleted.
+- **A5 — Cafe inactive:** 403 Forbidden — {"detail": "Your subscription is inactive. Please contact support."} (Global Convention 5).
 
 ---
 
@@ -612,10 +675,10 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 |---|---|
 | **Actor** | Cafe Owner |
 | **Trigger** | Owner clicks "Download PDF" |
-| **Preconditions** | The cafe has at least one active CafeTable (QR codes were generated with UC-OWNER-007) |
+| **Preconditions** | Cafe is active; the cafe has at least one active CafeTable (QR codes were generated with UC-OWNER-007) |
 | **Postconditions (Success)** | PDF file is returned as a download; one page per active table in ascending table_number order; each page contains one QR code and its table number |
 | **API** | GET /api/v1/dashboard/qr/download-pdf/ |
-| **Architectural Note** | Generated server-side using reportlab from the persisted active CafeTable rows; the table count is derived from them. Response content type: application/pdf. Not cached — URLs are built from the cafe's current slug on every request. |
+| **Architectural Note** | Generated server-side using reportlab from the persisted active CafeTable rows; the table count is derived from them. Response content type: application/pdf. Not cached — URLs are built from the cafe's current slug on every request. Each QR code is drawn as vector shapes with reportlab's built-in QR widget (reportlab.graphics.barcode.qr), so it stays sharp at any print size. It encodes exactly the same URL as UC-OWNER-011, uses error correction level Q and a 4-module quiet zone, is printed at least 3 cm wide, and has the table number and the URL printed under it. |
 
 **Main Flow:**
 1. Owner requests the PDF.
@@ -624,6 +687,8 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 
 **Alternate Flows:**
 - **A1 — No active tables:** 400 Bad Request — {"detail": "Please generate QR codes first."}.
+- **A2 — Cafe inactive:** 403 Forbidden — {"detail": "Your subscription is inactive. Please contact support."} (Global Convention 5).
+
 ---
 
 ### UC-OWNER-009 — Update Cafe Settings
@@ -634,10 +699,10 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 |---|---|
 | **Actor** | Cafe Owner |
 | **Trigger** | Owner edits and saves settings |
-| **Preconditions** | Owner is authenticated |
+| **Preconditions** | Owner is authenticated; cafe is active |
 | **Postconditions (Success)** | Cafe record updated |
 | **API** | PATCH /api/v1/dashboard/settings/ |
-| **Architectural Note** | Primary color is a Pro-plan feature: the Service Layer allows it only when plan.allows_branding is true. The slug is NOT editable by cafe owners; only a Super Admin can change it (UC-ADMIN-006). |
+| **Architectural Note** | Primary color is a Pro-plan feature: the Service Layer allows it only when plan.allows_branding is true. The slug is NOT editable by cafe owners; only a Super Admin can change it (UC-ADMIN-006). primary_color must be "#RRGGBB" (6 hexadecimal digits) or "" (back to the default theme). name follows Global Convention 6. |
 
 **Main Flow:**
 1. Owner sends partial update: { name: {ar, en}, primary_color }.
@@ -648,6 +713,9 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 **Alternate Flows:**
 - **A1 — Request body contains the key slug:** 403 Forbidden — {"detail": "Only a Super Admin can change the cafe slug."}; nothing is updated, even if other fields are valid.
 - **A2 — Basic plan trying to change primary_color:** 403 Forbidden — {"detail": "Custom colors require a Pro plan."}.
+- **A3 — primary_color is not "#RRGGBB" or "":** 400 Bad Request — {"primary_color": ["Enter a color in #RRGGBB format."]}.
+- **A4 — Invalid name:** 400 Bad Request with field-level errors under name (Global Convention 6).
+- **A5 — Cafe inactive:** 403 Forbidden — {"detail": "Your subscription is inactive. Please contact support."} (Global Convention 5).
 
 ---
 
@@ -659,21 +727,25 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 |---|---|
 | **Actor** | Cafe Owner (Pro plan only) |
 | **Trigger** | Owner selects and uploads a logo image |
-| **Preconditions** | Owner is on Pro plan |
-| **Postconditions (Success)** | Logo uploaded to R2; cafe.logo_url updated |
+| **Preconditions** | Cafe is active; cafe.plan.allows_branding is true |
+| **Postconditions (Success)** | A processed WebP logo is stored on R2; cafe.logo_url updated; the old logo is removed from R2 |
 | **API** | POST /api/v1/dashboard/settings/logo/ |
-| **Architectural Note** | Same upload pipeline as UC-OWNER-006. File constraints: JPEG/PNG/WebP, max 2MB. The allows_branding check is enforced in the Service Layer. |
+| **Architectural Note** | Same validation and processing pipeline as UC-OWNER-006 (format checked by Pillow, max 2 MB, max 25 megapixels, metadata removed, saved as WebP), except that the longest side is at most 512 px and transparency is kept. Stored under the new random key cafes/<cafe_id>/logo/<uuid4>.webp. The allows_branding check is enforced in the Service Layer. The old logo is deleted from R2 after the commit (best effort, failures logged). |
 
 **Main Flow:**
 1. Owner uploads logo via multipart/form-data.
 2. Service validates that cafe.plan.allows_branding is true.
-3. Service validates file type and size.
-4. Uploads to R2, deletes old logo if present.
-5. Updates cafe.logo_url and returns updated settings.
+3. Service validates the file: size, format detected by Pillow, pixel count.
+4. Service resizes the image, removes its metadata, converts it to WebP and uploads it to R2 under a new random key.
+5. Service updates cafe.logo_url and returns the updated settings.
+6. After the commit, the old logo (if any) is deleted from R2.
 
 **Alternate Flows:**
 - **A1 — Basic plan:** 403 Forbidden — {"detail": "Custom logos require a Pro plan."}.
-- **A2 — Invalid file type / too large:** 400 Bad Request.
+- **A2 — Invalid file type / too large:** 400 Bad Request — same messages as UC-OWNER-006 A2 and A3.
+- **A3 — Image larger than 25 megapixels:** 400 Bad Request — {"detail": "Image dimensions are too large."}.
+- **A4 — R2 upload failure:** 502 Bad Gateway — {"detail": "Image upload failed. Please try again."}.
+- **A5 — Cafe inactive:** 403 Forbidden — {"detail": "Your subscription is inactive. Please contact support."} (Global Convention 5).
 
 ---
 
@@ -685,7 +757,7 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 |---|---|
 | **Actor** | Cafe Owner |
 | **Trigger** | Owner opens the QR Codes screen |
-| **Preconditions** | Owner is authenticated |
+| **Preconditions** | Owner is authenticated; cafe is active |
 | **Postconditions (Success)** | The active tables of the cafe are returned with their QR codes; nothing is modified |
 | **API** | GET /api/v1/dashboard/qr/preview/ |
 | **Architectural Note** | Read-only. Same response shape as UC-OWNER-007. Derived from the persisted active CafeTable rows; the table count is derived from them. |
@@ -697,6 +769,7 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 
 **Alternate Flows:**
 - **A1 — No active tables:** 200 OK with { "table_count": 0, "tables": [] }.
+- **A2 — Cafe inactive:** 403 Forbidden — {"detail": "Your subscription is inactive. Please contact support."} (Global Convention 5).
 
 ---
 
@@ -759,7 +832,7 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 | **Preconditions** | Owner is authenticated |
 | **Postconditions (Success)** | The cafe profile and plan flags are returned |
 | **API** | GET /api/v1/dashboard/settings/ |
-| **Architectural Note** | Unlike the write endpoints, which require an active cafe, this read endpoint answers 200 OK even when the cafe is inactive, so the frontend can show the "subscription inactive" state. |
+| **Architectural Note** | Unlike the write endpoints, which require an active cafe, this read endpoint answers 200 OK even when the cafe is inactive, so the frontend can show the "subscription inactive" state. It is the only dashboard endpoint without the active-cafe check (Global Convention 5). Stored logo_url and primary_color are returned even when the current plan hides them from customers (Global Convention 7); the plan flags in the same response tell the UI why. |
 
 **Main Flow:**
 1. Owner requests the settings.
@@ -786,14 +859,14 @@ https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is disp
 | **Preconditions** | Cafe exists and is_active = true |
 | **Postconditions (Success)** | Full menu rendered: cafe branding, all visible categories, all available items |
 | **API** | GET /api/v1/menu/{slug}/ |
-| **Architectural Note** | No authentication required. Response includes only categories with is_visible = true AND deleted_at IS NULL and, inside them, only items with deleted_at IS NULL AND is_available = true. The table query param is display-only — backend does not validate or store it. Next.js renders this with ISR (Incremental Static Regeneration) for performance. noindex, nofollow meta tag prevents search engine indexing. |
+| **Architectural Note** | No authentication required. Response includes only categories with is_visible = true AND deleted_at IS NULL and, inside them, only items with deleted_at IS NULL AND is_available = true. Plan-gated values (image_url, logo_url, primary_color) are hidden according to Global Convention 7. The table query param is display-only — backend does not validate or store it. The frontend reads it in the browser, not on the server, so the cached page is the same for every table. Next.js renders this with ISR (Incremental Static Regeneration) for performance and keeps it fresh with on-demand revalidation (Global Convention 9). The API is called by the Next.js server, not by the customer's browser, so it is not rate limited per client IP; rate limiting for /menu/ is done in Nginx. The noindex, nofollow meta tag and the X-Robots-Tag response header prevent search engine indexing. |
 
 **Main Flow:**
 1. Customer's browser navigates to /menu/tartus-coffee?table=3.
 2. Next.js fetches from GET /api/v1/menu/tartus-coffee/.
 3. API returns: cafe branding + categories (sorted by sort_order) + items per category (sorted by sort_order, only is_available=true shown to customer).
-4. Frontend renders the menu with the cafe's primary_color as a CSS variable.
-5. Customer can toggle language between Arabic and English.
+4. Frontend renders the menu with the cafe's primary_color as a CSS variable (default theme when primary_color is "").
+5. Customer can toggle language between Arabic and English in the browser (no new request); missing English text falls back to Arabic (Global Convention 6). Prices are displayed as described in Global Convention 10.
 
 **Alternate Flows:**
 - **A1 — Slug not found:** 404 Not Found — frontend shows a generic "Menu not found" page.
