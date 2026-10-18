@@ -147,7 +147,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 4. System returns { access, refresh, role }.
 
 **Alternate Flows:**
-- **A1 — Wrong credentials:** System returns 401 Unauthorized with {"detail": "No active account found with the given credentials."}.
+- **A1 — Wrong credentials:** System returns 401 Unauthorized with {"detail": "No active account found with the given credentials"} (simplejwt's standard message; it has no final period).
 - **A2 — Inactive account:** System returns 401 Unauthorized. (Admin must re-activate the account.)
 - **A3 — Missing fields:** System returns 400 Bad Request with field-level validation errors.
 - **A4 — Too many attempts:** 429 Too Many Requests — {"detail": "Request was throttled. Expected available in N seconds."} (N = seconds until a new attempt is allowed). Every attempt counts, successful or not.
