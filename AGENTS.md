@@ -130,6 +130,7 @@ Use three short sections:
 3. **Result** (the change, or a change log for docs)
 
 ### Every turn ends with this status block (always the last thing you print)
+Write the status block in Arabic: translate the labels and the sentences. Keep file paths, commands, branch names, status codes, `COMPLETE` / `INCOMPLETE` and "proceed / next" in English so they stay copy-pasteable. The template below shows the fields and their order.
 ```
 STATUS: COMPLETE | INCOMPLETE
 Done: <what was finished>
