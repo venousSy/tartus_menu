@@ -198,6 +198,10 @@ CORS_ALLOW_ALL_ORIGINS = DEBUG
 # In production Nginx serves the frontend and /api/ on the same domain, so this list may be empty.
 CORS_ALLOWED_ORIGINS = [] if DEBUG else env_list('CORS_ALLOWED_ORIGINS')
 
+# Public menu revalidation, Django -> Next.js (core/revalidation.py). Empty URL = disabled.
+FRONTEND_REVALIDATE_URL = os.getenv('FRONTEND_REVALIDATE_URL', '')
+FRONTEND_REVALIDATE_SECRET = os.getenv('FRONTEND_REVALIDATE_SECRET', '')
+
 # Production HTTPS settings.
 # Nginx terminates TLS and must always set X-Forwarded-Proto, otherwise this header can be spoofed.
 # The HTTP -> HTTPS redirect and HSTS are left to Nginx (deployment step).
