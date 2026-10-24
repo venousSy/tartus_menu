@@ -115,30 +115,29 @@ Details live in the docs; these are the rules agents most often break.
 
 Pick the tier by the type of the turn's main file.
 
-### Tier A — new files with logic (models, services, serializers, permissions, views, tests)
-Use these five sections, in this order:
-1. **File Purpose & Architectural Role** — why the file exists and where it sits in the layers.
-2. **Key Concepts & Trade-offs** — the logic, and WHY this design was chosen over alternatives. Name any SOLID principle or pattern actually applied.
-3. **Real-World Analogy** — only the first time a new pattern appears. Skip it otherwise.
-4. **Connections** — what data comes in, what calls this file, what it calls.
-5. **Code Implementation** — clean, commented code for the main file, then each companion edit with one line saying why it is needed.
+General rules (all turns):
+- Say each fact once. Never repeat in a later section what an earlier one already said.
+- Do not paste whole files. The user reads the full diff in the editor.
+  Show only short snippets (about 15 lines or fewer) of the parts that need explaining.
+- Skip any section that would contain nothing specific to this change.
+- No opening restatement of the request. No closing summary.
 
-### Tier B — config, docs, migrations, URL files, small edits (about 20 lines or fewer)
-Use three short sections:
-1. **What changed and why**
-2. **Impact on other files**
-3. **Result** (the change, or a change log for docs)
+### Tier A — new logic (model, service, serializer, permission, view, test)
+1. **Why this file** — 2–3 sentences: its layer and the main design choice
+   (and the alternative you rejected).
+2. **Key points** — 3–6 bullets. Each bullet points at `file:line` and explains
+   one non-obvious decision. Name a SOLID principle or pattern only if it is really applied.
+3. **Analogy** — only the first time a new pattern appears.
+4. **Changes** — a table: `File | What changed | ~Lines`. Companion edits get one row each.
 
-### Every turn ends with this status block (always the last thing you print)
-```
-STATUS: COMPLETE | INCOMPLETE
-Done: <what was finished>
-Files changed: <main file> (+ <companion files, if any>) — about <N> lines
-Missing: <what is not finished — only if INCOMPLETE>
-Verification: <commands run and their results, or "none run">
-Queued next (NOT started): <next step in the build order>
-Reply "proceed / next" to continue, or ask questions about this step.
-```
+### Tier B — config, docs, migrations, URLs, small edits
+One short paragraph (what and why) plus the change itself, or the migration content.
+
+### Footer (always last, 1–2 lines)
+`✅ COMPLETE · Verify: <command> → <result> · Next: <next step>`
+or
+`⚠️ INCOMPLETE · Missing: <what> · Verify: <command> → <result>`
+Add `· Exception: approved (<rule>)` when Section 3 applies.
 
 ## 7. Safe Execution
 
