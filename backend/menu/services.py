@@ -1,5 +1,5 @@
 """
-Business rules for the menu app (use_cases.md UC-OWNER-001 and UC-OWNER-012).
+Business rules for the menu app (use_cases.md UC-OWNER-001, UC-OWNER-003 and UC-OWNER-012).
 
 Views pass the cafe from request.user.cafe, never from the request body or URL.
 Callers check role and subscription first (IsCafeOwner, IsActiveCafe).
@@ -8,7 +8,7 @@ Callers check role and subscription first (IsCafeOwner, IsActiveCafe).
 from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
-from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from cafes.models import Cafe
 from core.revalidation import schedule_menu_revalidation
@@ -107,6 +107,48 @@ def delete_category(cafe, category_id):
         category.save(update_fields=['deleted_at', 'updated_at'])
 
         schedule_menu_revalidation(cafe.slug)
+
+
+def reorder_categories(cafe, *, ordered_ids):
+    """
+    UC-OWNER-003: put the cafe's categories in the order of `ordered_ids`
+    (sort_order 100, 200, 300, ...) and return them in that order.
+
+    Raises NotFound (404) when an id is missing, deleted or foreign (A1), and
+    ValidationError (400) when the list leaves out or repeats a category (A2).
+    Both errors reject the whole list, so nothing is saved.
+    """
+    with transaction.atomic():
+        # Global Convention 8: the same cafe row lock as create_category, so a category
+        # created in parallel cannot appear between the check and the update.
+        locked_cafe = Cafe.objects.select_for_update().get(pk=cafe.pk)
+        by_id = {category.pk: category for category in Category.objects.filter(cafe=locked_cafe)}
+
+        # A1: one unknown id rejects the list. A foreign id gets the same 404 as a missing one.
+        if any(category_id not in by_id for category_id in ordered_ids):
+            raise NotFound()
+        # A2: every category exactly once. After A1, the sorted lists differ only
+        # when an id is left out or repeated.
+        if sorted(ordered_ids) != sorted(by_id):
+            raise ValidationError({'ordered_ids': ['The list must include every category exactly once.']})
+
+        ordered = [by_id[category_id] for category_id in ordered_ids]
+        now = timezone.now()
+        changed = []
+        for position, category in enumerate(ordered, start=1):
+            if category.sort_order != position * SORT_ORDER_GAP:
+                category.sort_order = position * SORT_ORDER_GAP
+                category.updated_at = now
+                changed.append(category)
+
+        # Only rows that moved are written ("minimizes DB writes", implementation_plan.md),
+        # and an unchanged order does not rebuild the public menu.
+        if changed:
+            # One UPDATE for all of them. bulk_update() skips save() and auto_now, so updated_at is set above.
+            Category.objects.bulk_update(changed, ['sort_order', 'updated_at'])
+            schedule_menu_revalidation(locked_cafe.slug)
+
+    return ordered
 
 
 def _get_category(cafe, category_id, lock=False):
