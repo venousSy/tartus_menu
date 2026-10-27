@@ -1,12 +1,13 @@
 """
 Owner dashboard: categories (use_cases.md UC-OWNER-001, UC-OWNER-003 and UC-OWNER-012)
-and menu items (UC-OWNER-002, UC-OWNER-004, UC-OWNER-005 and UC-OWNER-013).
+and menu items (UC-OWNER-002, UC-OWNER-004 to UC-OWNER-006 and UC-OWNER-013).
 
 Views stay thin: validate with the serializer, call one service function, return a response.
 The cafe always comes from request.user.cafe; IsCafeOwner guarantees that it exists.
 """
 
 from rest_framework import status
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -16,6 +17,7 @@ from users.permissions import IsActiveCafe, IsCafeOwner
 from . import services
 from .serializers import (
     CategorySerializer,
+    ImageUploadSerializer,
     ItemAvailabilitySerializer,
     ItemListQuerySerializer,
     MenuItemSerializer,
@@ -128,6 +130,19 @@ class ItemAvailabilityView(APIView):
         serializer.is_valid(raise_exception=True)
         item = services.set_item_availability(request.user.cafe, pk, **serializer.validated_data)
         return Response(ItemAvailabilitySerializer(item).data)
+
+
+class ItemImageView(APIView):
+    """POST /api/v1/dashboard/items/{id}/image/ (UC-OWNER-006): multipart/form-data, answers the updated item."""
+
+    permission_classes = OWNER_OF_ACTIVE_CAFE
+    parser_classes = [MultiPartParser]  # the contract is a file upload; a JSON body gets 415
+
+    def post(self, request, pk):
+        serializer = ImageUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        item = services.upload_item_image(request.user.cafe, pk, image_file=serializer.validated_data['image'])
+        return Response(MenuItemSerializer(item).data)
 
 
 class PublicMenuView(APIView):

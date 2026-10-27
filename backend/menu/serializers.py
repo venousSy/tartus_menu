@@ -70,6 +70,14 @@ class ItemAvailabilitySerializer(serializers.Serializer):
     is_available = serializers.BooleanField()
 
 
+class ImageUploadSerializer(serializers.Serializer):
+    """Body of the item image upload (UC-OWNER-006): multipart/form-data with the file in "image"."""
+
+    # FileField, not ImageField: DRF's ImageField checks the file with Pillow and answers with its own
+    # message. The service checks the content (core.images) with the use case's messages instead.
+    image = serializers.FileField()
+
+
 class PublicMenuItemSerializer(serializers.Serializer):
     """An item on the public menu. context['plan'] is the cafe's plan (Global Convention 7)."""
 
