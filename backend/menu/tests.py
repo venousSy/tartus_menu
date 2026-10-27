@@ -33,6 +33,7 @@ class CategoryAPITestCase(APITestCase):
     list_url = reverse('menu:category-list')
     reorder_url = reverse('menu:category-reorder')
     item_list_url = reverse('menu:item-list')
+    item_reorder_url = reverse('menu:item-reorder')
 
     @classmethod
     def setUpTestData(cls):
@@ -58,6 +59,10 @@ class CategoryAPITestCase(APITestCase):
     @staticmethod
     def item_url(pk):
         return reverse('menu:item-detail', kwargs={'pk': pk})
+
+    @staticmethod
+    def availability_url(pk):
+        return reverse('menu:item-availability', kwargs={'pk': pk})
 
 
 class ListCategoriesTests(CategoryAPITestCase):
@@ -496,6 +501,77 @@ class ItemNotFoundTests(ItemAPITestCase):
         self.assertEqual((self.foreign_item.price, self.foreign_item.deleted_at), (Decimal('1.00'), None))
 
 
+class ReorderItemsTests(ItemAPITestCase):
+    """UC-OWNER-004 - POST /api/v1/dashboard/items/reorder/"""
+
+    def setUp(self):
+        super().setUp()
+        self.coffee = self.add_item(self.drinks, 'Coffee', sort_order=200)  # Drinks: Tea 100, Coffee 200
+
+    def drinks_order(self):
+        return dict(MenuItem.objects.filter(category=self.drinks).values_list('pk', 'sort_order'))
+
+    def test_reorder_returns_200_with_the_new_order(self):  # Main flow
+        response = self.client.post(
+            self.item_reorder_url, {'ordered_ids': [self.coffee.pk, self.tea.pk]}, format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            [(item['id'], item['sort_order']) for item in response.data], [(self.coffee.pk, 100), (self.tea.pk, 200)]
+        )
+        self.assertEqual(self.drinks_order(), {self.coffee.pk: 100, self.tea.pk: 200})  # saved
+
+    def test_errors_reject_the_whole_list(self):  # A1, A2, and a full list as for categories
+        soup = self.add_item(self.food, 'Soup')
+        deleted = self.add_item(self.drinks, 'Old', deleted_at=timezone.now())
+        incomplete = {'ordered_ids': ['The list must include every item of the category exactly once.']}
+        cases = [
+            ([self.coffee.pk, self.tea.pk, self.foreign_item.pk], 404, {'detail': 'Not found.'}),  # A2
+            ([self.coffee.pk, self.tea.pk, deleted.pk], 404, {'detail': 'Not found.'}),
+            ([self.coffee.pk, self.tea.pk, soup.pk], 400, {'ordered_ids': ['Reorder must be within one category.']}),
+            ([self.coffee.pk], 400, incomplete),  # Tea left out
+            ([self.coffee.pk, self.tea.pk, self.tea.pk], 400, incomplete),  # Tea twice
+            ([], 400, {'ordered_ids': ['This list may not be empty.']}),
+        ]
+        for ordered_ids, status_code, body in cases:
+            with self.subTest(ordered_ids=ordered_ids):
+                response = self.client.post(self.item_reorder_url, {'ordered_ids': ordered_ids}, format='json')
+
+                self.assertEqual(response.status_code, status_code)
+                self.assertEqual(response.data, body)
+                self.assertEqual(self.drinks_order(), {self.tea.pk: 100, self.coffee.pk: 200})  # nothing moved
+
+
+class ItemAvailabilityTests(ItemAPITestCase):
+    """UC-OWNER-005 - PATCH /api/v1/dashboard/items/{id}/availability/"""
+
+    def test_toggle_changes_only_is_available(self):  # Main flow
+        body = {'is_available': False, 'price': '1.00'}  # the price is not a field here: ignored
+
+        response = self.client.patch(self.availability_url(self.tea.pk), body, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, {'id': self.tea.pk, 'is_available': False})
+        self.tea.refresh_from_db()
+        self.assertEqual((self.tea.is_available, self.tea.price), (False, Decimal('5.00')))
+
+    def test_errors(self):  # A1 and an invalid body
+        cases = [
+            (self.foreign_item.pk, {'is_available': False}, 404, {'detail': 'Not found.'}),  # A1
+            (self.tea.pk, {}, 400, {'is_available': ['This field is required.']}),
+            (self.tea.pk, {'is_available': 'maybe'}, 400, {'is_available': ['Must be a valid boolean.']}),
+        ]
+        for pk, body, status_code, expected in cases:
+            with self.subTest(body=body):
+                response = self.client.patch(self.availability_url(pk), body, format='json')
+
+                self.assertEqual(response.status_code, status_code)
+                self.assertEqual(response.data, expected)
+        self.foreign_item.refresh_from_db()
+        self.assertTrue(self.foreign_item.is_available)
+
+
 class CategoryAccessTests(CategoryAPITestCase):
     """Global Conventions 2 and 5 on every endpoint: the token first, then the role, then the subscription."""
 
@@ -514,6 +590,8 @@ class CategoryAccessTests(CategoryAPITestCase):
             'ITEMS POST': self.client.post(self.item_list_url, new_item, format='json'),
             'ITEM PATCH': self.client.patch(self.item_url(item.pk), {'price': '9.99'}, format='json'),
             'ITEM DELETE': self.client.delete(self.item_url(item.pk)),
+            'ITEMS REORDER': self.client.post(self.item_reorder_url, {'ordered_ids': [item.pk]}, format='json'),
+            'AVAILABILITY': self.client.patch(self.availability_url(item.pk), {'is_available': False}, format='json'),
         }
         for method, response in responses.items():
             with self.subTest(method=method):
@@ -521,8 +599,8 @@ class CategoryAccessTests(CategoryAPITestCase):
                 self.assertEqual(response.data, data)
         names = list(Category.objects.filter(cafe=self.cafe).values_list('name', flat=True))
         self.assertEqual(names, [{'ar': 'Drinks', 'en': ''}])  # nothing was created, renamed or deleted
-        prices = list(MenuItem.objects.filter(cafe=self.cafe).values_list('price', flat=True))
-        self.assertEqual(prices, [Decimal('5.00')])
+        items = list(MenuItem.objects.filter(cafe=self.cafe).values_list('price', 'is_available'))
+        self.assertEqual(items, [(Decimal('5.00'), True)])
 
     def test_without_a_token_returns_401(self):
         self.client.credentials()  # remove the Authorization header
@@ -564,6 +642,11 @@ class MenuRevalidationTests(CategoryAPITestCase):
             'ITEM POST': lambda: self.client.post(
                 self.item_list_url, {'category_id': tea.pk, 'name': {'ar': 'Cake'}, 'price': '4.00'}, format='json'
             ),
+            # Cake (created by ITEM POST at 200) moves before Pie (100), so both rows change.
+            'ITEMS REORDER': lambda: self.client.post(
+                self.item_reorder_url, {'ordered_ids': [MenuItem.objects.get(name__ar='Cake').pk, pie.pk]}, format='json'
+            ),
+            'AVAILABILITY': lambda: self.client.patch(self.availability_url(pie.pk), {'is_available': False}, format='json'),
             'ITEM PATCH': lambda: self.client.patch(self.item_url(pie.pk), {'price': '3.50'}, format='json'),
             'ITEM DELETE': lambda: self.client.delete(self.item_url(pie.pk)),
             'DELETE': lambda: self.client.delete(self.detail_url(category.pk)),
