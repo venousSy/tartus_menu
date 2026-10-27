@@ -1,5 +1,5 @@
 """
-Business rules for the menu app (use_cases.md UC-OWNER-001 to UC-OWNER-005, UC-OWNER-012, UC-OWNER-013,
+Business rules for the menu app (use_cases.md UC-OWNER-001 to UC-OWNER-006, UC-OWNER-012, UC-OWNER-013,
 and the public menu UC-GUEST-001 and UC-GUEST-002).
 
 Views pass the cafe from request.user.cafe, never from the request body or URL.
@@ -12,6 +12,8 @@ from django.utils import timezone
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from cafes.models import Cafe
+from core.images import ITEM_IMAGE_MAX_SIDE, process_image
+from core.media_storage import delete_image_on_commit, store_image
 from core.revalidation import schedule_menu_revalidation
 
 from .models import Category, MenuItem
@@ -300,6 +302,33 @@ def set_item_availability(cafe, item_id, *, is_available):
     return item
 
 
+def upload_item_image(cafe, item_id, *, image_file):
+    """
+    UC-OWNER-006. Checks in the use case's order: the plan (403, A1), the item (404, A7), the
+    file (400, A2, A3, A5). Then stores the WebP (502 on a storage failure, A4) and saves its URL.
+
+    The file goes to R2 before the transaction, so no row lock is held during the network upload.
+    The item row is locked for the URL swap: of two parallel uploads, the second sees the first
+    one's URL as its old image and deletes it, so no stored file is left without an item.
+    """
+    if not cafe.plan.allows_images:  # the plan flag, never the plan name
+        raise PermissionDenied('Item images require a Pro plan.')
+    _get_item(cafe, item_id)  # 404 before the expensive work
+    data = process_image(image_file, max_side=ITEM_IMAGE_MAX_SIDE)
+    new_url = store_image(data, f'cafes/{cafe.pk}/items')
+
+    with transaction.atomic():
+        # Deleted in the meantime: 404, and the new file stays as a cheap orphan.
+        item = _get_item(cafe, item_id, lock=True)
+        old_url = item.image_url
+        item.image_url = new_url
+        item.save(update_fields=['image_url', 'updated_at'])
+        # Only after the commit: on a rollback the item still shows the old image.
+        delete_image_on_commit(old_url)
+        schedule_menu_revalidation(cafe.slug)
+    return item
+
+
 def get_public_menu(slug):
     """
     UC-GUEST-001 and UC-GUEST-002: the cafe and its menu as customers see it. No caller check:
@@ -359,9 +388,10 @@ def _get_category(cafe, category_id, lock=False):
         raise NotFound() from None
 
 
-def _get_item(cafe, item_id):
+def _get_item(cafe, item_id, lock=False):
     """The cafe's non-deleted item, or NotFound -> 404 {"detail": "Not found."} (ownership masking)."""
+    queryset = MenuItem.objects.select_for_update() if lock else MenuItem.objects
     try:
-        return MenuItem.objects.get(pk=item_id, cafe=cafe)
+        return queryset.get(pk=item_id, cafe=cafe)
     except MenuItem.DoesNotExist:
         raise NotFound() from None

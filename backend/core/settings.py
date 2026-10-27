@@ -155,8 +155,15 @@ if USE_S3:
     AWS_STORAGE_BUCKET_NAME = os.getenv('R2_BUCKET_NAME')
     AWS_S3_ENDPOINT_URL = os.getenv('R2_ENDPOINT_URL') # Custom Cloudflare R2 endpoint
     AWS_S3_CUSTOM_DOMAIN = os.getenv('R2_CUSTOM_DOMAIN')
+    if not AWS_S3_CUSTOM_DOMAIN:
+        # Without a custom domain django-storages returns signed URLs that expire after one hour.
+        # Saved into image_url or logo_url, every image would break an hour later.
+        raise ImproperlyConfigured("R2_CUSTOM_DOMAIN must be set when USE_S3=True.")
     AWS_S3_REGION_NAME = 'auto'  # Cloudflare R2 uses the region name "auto"
     AWS_S3_SIGNATURE_VERSION = 's3v4'
+    # Every upload gets a new random key, so a stored object never changes: browsers and the CDN
+    # may cache it for a year (UC-OWNER-006).
+    AWS_S3_OBJECT_PARAMETERS = {'CacheControl': 'public, max-age=31536000, immutable'}
 else:
     # Fallback to local storage for early development
     MEDIA_URL = 'media/'

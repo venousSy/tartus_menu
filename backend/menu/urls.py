@@ -11,6 +11,7 @@ from .views import (
     CategoryReorderView,
     ItemAvailabilityView,
     ItemDetailView,
+    ItemImageView,
     ItemListCreateView,
     ItemReorderView,
 )
@@ -27,4 +28,5 @@ urlpatterns = [
     path('items/reorder/', ItemReorderView.as_view(), name='item-reorder'),              # UC-OWNER-004 (POST)
     path('items/<int:pk>/', ItemDetailView.as_view(), name='item-detail'),               # UC-OWNER-002 (PATCH, DELETE)
     path('items/<int:pk>/availability/', ItemAvailabilityView.as_view(), name='item-availability'),  # UC-OWNER-005
+    path('items/<int:pk>/image/', ItemImageView.as_view(), name='item-image'),          # UC-OWNER-006 (POST)
 ]
