@@ -70,6 +70,58 @@ class ItemAvailabilitySerializer(serializers.Serializer):
     is_available = serializers.BooleanField()
 
 
+class PublicMenuItemSerializer(serializers.Serializer):
+    """An item on the public menu. context['plan'] is the cafe's plan (Global Convention 7)."""
+
+    id = serializers.IntegerField()
+    name = BilingualNameField()
+    description = BilingualDescriptionField()
+    price = serializers.DecimalField(max_digits=10, decimal_places=2)  # "50.00" (Global Convention 10)
+    image_url = serializers.SerializerMethodField()
+    is_available = serializers.BooleanField()
+    is_featured = serializers.BooleanField()
+    is_new = serializers.BooleanField()
+    sort_order = serializers.IntegerField()
+
+    def get_image_url(self, item):
+        # Kept in the database, but shown only while the plan allows images.
+        return item.image_url if self.context['plan'].allows_images else ''
+
+
+class PublicCategorySerializer(serializers.Serializer):
+    """A visible category on the public menu with its available items (`public_items`, prefetched)."""
+
+    id = serializers.IntegerField()
+    name = BilingualNameField()
+    sort_order = serializers.IntegerField()
+    items = PublicMenuItemSerializer(source='public_items', many=True)
+
+
+class PublicCafeSerializer(serializers.Serializer):
+    """The cafe part of the public menu; logo and color only while the plan allows branding."""
+
+    name = BilingualNameField()
+    primary_color = serializers.SerializerMethodField()
+    logo_url = serializers.SerializerMethodField()
+    is_active = serializers.BooleanField()
+
+    def get_primary_color(self, cafe):
+        return cafe.primary_color if self.context['plan'].allows_branding else ''
+
+    def get_logo_url(self, cafe):
+        return cafe.logo_url if self.context['plan'].allows_branding else ''
+
+
+class PublicMenuSerializer(serializers.Serializer):
+    """
+    Output of GET /api/v1/menu/{slug}/ (system_design.md 3.4): { cafe, categories }.
+    The instance is {'cafe': ..., 'categories': [...]}; context needs {'plan': cafe.plan}.
+    """
+
+    cafe = PublicCafeSerializer()
+    categories = PublicCategorySerializer(many=True)
+
+
 class ItemListQuerySerializer(serializers.Serializer):
     """Query string of GET /items/: an optional ?category=<id> (UC-OWNER-013 A2: not an integer -> 400)."""
 

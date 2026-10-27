@@ -1,12 +1,13 @@
 """
-Business rules for the menu app (use_cases.md UC-OWNER-001 to UC-OWNER-005, UC-OWNER-012 and UC-OWNER-013).
+Business rules for the menu app (use_cases.md UC-OWNER-001 to UC-OWNER-005, UC-OWNER-012, UC-OWNER-013,
+and the public menu UC-GUEST-001 and UC-GUEST-002).
 
 Views pass the cafe from request.user.cafe, never from the request body or URL.
 Callers check role and subscription first (IsCafeOwner, IsActiveCafe).
 """
 
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import Max, Prefetch
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
@@ -297,6 +298,33 @@ def set_item_availability(cafe, item_id, *, is_available):
         item.save(update_fields=['is_available', 'updated_at'])
         schedule_menu_revalidation(cafe.slug)
     return item
+
+
+def get_public_menu(slug):
+    """
+    UC-GUEST-001 and UC-GUEST-002: the cafe and its menu as customers see it. No caller check:
+    the endpoint is public. Raises NotFound (404) for an unknown slug (A1).
+
+    Returns (cafe, categories). Only visible, non-deleted categories, sorted by sort_order; each has
+    `public_items`: its available, non-deleted items, sorted by sort_order. An inactive cafe gets
+    no categories (UC-GUEST-002); that is a 200 answer, not an error.
+    Three queries in total (cafe with plan, categories, items), whatever the menu size.
+    """
+    try:
+        cafe = Cafe.objects.select_related('plan').get(slug=slug)
+    except Cafe.DoesNotExist:
+        raise NotFound() from None
+    if not cafe.is_active:
+        return cafe, []
+
+    # One query for all items of all categories instead of one per category (no N+1 problem).
+    available_items = MenuItem.objects.filter(is_available=True).order_by('sort_order', 'id')
+    categories = (
+        Category.objects.filter(cafe=cafe, is_visible=True)
+        .prefetch_related(Prefetch('items', queryset=available_items, to_attr='public_items'))
+        .order_by('sort_order', 'id')
+    )
+    return cafe, list(categories)
 
 
 def _apply_positions(model, ordered):

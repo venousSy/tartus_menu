@@ -7,6 +7,7 @@ The cafe always comes from request.user.cafe; IsCafeOwner guarantees that it exi
 """
 
 from rest_framework import status
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -18,6 +19,7 @@ from .serializers import (
     ItemAvailabilitySerializer,
     ItemListQuerySerializer,
     MenuItemSerializer,
+    PublicMenuSerializer,
     ReorderSerializer,
 )
               
@@ -126,3 +128,17 @@ class ItemAvailabilityView(APIView):
         serializer.is_valid(raise_exception=True)
         item = services.set_item_availability(request.user.cafe, pk, **serializer.validated_data)
         return Response(ItemAvailabilitySerializer(item).data)
+
+
+class PublicMenuView(APIView):
+    """GET /api/v1/menu/{slug}/ (UC-GUEST-001, UC-GUEST-002): the customer menu, no login."""
+
+    # Public: no token is read (a stray Authorization header cannot cause a 401) and no role is checked.
+    # No DRF throttle either: the caller is the Next.js server, so Nginx rate-limits /menu/ instead.
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request, slug):
+        cafe, categories = services.get_public_menu(slug)
+        menu = {'cafe': cafe, 'categories': categories}
+        return Response(PublicMenuSerializer(menu, context={'plan': cafe.plan}).data)
