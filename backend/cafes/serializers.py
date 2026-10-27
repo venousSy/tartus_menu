@@ -40,3 +40,13 @@ class CafeSettingsSerializer(serializers.Serializer):
         if isinstance(data, dict) and 'slug' in data:
             raise PermissionDenied('Only a Super Admin can change the cafe slug.')
         return super().to_internal_value(data)
+
+
+class LogoUploadSerializer(serializers.Serializer):
+    """
+    Body of the logo upload (UC-OWNER-010): multipart/form-data with the file in "image",
+    the same field name as the item image upload (UC-OWNER-006).
+    """
+
+    # FileField, not ImageField: the service checks the content (core.images) with the use case's messages.
+    image = serializers.FileField()
