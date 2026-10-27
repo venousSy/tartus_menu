@@ -21,3 +21,16 @@ class CategorySerializer(serializers.Serializer):
     sort_order = serializers.IntegerField(read_only=True)
     # Optional: when it is not sent, create uses True and edit keeps the current value.
     is_visible = serializers.BooleanField(required=False)
+
+
+class ReorderSerializer(serializers.Serializer):
+    """
+    Input of a reorder call: {"ordered_ids": [3, 1, 2]} (UC-OWNER-003; UC-OWNER-004 sends the same body).
+
+    Shape only: a list of integers. Whether every id exists, belongs to the cafe and
+    appears exactly once is a business rule, checked by the service under the cafe lock.
+    """
+
+    # An empty list passes here: it is complete for a cafe without categories,
+    # and the service rejects it as incomplete otherwise (A2).
+    ordered_ids = serializers.ListField(child=serializers.IntegerField())
