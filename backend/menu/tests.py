@@ -675,3 +675,105 @@ class MenuRevalidationTests(CategoryAPITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertEqual(callbacks, [])  # no revalidation was even scheduled
+
+
+class PublicMenuTests(APITestCase):
+    """UC-GUEST-001 and UC-GUEST-002 - GET /api/v1/menu/{slug}/ (no login)"""
+
+    url = reverse('public_menu:detail', kwargs={'slug': 'tartus-coffee'})
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.pro = SubscriptionPlan.objects.create(
+            name=SubscriptionPlan.Name.PRO, allows_images=True, allows_branding=True
+        )
+        cls.basic = SubscriptionPlan.objects.create(name=SubscriptionPlan.Name.BASIC, max_categories=5)
+        cls.cafe = Cafe.objects.create(
+            owner=User.objects.create_user(email='owner@cafe.com'), plan=cls.pro, slug='tartus-coffee',
+            name={'ar': 'Tartus Coffee', 'en': ''}, primary_color='#C0392B',
+            logo_url='https://media.example.test/logo.webp', is_active=True,
+        )
+        cls.food = Category.objects.create(cafe=cls.cafe, name={'ar': 'Food', 'en': ''}, sort_order=100)
+        cls.drinks = Category.objects.create(cafe=cls.cafe, name={'ar': 'Drinks', 'en': ''}, sort_order=200)
+        hidden = Category.objects.create(cafe=cls.cafe, name={'ar': 'Hidden', 'en': ''}, is_visible=False)
+        Category.objects.create(cafe=cls.cafe, name={'ar': 'Old', 'en': ''}, deleted_at=timezone.now())
+        cls.soup = cls.item(cls.food, 'Soup', '7.00')
+        cls.tea = cls.item(
+            cls.drinks, 'Tea', '5.00', image_url='https://media.example.test/tea.webp', is_featured=True
+        )
+        cls.item(cls.drinks, 'Coffee', '6.00', sort_order=200, is_available=False)  # sold out
+        cls.item(cls.drinks, 'Juice', '4.00', sort_order=300, deleted_at=timezone.now())
+        cls.item(hidden, 'Secret', '1.00')
+        Cafe.objects.create(  # a second cafe; none of its data may appear
+            owner=User.objects.create_user(email='other@cafe.com'), plan=cls.pro, slug='other-cafe',
+            name={'ar': 'Other Cafe'}, is_active=True,
+        )
+
+    @classmethod
+    def item(cls, category, name, price, **fields):
+        return MenuItem.objects.create(
+            cafe=category.cafe, category=category, name={'ar': name, 'en': ''}, price=Decimal(price), **fields
+        )
+
+    def item_data(self, item, **changes):
+        data = {
+            'id': item.pk, 'name': {'ar': item.name['ar'], 'en': ''}, 'description': {'ar': '', 'en': ''},
+            'price': str(item.price), 'image_url': item.image_url, 'is_available': True,
+            'is_featured': item.is_featured, 'is_new': False, 'sort_order': item.sort_order,
+        }
+        return {**data, **changes}
+
+    def test_menu_shows_visible_categories_and_available_items(self):  # Main flow
+        # Three queries for the whole menu (cafe with plan, categories, items): no N+1 problem.
+        with self.assertNumQueries(3):
+            response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Hidden or deleted categories, sold-out or deleted items and the other cafe are left out.
+        self.assertEqual(response.data, {
+            'cafe': {
+                'name': {'ar': 'Tartus Coffee', 'en': ''}, 'primary_color': '#C0392B',
+                'logo_url': 'https://media.example.test/logo.webp', 'is_active': True,
+            },
+            'categories': [
+                {'id': self.food.pk, 'name': {'ar': 'Food', 'en': ''}, 'sort_order': 100,
+                 'items': [self.item_data(self.soup)]},
+                {'id': self.drinks.pk, 'name': {'ar': 'Drinks', 'en': ''}, 'sort_order': 200,
+                 'items': [self.item_data(self.tea)]},
+            ],
+        })
+
+    def test_plan_without_images_and_branding_hides_them(self):  # Global Convention 7
+        Cafe.objects.filter(pk=self.cafe.pk).update(plan=self.basic)
+
+        response = self.client.get(self.url)
+
+        self.assertEqual((response.data['cafe']['primary_color'], response.data['cafe']['logo_url']), ('', ''))
+        self.assertEqual(response.data['categories'][1]['items'], [self.item_data(self.tea, image_url='')])
+
+    def test_inactive_cafe_returns_200_without_categories(self):  # A2, UC-GUEST-002
+        Cafe.objects.filter(pk=self.cafe.pk).update(is_active=False)
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual((response.data['cafe']['is_active'], response.data['categories']), (False, []))
+
+    def test_cafe_without_categories_returns_an_empty_list(self):  # A3
+        response = self.client.get(reverse('public_menu:detail', kwargs={'slug': 'other-cafe'}))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['categories'], [])
+
+    def test_unknown_slug_returns_404(self):  # A1
+        response = self.client.get(reverse('public_menu:detail', kwargs={'slug': 'no-such-cafe'}))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data, {'detail': 'Not found.'})
+
+    def test_no_login_needed_and_a_stray_token_is_ignored(self):
+        self.client.credentials(HTTP_AUTHORIZATION='Bearer not-a-real-token')
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
