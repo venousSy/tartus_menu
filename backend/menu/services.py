@@ -1,5 +1,5 @@
 """
-Business rules for the menu app (use_cases.md UC-OWNER-001, UC-OWNER-003 and UC-OWNER-012).
+Business rules for the menu app (use_cases.md UC-OWNER-001 to UC-OWNER-003, UC-OWNER-012 and UC-OWNER-013).
 
 Views pass the cafe from request.user.cafe, never from the request body or URL.
 Callers check role and subscription first (IsCafeOwner, IsActiveCafe).
@@ -151,6 +151,115 @@ def reorder_categories(cafe, *, ordered_ids):
     return ordered
 
 
+def list_items(cafe, *, category_id=None):
+    """
+    UC-OWNER-013: the cafe's non-deleted items, unavailable ones included.
+
+    Without category_id: sorted by the category's sort_order, then the item's.
+    With category_id: only that category's items, sorted by sort_order. Raises NotFound (404)
+    when that category is missing, deleted or foreign (A3).
+    """
+    items = MenuItem.objects.filter(cafe=cafe)  # ActiveManager: no soft-deleted items
+    if category_id is None:
+        # category_id keeps each category's items together if two categories share a sort_order.
+        return items.order_by('category__sort_order', 'category_id', 'sort_order', 'id')
+    category = _get_category(cafe, category_id)
+    return items.filter(category=category).order_by('sort_order', 'id')
+
+
+def create_item(cafe, *, category_id, name, price, description=None, is_featured=False, is_new=False):
+    """
+    UC-OWNER-002 (create). The inputs were already validated by the serializer.
+
+    Raises NotFound (404) when the category is missing, deleted or foreign (A2), then
+    PermissionDenied (403) when the plan's max_items is reached (A1), in the main flow's order.
+    """
+    with transaction.atomic():
+        # Global Convention 8: the same cafe row lock as create_category, for the limit and the sort_order.
+        locked_cafe = (
+            Cafe.objects.select_related('plan')
+            .select_for_update(of=('self',))
+            .get(pk=cafe.pk)
+        )
+        # Lock the category row too. A delete_category for it either commits first (then this
+        # lookup finds no live category: 404) or waits for this commit and then deletes the new item too.
+        category = _get_category(locked_cafe, category_id, lock=True)
+
+        plan = locked_cafe.plan
+        items = MenuItem.objects.filter(cafe=locked_cafe)  # non-deleted only; unavailable ones count
+        # Decide by the plan's limit, never by its name. NULL means unlimited.
+        if plan.max_items is not None and items.count() >= plan.max_items:
+            raise PermissionDenied(
+                f'Your {plan.get_name_display()} plan allows a maximum of '
+                f'{plan.max_items} items. Upgrade to Pro for unlimited.'
+            )
+
+        # Items are ordered inside their category, so the gap continues after that category's last item.
+        highest = items.filter(category=category).aggregate(highest=Max('sort_order'))['highest'] or 0
+        item = MenuItem.objects.create(
+            cafe=locked_cafe,
+            category=category,
+            name=name,
+            # Optional (Global Convention 6); stored with both keys, like a name.
+            description=description if description is not None else {'ar': '', 'en': ''},
+            price=price,
+            is_featured=is_featured,
+            is_new=is_new,
+            sort_order=highest + SORT_ORDER_GAP,
+        )
+
+        # Global Convention 9: rebuild the public menu, but only after the commit.
+        schedule_menu_revalidation(locked_cafe.slug)
+
+    return item
+
+
+def update_item(cafe, item_id, *, category_id=None, name=None, description=None, price=None,
+                is_featured=None, is_new=None):
+    """
+    UC-OWNER-002 (edit). PATCH semantics: an argument left as None is not changed.
+    is_available is not changed here: it has its own endpoint (UC-OWNER-005).
+
+    A new category_id moves the item to the end of that category (its last item + 100).
+    Raises NotFound (404) for a missing, deleted or foreign item or new category (A2).
+    """
+    with transaction.atomic():
+        item = _get_item(cafe, item_id)
+        changed = []
+
+        if category_id is not None and category_id != item.category_id:
+            # Global Convention 8: the new position is assigned under the cafe row lock, and the
+            # new category row is locked as in create_item, so it cannot be deleted under the item.
+            locked_cafe = Cafe.objects.select_for_update().get(pk=cafe.pk)
+            category = _get_category(locked_cafe, category_id, lock=True)
+            siblings = MenuItem.objects.filter(category=category)
+            highest = siblings.aggregate(highest=Max('sort_order'))['highest'] or 0
+            item.category = category
+            item.sort_order = highest + SORT_ORDER_GAP
+            changed += ['category', 'sort_order']
+
+        for field, value in [('name', name), ('description', description), ('price', price),
+                             ('is_featured', is_featured), ('is_new', is_new)]:
+            if value is not None:
+                setattr(item, field, value)
+                changed.append(field)
+
+        if changed:
+            # With update_fields, auto_now (updated_at) is saved only when it is listed.
+            item.save(update_fields=[*changed, 'updated_at'])
+            schedule_menu_revalidation(cafe.slug)
+
+    return item
+
+
+def delete_item(cafe, item_id):
+    """UC-OWNER-002 (delete): soft delete. Raises NotFound (404) for a missing, deleted or foreign item."""
+    item = _get_item(cafe, item_id)
+    item.deleted_at = timezone.now()
+    item.save(update_fields=['deleted_at', 'updated_at'])
+    schedule_menu_revalidation(cafe.slug)
+
+
 def _get_category(cafe, category_id, lock=False):
     """
     The cafe's non-deleted category, or NotFound -> 404 {"detail": "Not found."}.
@@ -160,4 +269,12 @@ def _get_category(cafe, category_id, lock=False):
     try:
         return queryset.get(pk=category_id, cafe=cafe)
     except Category.DoesNotExist:
+        raise NotFound() from None
+
+
+def _get_item(cafe, item_id):
+    """The cafe's non-deleted item, or NotFound -> 404 {"detail": "Not found."} (ownership masking)."""
+    try:
+        return MenuItem.objects.get(pk=item_id, cafe=cafe)
+    except MenuItem.DoesNotExist:
         raise NotFound() from None
