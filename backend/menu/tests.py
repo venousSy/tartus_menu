@@ -1,10 +1,12 @@
 """
-API integration tests for the category endpoints (use_cases.md UC-OWNER-001 and UC-OWNER-012).
+API integration tests for the menu dashboard endpoints: categories (use_cases.md UC-OWNER-001,
+UC-OWNER-003, UC-OWNER-012) and menu items (UC-OWNER-002, UC-OWNER-013).
 Each test sends real HTTP requests through URL -> view -> service -> database.
 """
 
 import json
 from datetime import timedelta
+from decimal import Decimal
 from unittest import mock
 
 from django.contrib.auth import get_user_model
@@ -30,6 +32,7 @@ class CategoryAPITestCase(APITestCase):
 
     list_url = reverse('menu:category-list')
     reorder_url = reverse('menu:category-reorder')
+    item_list_url = reverse('menu:item-list')
 
     @classmethod
     def setUpTestData(cls):
@@ -51,6 +54,10 @@ class CategoryAPITestCase(APITestCase):
     @staticmethod
     def detail_url(pk):
         return reverse('menu:category-detail', kwargs={'pk': pk})
+
+    @staticmethod
+    def item_url(pk):
+        return reverse('menu:item-detail', kwargs={'pk': pk})
 
 
 class ListCategoriesTests(CategoryAPITestCase):
@@ -277,18 +284,236 @@ class ReorderCategoriesTests(CategoryAPITestCase):
                 self.assert_order_unchanged()
 
 
+class ItemAPITestCase(CategoryAPITestCase):
+    """
+    Adds item data: Food (sort_order 100) and Drinks (200), the item Tea in Drinks,
+    and an item of the other cafe that the owner must never see or change.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.food = Category.objects.create(cafe=cls.cafe, name={'ar': 'Food', 'en': ''}, sort_order=100)
+        cls.drinks = Category.objects.create(cafe=cls.cafe, name={'ar': 'Drinks', 'en': ''}, sort_order=200)
+        cls.tea = MenuItem.objects.create(
+            cafe=cls.cafe, category=cls.drinks, name={'ar': 'Tea', 'en': ''}, price=Decimal('5.00')
+        )
+        cls.foreign_item = MenuItem.objects.create(
+            cafe=cls.other_cafe, category=cls.foreign, name={'ar': 'Foreign', 'en': ''}, price=Decimal('1.00')
+        )
+
+    def tea_data(self, **changes):
+        """Tea as the API returns it (UC-OWNER-013 shape), with `changes` applied."""
+        data = {
+            'id': self.tea.pk, 'category_id': self.drinks.pk, 'name': {'ar': 'Tea', 'en': ''},
+            'description': {'ar': '', 'en': ''}, 'price': '5.00', 'image_url': '', 'is_available': True,
+            'is_featured': False, 'is_new': False, 'sort_order': 100,
+        }
+        return {**data, **changes}
+
+    def add_item(self, category, name, **fields):
+        return MenuItem.objects.create(
+            cafe=self.cafe, category=category, name={'ar': name, 'en': ''}, price=Decimal('7.00'), **fields
+        )
+
+
+class ListItemsTests(ItemAPITestCase):
+    """UC-OWNER-013 - GET /api/v1/dashboard/items/ (optional ?category=<id>)"""
+
+    def test_lists_own_non_deleted_items_in_menu_order(self):  # Main flow, no filter
+        soup = self.add_item(self.food, 'Soup')
+        coffee = self.add_item(self.drinks, 'Coffee', sort_order=200, is_available=False)
+        self.add_item(self.drinks, 'Old', deleted_at=timezone.now())
+
+        response = self.client.get(self.item_list_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Food (100) before Drinks (200), then each item's sort_order. Unavailable items are
+        # listed; deleted items and the other cafe's item are not.
+        self.assertEqual([item['id'] for item in response.data], [soup.pk, self.tea.pk, coffee.pk])
+        self.assertEqual(response.data[1], self.tea_data())  # the full shape of one item
+
+    def test_category_filter(self):  # Main flow with ?category=<id>, A1, A2, A3
+        coffee = self.add_item(self.drinks, 'Coffee', sort_order=200)
+        cases = [
+            (self.drinks.pk, status.HTTP_200_OK, [self.tea.pk, coffee.pk]),
+            (self.food.pk, status.HTTP_200_OK, []),  # A1: a category without items
+            ('abc', status.HTTP_400_BAD_REQUEST, {'category': ['A valid integer is required.']}),  # A2
+            (self.foreign.pk, status.HTTP_404_NOT_FOUND, {'detail': 'Not found.'}),  # A3
+        ]
+        for category, status_code, expected in cases:
+            with self.subTest(category=category):
+                response = self.client.get(self.item_list_url, {'category': category})
+
+                self.assertEqual(response.status_code, status_code)
+                body = response.data
+                if status_code == status.HTTP_200_OK:
+                    body = [item['id'] for item in body]
+                self.assertEqual(body, expected)
+
+
+class CreateItemTests(ItemAPITestCase):
+    """UC-OWNER-002 (create) - POST /api/v1/dashboard/items/"""
+
+    def test_create_returns_201_at_the_end_of_its_category(self):  # Main flow
+        body = {'category_id': self.drinks.pk, 'name': {'ar': 'Coffee'}, 'price': '12.5', 'is_new': True}
+
+        response = self.client.post(self.item_list_url, body, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        coffee = MenuItem.objects.get(pk=response.data['id'], cafe=self.cafe)
+        # After Tea (100) in Drinks; the price is a string with two decimals (Global Convention 10).
+        self.assertEqual(response.data, {
+            'id': coffee.pk, 'category_id': self.drinks.pk, 'name': {'ar': 'Coffee', 'en': ''},
+            'description': {'ar': '', 'en': ''}, 'price': '12.50', 'image_url': '', 'is_available': True,
+            'is_featured': False, 'is_new': True, 'sort_order': 200,
+        })
+
+    def test_read_only_fields_in_the_body_are_ignored(self):  # Architectural Note
+        body = {
+            'category_id': self.food.pk, 'name': {'ar': 'Soup'}, 'price': '7.00', 'cafe': self.other_cafe.pk,
+            'sort_order': 5, 'image_url': 'https://example.test/soup.png', 'is_available': False,
+        }
+
+        response = self.client.post(self.item_list_url, body, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        soup = MenuItem.objects.get(pk=response.data['id'])
+        self.assertEqual(
+            (soup.cafe_id, soup.sort_order, soup.image_url, soup.is_available), (self.cafe.pk, 100, '', True)
+        )
+
+    def test_create_over_the_plan_limit_returns_403(self):  # A1
+        SubscriptionPlan.objects.filter(pk=self.cafe.plan_id).update(max_items=2)
+        self.add_item(self.food, 'Soup')  # with Tea: 2 of 2
+        body = {'category_id': self.food.pk, 'name': {'ar': 'Bread'}, 'price': '2.00'}
+
+        response = self.client.post(self.item_list_url, body, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.data, {'detail': 'Your Basic plan allows a maximum of 2 items. Upgrade to Pro for unlimited.'}
+        )
+        self.assertEqual(MenuItem.objects.filter(cafe=self.cafe).count(), 2)
+
+    def test_unknown_category_returns_404(self):  # A2
+        deleted = Category.objects.create(cafe=self.cafe, name={'ar': 'Old', 'en': ''}, deleted_at=timezone.now())
+        missing_pk = Category.all_objects.latest('pk').pk + 1
+        for label, category_id in [('foreign', self.foreign.pk), ('deleted', deleted.pk), ('missing', missing_pk)]:
+            with self.subTest(category=label):
+                body = {'category_id': category_id, 'name': {'ar': 'Soup'}, 'price': '7.00'}
+
+                response = self.client.post(self.item_list_url, body, format='json')
+
+                self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+                self.assertEqual(response.data, {'detail': 'Not found.'})
+        self.assertEqual(MenuItem.objects.filter(cafe=self.cafe).count(), 1)  # only Tea
+
+    def test_invalid_fields_return_400(self):  # A3, A4
+        valid = {'category_id': self.food.pk, 'name': {'ar': 'Soup'}, 'price': '7.00'}
+        cases = [
+            ({**valid, 'price': '-1.00'}, {'price': ['Ensure this value is greater than or equal to 0.']}),  # A3
+            ({**valid, 'name': {'en': 'Soup'}}, {'name': {'ar': ['This field is required.']}}),  # A4
+            (
+                {**valid, 'description': {'ar': 'Hot', 'fr': 'Chaud'}},
+                {'description': ['Only the keys "ar" and "en" are allowed.']},  # A4
+            ),
+            (
+                {'name': {'ar': 'Soup'}},
+                {'category_id': ['This field is required.'], 'price': ['This field is required.']},
+            ),
+        ]
+        for body, errors in cases:
+            with self.subTest(body=body):
+                response = self.client.post(self.item_list_url, body, format='json')
+
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertEqual(response.data, errors)
+        self.assertEqual(MenuItem.objects.filter(cafe=self.cafe).count(), 1)
+
+
+class EditItemTests(ItemAPITestCase):
+    """UC-OWNER-002 (edit) - PATCH /api/v1/dashboard/items/{id}/"""
+
+    def test_patch_changes_only_the_sent_fields(self):  # Main flow
+        body = {'price': '6', 'is_featured': True, 'description': {'en': 'Green tea'}, 'is_available': False}
+
+        response = self.client.patch(self.item_url(self.tea.pk), body, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # is_available is ignored: it changes only through its own endpoint (UC-OWNER-005).
+        self.assertEqual(response.data, self.tea_data(
+            price='6.00', is_featured=True, description={'ar': '', 'en': 'Green tea'},
+        ))
+
+    def test_new_category_moves_the_item_to_its_end(self):
+        self.add_item(self.food, 'Soup')  # Food: Soup at 100
+
+        response = self.client.patch(self.item_url(self.tea.pk), {'category_id': self.food.pk}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual((response.data['category_id'], response.data['sort_order']), (self.food.pk, 200))
+
+    def test_move_to_an_unknown_category_returns_404(self):  # A2
+        deleted = Category.objects.create(cafe=self.cafe, name={'ar': 'Old', 'en': ''}, deleted_at=timezone.now())
+        for label, category_id in [('foreign', self.foreign.pk), ('deleted', deleted.pk)]:
+            with self.subTest(category=label):
+                response = self.client.patch(self.item_url(self.tea.pk), {'category_id': category_id}, format='json')
+
+                self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+                self.assertEqual(response.data, {'detail': 'Not found.'})
+        self.tea.refresh_from_db()
+        self.assertEqual((self.tea.category_id, self.tea.sort_order), (self.drinks.pk, 100))
+
+
+class DeleteItemTests(ItemAPITestCase):
+    """UC-OWNER-002 (delete) - DELETE /api/v1/dashboard/items/{id}/"""
+
+    def test_delete_soft_deletes_the_item(self):  # Main flow
+        response = self.client.delete(self.item_url(self.tea.pk))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertIsNotNone(MenuItem.all_objects.get(pk=self.tea.pk).deleted_at)  # the row is kept
+        self.assertEqual(self.client.get(self.item_list_url).data, [])
+
+
+class ItemNotFoundTests(ItemAPITestCase):
+    """PATCH and DELETE answer 404 for a foreign, deleted or missing item (ownership masking)."""
+
+    def test_foreign_deleted_or_missing_item_returns_404(self):
+        deleted = self.add_item(self.drinks, 'Old', deleted_at=timezone.now())
+        missing_pk = MenuItem.all_objects.latest('pk').pk + 1
+        for label, pk in [('foreign', self.foreign_item.pk), ('deleted', deleted.pk), ('missing', missing_pk)]:
+            responses = {
+                'PATCH': self.client.patch(self.item_url(pk), {'price': '9.99'}, format='json'),
+                'DELETE': self.client.delete(self.item_url(pk)),
+            }
+            for method, response in responses.items():
+                with self.subTest(item=label, method=method):
+                    self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+                    self.assertEqual(response.data, {'detail': 'Not found.'})
+        self.foreign_item.refresh_from_db()  # the other cafe's item was neither changed nor deleted
+        self.assertEqual((self.foreign_item.price, self.foreign_item.deleted_at), (Decimal('1.00'), None))
+
+
 class CategoryAccessTests(CategoryAPITestCase):
-    """Global Conventions 2 and 5 on all five endpoints: the token first, then the role, then the subscription."""
+    """Global Conventions 2 and 5 on every endpoint: the token first, then the role, then the subscription."""
 
     def assert_every_endpoint_answers(self, status_code, data):
-        """Call every category endpoint: each must give the same error and change nothing."""
+        """Call every category and item endpoint: each must give the same error and change nothing."""
         category = Category.objects.create(cafe=self.cafe, name={'ar': 'Drinks', 'en': ''})
+        item = MenuItem.objects.create(cafe=self.cafe, category=category, name={'ar': 'Tea'}, price=Decimal('5.00'))
+        new_item = {'category_id': category.pk, 'name': {'ar': 'New'}, 'price': '1.00'}
         responses = {
             'GET': self.client.get(self.list_url),
             'POST': self.client.post(self.list_url, {'name': {'ar': 'New'}}, format='json'),
             'PATCH': self.client.patch(self.detail_url(category.pk), {'name': {'ar': 'New'}}, format='json'),
             'DELETE': self.client.delete(self.detail_url(category.pk)),
             'REORDER': self.client.post(self.reorder_url, {'ordered_ids': [category.pk]}, format='json'),
+            'ITEMS GET': self.client.get(self.item_list_url),
+            'ITEMS POST': self.client.post(self.item_list_url, new_item, format='json'),
+            'ITEM PATCH': self.client.patch(self.item_url(item.pk), {'price': '9.99'}, format='json'),
+            'ITEM DELETE': self.client.delete(self.item_url(item.pk)),
         }
         for method, response in responses.items():
             with self.subTest(method=method):
@@ -296,6 +521,8 @@ class CategoryAccessTests(CategoryAPITestCase):
                 self.assertEqual(response.data, data)
         names = list(Category.objects.filter(cafe=self.cafe).values_list('name', flat=True))
         self.assertEqual(names, [{'ar': 'Drinks', 'en': ''}])  # nothing was created, renamed or deleted
+        prices = list(MenuItem.objects.filter(cafe=self.cafe).values_list('price', flat=True))
+        self.assertEqual(prices, [Decimal('5.00')])
 
     def test_without_a_token_returns_401(self):
         self.client.credentials()  # remove the Authorization header
@@ -311,7 +538,7 @@ class CategoryAccessTests(CategoryAPITestCase):
         )
 
     def test_owner_of_inactive_cafe_gets_the_subscription_error(self):
-        # UC-OWNER-012 A2, UC-OWNER-001 A3, UC-OWNER-003 A3
+        # UC-OWNER-012 A2, UC-OWNER-001 A3, UC-OWNER-003 A3, UC-OWNER-002 A5, UC-OWNER-013 A4
         Cafe.objects.filter(pk=self.cafe.pk).update(is_active=False)
         self.assert_every_endpoint_answers(
             status.HTTP_403_FORBIDDEN, {'detail': 'Your subscription is inactive. Please contact support.'}
@@ -325,6 +552,7 @@ class MenuRevalidationTests(CategoryAPITestCase):
     def test_each_successful_write_sends_one_revalidation_after_the_commit(self):
         category = Category.objects.create(cafe=self.cafe, name={'ar': 'Drinks', 'en': ''})
         tea = Category.objects.create(cafe=self.cafe, name={'ar': 'Tea', 'en': ''}, sort_order=200)
+        pie = MenuItem.objects.create(cafe=self.cafe, category=tea, name={'ar': 'Pie'}, price=Decimal('3.00'))
         # Each lambda sends its request only when the loop calls it, inside the capture block.
         # REORDER runs first, while Drinks and Tea are the only categories it has to list.
         writes = {
@@ -333,6 +561,11 @@ class MenuRevalidationTests(CategoryAPITestCase):
             ),
             'POST': lambda: self.client.post(self.list_url, {'name': {'ar': 'Food'}}, format='json'),
             'PATCH': lambda: self.client.patch(self.detail_url(category.pk), {'is_visible': False}, format='json'),
+            'ITEM POST': lambda: self.client.post(
+                self.item_list_url, {'category_id': tea.pk, 'name': {'ar': 'Cake'}, 'price': '4.00'}, format='json'
+            ),
+            'ITEM PATCH': lambda: self.client.patch(self.item_url(pie.pk), {'price': '3.50'}, format='json'),
+            'ITEM DELETE': lambda: self.client.delete(self.item_url(pie.pk)),
             'DELETE': lambda: self.client.delete(self.detail_url(category.pk)),
         }
         for method, write in writes.items():
