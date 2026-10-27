@@ -1,18 +1,19 @@
 """
 Business rules for the cafe settings of the owner dashboard (use_cases.md UC-OWNER-009, UC-OWNER-010
-and UC-OWNER-014).
+and UC-OWNER-014) and its tables for the QR codes (UC-OWNER-007).
 
 Views pass the cafe from request.user.cafe, never from the request body or URL.
 """
 
 from django.db import transaction
+from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
 
 from core.images import LOGO_MAX_SIDE, process_image
 from core.media_storage import delete_image_on_commit, store_image
 from core.revalidation import schedule_menu_revalidation
 
-from .models import Cafe
+from .models import Cafe, CafeTable
 
 
 def get_settings(cafe):
@@ -72,3 +73,31 @@ def upload_logo(cafe, *, image_file):
         delete_image_on_commit(old_url)
         schedule_menu_revalidation(locked_cafe.slug)
     return locked_cafe
+
+
+def sync_tables(cafe, table_count):
+    """
+    UC-OWNER-007 step 2: tables 1..table_count become active, every higher number inactive.
+
+    Rows are never deleted, so a table keeps its qr_token when it is switched off and on again
+    (A4); sending the same count again writes nothing (A3). table_count was already validated
+    (1-200). Returns the active tables in ascending table_number order.
+    """
+    with transaction.atomic():
+        # Global Convention 8: with the cafe row locked, two parallel calls cannot both create table N.
+        locked_cafe = Cafe.objects.select_for_update().get(pk=cafe.pk)
+        tables = CafeTable.objects.filter(cafe=locked_cafe)
+
+        existing = set(tables.values_list('table_number', flat=True))
+        # (a) a new row, with a new qr_token, for each missing number. bulk_create fills the timestamps.
+        CafeTable.objects.bulk_create(
+            CafeTable(cafe=locked_cafe, table_number=number)
+            for number in range(1, table_count + 1)
+            if number not in existing
+        )
+        # (b) and (c): update() skips auto_now, so updated_at is set here.
+        now = timezone.now()
+        tables.filter(table_number__lte=table_count, is_active=False).update(is_active=True, updated_at=now)
+        tables.filter(table_number__gt=table_count, is_active=True).update(is_active=False, updated_at=now)
+
+    return list(CafeTable.objects.filter(cafe=cafe, is_active=True).order_by('table_number'))
