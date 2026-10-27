@@ -33,8 +33,8 @@ class ReorderSerializer(serializers.Serializer):
     appears exactly once is a business rule, checked by the service under the cafe lock.
     """
 
-    # An empty list passes here: it is complete for a cafe without categories,
-    # and the service rejects it as incomplete otherwise (A2).
+    # An empty list passes here: for categories it is complete when the cafe has none
+    # (the service rejects it as incomplete otherwise); for items the service rejects it.
     ordered_ids = serializers.ListField(child=serializers.IntegerField())
 
 
@@ -61,6 +61,13 @@ class MenuItemSerializer(serializers.Serializer):
     is_featured = serializers.BooleanField(required=False)
     is_new = serializers.BooleanField(required=False)
     sort_order = serializers.IntegerField(read_only=True)
+
+
+class ItemAvailabilitySerializer(serializers.Serializer):
+    """Body and answer of the availability toggle (UC-OWNER-005): {"is_available": false} -> { id, is_available }."""
+
+    id = serializers.IntegerField(read_only=True)
+    is_available = serializers.BooleanField()
 
 
 class ItemListQuerySerializer(serializers.Serializer):

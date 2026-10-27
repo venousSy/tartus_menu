@@ -1,6 +1,6 @@
 """
 Owner dashboard: categories (use_cases.md UC-OWNER-001, UC-OWNER-003 and UC-OWNER-012)
-and menu items (UC-OWNER-002 and UC-OWNER-013).
+and menu items (UC-OWNER-002, UC-OWNER-004, UC-OWNER-005 and UC-OWNER-013).
 
 Views stay thin: validate with the serializer, call one service function, return a response.
 The cafe always comes from request.user.cafe; IsCafeOwner guarantees that it exists.
@@ -13,7 +13,13 @@ from rest_framework.views import APIView
 from users.permissions import IsActiveCafe, IsCafeOwner
 
 from . import services
-from .serializers import CategorySerializer, ItemListQuerySerializer, MenuItemSerializer, ReorderSerializer
+from .serializers import (
+    CategorySerializer,
+    ItemAvailabilitySerializer,
+    ItemListQuerySerializer,
+    MenuItemSerializer,
+    ReorderSerializer,
+)
               
 # Global Convention 5: role check first, then the active-subscription check.
 OWNER_OF_ACTIVE_CAFE = [IsCafeOwner, IsActiveCafe]
@@ -96,3 +102,27 @@ class ItemDetailView(APIView):
     def delete(self, request, pk):
         services.delete_item(request.user.cafe, pk)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ItemReorderView(APIView):
+    """POST /api/v1/dashboard/items/reorder/ (UC-OWNER-004)"""
+
+    permission_classes = OWNER_OF_ACTIVE_CAFE
+
+    def post(self, request):
+        serializer = ReorderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        items = services.reorder_items(request.user.cafe, **serializer.validated_data)
+        return Response(MenuItemSerializer(items, many=True).data)
+
+
+class ItemAvailabilityView(APIView):
+    """PATCH /api/v1/dashboard/items/{id}/availability/ (UC-OWNER-005)"""
+
+    permission_classes = OWNER_OF_ACTIVE_CAFE
+
+    def patch(self, request, pk):
+        serializer = ItemAvailabilitySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        item = services.set_item_availability(request.user.cafe, pk, **serializer.validated_data)
+        return Response(ItemAvailabilitySerializer(item).data)
