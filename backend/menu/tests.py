@@ -644,9 +644,13 @@ class MenuRevalidationTests(CategoryAPITestCase):
             ),
             # Cake (created by ITEM POST at 200) moves before Pie (100), so both rows change.
             'ITEMS REORDER': lambda: self.client.post(
-                self.item_reorder_url, {'ordered_ids': [MenuItem.objects.get(name__ar='Cake').pk, pie.pk]}, format='json'
+                self.item_reorder_url,
+                {'ordered_ids': [MenuItem.objects.get(name__ar='Cake').pk, pie.pk]},
+                format='json',
             ),
-            'AVAILABILITY': lambda: self.client.patch(self.availability_url(pie.pk), {'is_available': False}, format='json'),
+            'AVAILABILITY': lambda: self.client.patch(
+                self.availability_url(pie.pk), {'is_available': False}, format='json'
+            ),
             'ITEM PATCH': lambda: self.client.patch(self.item_url(pie.pk), {'price': '3.50'}, format='json'),
             'ITEM DELETE': lambda: self.client.delete(self.item_url(pie.pk)),
             'DELETE': lambda: self.client.delete(self.detail_url(category.pk)),
