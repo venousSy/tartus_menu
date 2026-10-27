@@ -1,12 +1,13 @@
 """
-Business rules for the menu app (use_cases.md UC-OWNER-001 to UC-OWNER-003, UC-OWNER-012 and UC-OWNER-013).
+Business rules for the menu app (use_cases.md UC-OWNER-001 to UC-OWNER-005, UC-OWNER-012, UC-OWNER-013,
+and the public menu UC-GUEST-001 and UC-GUEST-002).
 
 Views pass the cafe from request.user.cafe, never from the request body or URL.
 Callers check role and subscription first (IsCafeOwner, IsActiveCafe).
 """
 
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import Max, Prefetch
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
@@ -133,19 +134,8 @@ def reorder_categories(cafe, *, ordered_ids):
             raise ValidationError({'ordered_ids': ['The list must include every category exactly once.']})
 
         ordered = [by_id[category_id] for category_id in ordered_ids]
-        now = timezone.now()
-        changed = []
-        for position, category in enumerate(ordered, start=1):
-            if category.sort_order != position * SORT_ORDER_GAP:
-                category.sort_order = position * SORT_ORDER_GAP
-                category.updated_at = now
-                changed.append(category)
-
-        # Only rows that moved are written ("minimizes DB writes", implementation_plan.md),
-        # and an unchanged order does not rebuild the public menu.
-        if changed:
-            # One UPDATE for all of them. bulk_update() skips save() and auto_now, so updated_at is set above.
-            Category.objects.bulk_update(changed, ['sort_order', 'updated_at'])
+        # An unchanged order does not rebuild the public menu.
+        if _apply_positions(Category, ordered):
             schedule_menu_revalidation(locked_cafe.slug)
 
     return ordered
@@ -258,6 +248,103 @@ def delete_item(cafe, item_id):
     item.deleted_at = timezone.now()
     item.save(update_fields=['deleted_at', 'updated_at'])
     schedule_menu_revalidation(cafe.slug)
+
+
+def reorder_items(cafe, *, ordered_ids):
+    """
+    UC-OWNER-004: put the items of one category in the order of `ordered_ids`
+    (sort_order 100, 200, 300, ...) and return them in that order.
+
+    Like reorder_categories, the list must name every item of that category exactly once.
+    Raises NotFound (404) when an id is missing, deleted or foreign (A2), and ValidationError (400)
+    when the list is empty, spans several categories (A1), or leaves out or repeats an item.
+    Every error rejects the whole list, so nothing is saved.
+    """
+    if not ordered_ids:
+        # Without any id there is no category to reorder.
+        raise ValidationError({'ordered_ids': ['This list may not be empty.']})
+
+    with transaction.atomic():
+        # Global Convention 8: the same cafe row lock as create_item and update_item, so no item
+        # can be created in or moved into the category between the check and the update.
+        locked_cafe = Cafe.objects.select_for_update().get(pk=cafe.pk)
+        by_id = {item.pk: item for item in MenuItem.objects.filter(cafe=locked_cafe, pk__in=ordered_ids)}
+
+        # A2: one unknown id rejects the list. A foreign id gets the same 404 as a missing one.
+        if any(item_id not in by_id for item_id in ordered_ids):
+            raise NotFound()
+        category_ids = {item.category_id for item in by_id.values()}
+        if len(category_ids) > 1:  # A1
+            raise ValidationError({'ordered_ids': ['Reorder must be within one category.']})
+        siblings = MenuItem.objects.filter(cafe=locked_cafe, category_id=category_ids.pop())
+        if sorted(ordered_ids) != sorted(siblings.values_list('pk', flat=True)):
+            raise ValidationError({'ordered_ids': ['The list must include every item of the category exactly once.']})
+
+        ordered = [by_id[item_id] for item_id in ordered_ids]
+        if _apply_positions(MenuItem, ordered):
+            schedule_menu_revalidation(locked_cafe.slug)
+
+    return ordered
+
+
+def set_item_availability(cafe, item_id, *, is_available):
+    """
+    UC-OWNER-005: change only is_available. Raises NotFound (404) for a missing, deleted
+    or foreign item (A1). Sending the current value writes nothing and rebuilds nothing.
+    """
+    item = _get_item(cafe, item_id)
+    if item.is_available != is_available:
+        item.is_available = is_available
+        item.save(update_fields=['is_available', 'updated_at'])
+        schedule_menu_revalidation(cafe.slug)
+    return item
+
+
+def get_public_menu(slug):
+    """
+    UC-GUEST-001 and UC-GUEST-002: the cafe and its menu as customers see it. No caller check:
+    the endpoint is public. Raises NotFound (404) for an unknown slug (A1).
+
+    Returns (cafe, categories). Only visible, non-deleted categories, sorted by sort_order; each has
+    `public_items`: its available, non-deleted items, sorted by sort_order. An inactive cafe gets
+    no categories (UC-GUEST-002); that is a 200 answer, not an error.
+    Three queries in total (cafe with plan, categories, items), whatever the menu size.
+    """
+    try:
+        cafe = Cafe.objects.select_related('plan').get(slug=slug)
+    except Cafe.DoesNotExist:
+        raise NotFound() from None
+    if not cafe.is_active:
+        return cafe, []
+
+    # One query for all items of all categories instead of one per category (no N+1 problem).
+    available_items = MenuItem.objects.filter(is_available=True).order_by('sort_order', 'id')
+    categories = (
+        Category.objects.filter(cafe=cafe, is_visible=True)
+        .prefetch_related(Prefetch('items', queryset=available_items, to_attr='public_items'))
+        .order_by('sort_order', 'id')
+    )
+    return cafe, list(categories)
+
+
+def _apply_positions(model, ordered):
+    """
+    Give the rows in `ordered` the sort_order 100, 200, 300, ... in that order (Gapped Integer).
+
+    Only rows that move are written ("minimizes DB writes", implementation_plan.md), all of them
+    in one UPDATE. bulk_update() skips save() and auto_now, so updated_at is set here. That is safe
+    because cafe and category never change here. Returns True when at least one row moved.
+    """
+    now = timezone.now()
+    changed = []
+    for position, row in enumerate(ordered, start=1):
+        if row.sort_order != position * SORT_ORDER_GAP:
+            row.sort_order = position * SORT_ORDER_GAP
+            row.updated_at = now
+            changed.append(row)
+    if changed:
+        model.objects.bulk_update(changed, ['sort_order', 'updated_at'])
+    return bool(changed)
 
 
 def _get_category(cafe, category_id, lock=False):
