@@ -1,18 +1,22 @@
 """
 API integration tests for the menu dashboard endpoints: categories (use_cases.md UC-OWNER-001,
-UC-OWNER-003, UC-OWNER-012) and menu items (UC-OWNER-002, UC-OWNER-013).
+UC-OWNER-003, UC-OWNER-012) and menu items (UC-OWNER-002, UC-OWNER-004 to UC-OWNER-006, UC-OWNER-013).
 Each test sends real HTTP requests through URL -> view -> service -> database.
 """
 
 import json
 from datetime import timedelta
 from decimal import Decimal
+from io import BytesIO
 from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.core.files.storage import default_storage
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
+from PIL import Image
 from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import AccessToken
@@ -22,6 +26,19 @@ from cafes.models import Cafe, SubscriptionPlan
 from .models import Category, MenuItem
 
 User = get_user_model()
+
+# Uploads are kept in memory during tests: nothing reaches R2 or backend/media/.
+IN_MEMORY_STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.InMemoryStorage'},
+    'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
+}
+
+
+def image_file(fmt='JPEG', size=(2400, 1200), mode='RGB', name='photo.jpg', **save_params):
+    """An uploaded image built in memory with Pillow, as a browser would send it."""
+    buffer = BytesIO()
+    Image.new(mode, size).save(buffer, format=fmt, **save_params)
+    return SimpleUploadedFile(name, buffer.getvalue())
 
 
 class CategoryAPITestCase(APITestCase):
@@ -63,6 +80,10 @@ class CategoryAPITestCase(APITestCase):
     @staticmethod
     def availability_url(pk):
         return reverse('menu:item-availability', kwargs={'pk': pk})
+
+    @staticmethod
+    def item_image_url(pk):
+        return reverse('menu:item-image', kwargs={'pk': pk})
 
 
 class ListCategoriesTests(CategoryAPITestCase):
@@ -572,6 +593,106 @@ class ItemAvailabilityTests(ItemAPITestCase):
         self.assertTrue(self.foreign_item.is_available)
 
 
+@override_settings(STORAGES=IN_MEMORY_STORAGES, FRONTEND_REVALIDATE_URL='')
+class ItemImageTests(ItemAPITestCase):
+    """UC-OWNER-006 - POST /api/v1/dashboard/items/{id}/image/ (multipart/form-data). A6: CategoryAccessTests."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.cafe.plan = SubscriptionPlan.objects.create(name=SubscriptionPlan.Name.PRO, allows_images=True)
+        cls.cafe.save()
+
+    def upload(self, pk, file):
+        return self.client.post(self.item_image_url(pk), {'image': file}, format='multipart')
+
+    @staticmethod
+    def stored_key(url):
+        return url.removeprefix(default_storage.url(''))  # "/media/" in tests, the R2 domain in production
+
+    def test_upload_returns_200_with_the_processed_image(self):  # Main flow
+        exif = Image.Exif()
+        exif[0x8825] = {2: (34.0, 53.0, 0.0)}  # GPSInfo: where the photo was taken
+
+        response = self.upload(self.tea.pk, image_file(exif=exif.tobytes()))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        url = response.data['image_url']
+        self.assertRegex(url, rf'^/media/cafes/{self.cafe.pk}/items/[0-9a-f-]{{36}}\.webp$')  # random key
+        self.assertEqual(response.data, self.tea_data(image_url=url))
+        self.tea.refresh_from_db()
+        self.assertEqual(self.tea.image_url, url)
+        with default_storage.open(self.stored_key(url)) as stored, Image.open(stored) as image:
+            self.assertEqual((image.format, image.size), ('WEBP', (1200, 600)))  # longest side 1200 px
+            self.assertNotIn('exif', image.info)  # metadata, with the GPS location, removed
+
+    def test_new_upload_deletes_the_old_image_after_the_commit(self):  # Postconditions, step 7
+        with self.captureOnCommitCallbacks(execute=True):
+            old_url = self.upload(self.tea.pk, image_file()).data['image_url']
+
+        with self.captureOnCommitCallbacks() as callbacks:
+            new_url = self.upload(self.tea.pk, image_file()).data['image_url']
+
+        self.assertTrue(default_storage.exists(self.stored_key(old_url)))  # kept until the commit
+        for callback in callbacks:  # what Django runs once the request's transaction commits
+            callback()
+        self.assertFalse(default_storage.exists(self.stored_key(old_url)))
+        self.assertTrue(default_storage.exists(self.stored_key(new_url)))
+
+    def test_basic_plan_returns_403(self):  # A1
+        Cafe.objects.filter(pk=self.cafe.pk).update(plan=self.other_cafe.plan)  # Basic: allows_images false
+
+        response = self.upload(self.tea.pk, image_file())
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data, {'detail': 'Item images require a Pro plan.'})
+
+    def test_invalid_files_return_400(self):  # A2, A3, A5
+        not_allowed = {'detail': 'Only JPEG, PNG, and WebP images are allowed.'}
+        cases = [
+            ('a GIF', image_file('GIF', size=(10, 10), name='a.gif'), not_allowed),  # A2
+            ('text named .jpg', SimpleUploadedFile('a.jpg', b'not an image'), not_allowed),  # A2: content decides
+            ('over 2 MB', SimpleUploadedFile('big.jpg', b'\xff' * (2 * 1024 * 1024 + 1)),
+             {'detail': 'Image must be under 2MB.'}),  # A3
+            ('over 25 megapixels', image_file('PNG', size=(6000, 5000), mode='1', name='big.png'),
+             {'detail': 'Image dimensions are too large.'}),  # A5
+            ('no file', None, {'image': ['No file was submitted.']}),
+        ]
+        for label, file, expected in cases:
+            with self.subTest(label):
+                body = {} if file is None else {'image': file}
+                response = self.client.post(self.item_image_url(self.tea.pk), body, format='multipart')
+
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertEqual(response.data, expected)
+        self.tea.refresh_from_db()
+        self.assertEqual(self.tea.image_url, '')
+
+    def test_storage_failure_returns_502(self):  # A4
+        with (
+            mock.patch.object(default_storage, 'save', side_effect=OSError('R2 is down')),
+            self.assertLogs('core.media_storage', level='ERROR'),  # logged server-side
+        ):
+            response = self.upload(self.tea.pk, image_file())
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertEqual(response.data, {'detail': 'Image upload failed. Please try again.'})
+        self.tea.refresh_from_db()
+        self.assertEqual(self.tea.image_url, '')
+
+    def test_foreign_deleted_or_missing_item_returns_404(self):  # A7
+        deleted = self.add_item(self.drinks, 'Old', deleted_at=timezone.now())
+        for pk in (self.foreign_item.pk, deleted.pk, 999999):
+            with self.subTest(pk=pk):
+                response = self.upload(pk, image_file())
+
+                self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+                self.assertEqual(response.data, {'detail': 'Not found.'})
+        self.foreign_item.refresh_from_db()
+        self.assertEqual(self.foreign_item.image_url, '')
+
+
+@override_settings(STORAGES=IN_MEMORY_STORAGES)
 class CategoryAccessTests(CategoryAPITestCase):
     """Global Conventions 2 and 5 on every endpoint: the token first, then the role, then the subscription."""
 
@@ -592,6 +713,7 @@ class CategoryAccessTests(CategoryAPITestCase):
             'ITEM DELETE': self.client.delete(self.item_url(item.pk)),
             'ITEMS REORDER': self.client.post(self.item_reorder_url, {'ordered_ids': [item.pk]}, format='json'),
             'AVAILABILITY': self.client.patch(self.availability_url(item.pk), {'is_available': False}, format='json'),
+            'ITEM IMAGE': self.client.post(self.item_image_url(item.pk), {'image': image_file()}, format='multipart'),
         }
         for method, response in responses.items():
             with self.subTest(method=method):
@@ -599,8 +721,8 @@ class CategoryAccessTests(CategoryAPITestCase):
                 self.assertEqual(response.data, data)
         names = list(Category.objects.filter(cafe=self.cafe).values_list('name', flat=True))
         self.assertEqual(names, [{'ar': 'Drinks', 'en': ''}])  # nothing was created, renamed or deleted
-        items = list(MenuItem.objects.filter(cafe=self.cafe).values_list('price', 'is_available'))
-        self.assertEqual(items, [(Decimal('5.00'), True)])
+        items = list(MenuItem.objects.filter(cafe=self.cafe).values_list('price', 'is_available', 'image_url'))
+        self.assertEqual(items, [(Decimal('5.00'), True, '')])
 
     def test_without_a_token_returns_401(self):
         self.client.credentials()  # remove the Authorization header
@@ -616,18 +738,19 @@ class CategoryAccessTests(CategoryAPITestCase):
         )
 
     def test_owner_of_inactive_cafe_gets_the_subscription_error(self):
-        # UC-OWNER-012 A2, UC-OWNER-001 A3, UC-OWNER-003 A3, UC-OWNER-002 A5, UC-OWNER-013 A4
+        # UC-OWNER-012 A2, UC-OWNER-001 A3, UC-OWNER-003 A3, UC-OWNER-002 A5, UC-OWNER-013 A4, UC-OWNER-006 A6
         Cafe.objects.filter(pk=self.cafe.pk).update(is_active=False)
         self.assert_every_endpoint_answers(
             status.HTTP_403_FORBIDDEN, {'detail': 'Your subscription is inactive. Please contact support.'}
         )
 
 
-@override_settings(FRONTEND_REVALIDATE_URL='http://frontend.test/internal/revalidate')
+@override_settings(FRONTEND_REVALIDATE_URL='http://frontend.test/internal/revalidate', STORAGES=IN_MEMORY_STORAGES)
 class MenuRevalidationTests(CategoryAPITestCase):
     """Global Convention 9: each successful write asks Next.js to rebuild /menu/<slug>, after the commit."""
 
     def test_each_successful_write_sends_one_revalidation_after_the_commit(self):
+        SubscriptionPlan.objects.filter(pk=self.cafe.plan_id).update(allows_images=True)  # for ITEM IMAGE
         category = Category.objects.create(cafe=self.cafe, name={'ar': 'Drinks', 'en': ''})
         tea = Category.objects.create(cafe=self.cafe, name={'ar': 'Tea', 'en': ''}, sort_order=200)
         pie = MenuItem.objects.create(cafe=self.cafe, category=tea, name={'ar': 'Pie'}, price=Decimal('3.00'))
@@ -650,6 +773,9 @@ class MenuRevalidationTests(CategoryAPITestCase):
             ),
             'AVAILABILITY': lambda: self.client.patch(
                 self.availability_url(pie.pk), {'is_available': False}, format='json'
+            ),
+            'ITEM IMAGE': lambda: self.client.post(
+                self.item_image_url(pie.pk), {'image': image_file()}, format='multipart'
             ),
             'ITEM PATCH': lambda: self.client.patch(self.item_url(pie.pk), {'price': '3.50'}, format='json'),
             'ITEM DELETE': lambda: self.client.delete(self.item_url(pie.pk)),
