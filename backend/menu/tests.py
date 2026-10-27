@@ -29,6 +29,7 @@ class CategoryAPITestCase(APITestCase):
     """
 
     list_url = reverse('menu:category-list')
+    reorder_url = reverse('menu:category-reorder')
 
     @classmethod
     def setUpTestData(cls):
@@ -212,17 +213,82 @@ class CategoryNotFoundTests(CategoryAPITestCase):
         self.assertEqual((self.foreign.name, self.foreign.deleted_at), ({'ar': 'Foreign', 'en': ''}, None))
 
 
+class ReorderCategoriesTests(CategoryAPITestCase):
+    """UC-OWNER-003 - POST /api/v1/dashboard/categories/reorder/"""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.a, cls.b, cls.c = [
+            Category.objects.create(cafe=cls.cafe, name={'ar': name, 'en': ''}, sort_order=sort_order)
+            for name, sort_order in [('A', 100), ('B', 200), ('C', 300)]
+        ]
+
+    def assert_order_unchanged(self):
+        sort_orders = dict(Category.objects.filter(cafe=self.cafe).values_list('pk', 'sort_order'))
+        self.assertEqual(sort_orders, {self.a.pk: 100, self.b.pk: 200, self.c.pk: 300})
+
+    def test_reorder_returns_200_with_the_new_order(self):  # Main flow
+        body = {'ordered_ids': [self.c.pk, self.a.pk, self.b.pk]}
+
+        response = self.client.post(self.reorder_url, body, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Every category in the new order, renumbered 100, 200, 300, in the same shape as the list.
+        self.assertEqual(response.data, [
+            {'id': self.c.pk, 'name': {'ar': 'C', 'en': ''}, 'sort_order': 100, 'is_visible': True},
+            {'id': self.a.pk, 'name': {'ar': 'A', 'en': ''}, 'sort_order': 200, 'is_visible': True},
+            {'id': self.b.pk, 'name': {'ar': 'B', 'en': ''}, 'sort_order': 300, 'is_visible': True},
+        ])
+        self.assertEqual(self.client.get(self.list_url).data, response.data)  # saved
+        self.foreign.refresh_from_db()
+        self.assertEqual(self.foreign.sort_order, 100)  # the other cafe's category did not move
+
+    def test_unknown_id_returns_404_and_changes_nothing(self):  # A1
+        deleted = Category.objects.create(cafe=self.cafe, name={'ar': 'Old', 'en': ''}, deleted_at=timezone.now())
+        missing_pk = Category.all_objects.latest('pk').pk + 1  # no row has this id
+        cases = [
+            ('foreign', [self.c.pk, self.a.pk, self.b.pk, self.foreign.pk]),
+            ('deleted', [self.c.pk, self.a.pk, self.b.pk, deleted.pk]),
+            ('missing', [self.c.pk, self.a.pk, self.b.pk, missing_pk]),
+            ('foreign in an incomplete list', [self.c.pk, self.foreign.pk]),  # A1 is checked before A2
+        ]
+        for label, ordered_ids in cases:
+            with self.subTest(case=label):
+                response = self.client.post(self.reorder_url, {'ordered_ids': ordered_ids}, format='json')
+
+                self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+                self.assertEqual(response.data, {'detail': 'Not found.'})
+                self.assert_order_unchanged()  # all or nothing: the valid ids did not move either
+
+    def test_incomplete_repeated_or_missing_list_returns_400(self):  # A2
+        incomplete = {'ordered_ids': ['The list must include every category exactly once.']}
+        cases = [
+            ({'ordered_ids': [self.c.pk, self.a.pk]}, incomplete),  # B left out
+            ({'ordered_ids': [self.c.pk, self.a.pk, self.b.pk, self.a.pk]}, incomplete),  # A twice
+            ({}, {'ordered_ids': ['This field is required.']}),
+        ]
+        for body, errors in cases:
+            with self.subTest(body=body):
+                response = self.client.post(self.reorder_url, body, format='json')
+
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertEqual(response.data, errors)
+                self.assert_order_unchanged()
+
+
 class CategoryAccessTests(CategoryAPITestCase):
-    """Global Conventions 2 and 5 on all four endpoints: the token first, then the role, then the subscription."""
+    """Global Conventions 2 and 5 on all five endpoints: the token first, then the role, then the subscription."""
 
     def assert_every_endpoint_answers(self, status_code, data):
-        """Call GET, POST, PATCH and DELETE: each must give the same error and change nothing."""
+        """Call every category endpoint: each must give the same error and change nothing."""
         category = Category.objects.create(cafe=self.cafe, name={'ar': 'Drinks', 'en': ''})
         responses = {
             'GET': self.client.get(self.list_url),
             'POST': self.client.post(self.list_url, {'name': {'ar': 'New'}}, format='json'),
             'PATCH': self.client.patch(self.detail_url(category.pk), {'name': {'ar': 'New'}}, format='json'),
             'DELETE': self.client.delete(self.detail_url(category.pk)),
+            'REORDER': self.client.post(self.reorder_url, {'ordered_ids': [category.pk]}, format='json'),
         }
         for method, response in responses.items():
             with self.subTest(method=method):
@@ -244,7 +310,8 @@ class CategoryAccessTests(CategoryAPITestCase):
             status.HTTP_403_FORBIDDEN, {'detail': 'You do not have permission to perform this action.'}
         )
 
-    def test_owner_of_inactive_cafe_gets_the_subscription_error(self):  # UC-OWNER-012 A2, UC-OWNER-001 A3
+    def test_owner_of_inactive_cafe_gets_the_subscription_error(self):
+        # UC-OWNER-012 A2, UC-OWNER-001 A3, UC-OWNER-003 A3
         Cafe.objects.filter(pk=self.cafe.pk).update(is_active=False)
         self.assert_every_endpoint_answers(
             status.HTTP_403_FORBIDDEN, {'detail': 'Your subscription is inactive. Please contact support.'}
@@ -257,8 +324,13 @@ class MenuRevalidationTests(CategoryAPITestCase):
 
     def test_each_successful_write_sends_one_revalidation_after_the_commit(self):
         category = Category.objects.create(cafe=self.cafe, name={'ar': 'Drinks', 'en': ''})
+        tea = Category.objects.create(cafe=self.cafe, name={'ar': 'Tea', 'en': ''}, sort_order=200)
         # Each lambda sends its request only when the loop calls it, inside the capture block.
+        # REORDER runs first, while Drinks and Tea are the only categories it has to list.
         writes = {
+            'REORDER': lambda: self.client.post(
+                self.reorder_url, {'ordered_ids': [tea.pk, category.pk]}, format='json'
+            ),
             'POST': lambda: self.client.post(self.list_url, {'name': {'ar': 'Food'}}, format='json'),
             'PATCH': lambda: self.client.patch(self.detail_url(category.pk), {'is_visible': False}, format='json'),
             'DELETE': lambda: self.client.delete(self.detail_url(category.pk)),

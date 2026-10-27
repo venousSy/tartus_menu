@@ -39,7 +39,7 @@ Limits per turn:
   - a new variable in `.env.example`;
   - the migration generated for the model you just changed (see below).
 - **Size budget: about 150 changed lines per turn** (new plus modified code, all files together). If a step is bigger, split it before you start — for example one service function per turn — and say how you split it.
-- **No hidden changes.** List every touched file in the status block, companions included. If a companion edit grows beyond "small and mechanical", it becomes the next turn instead.
+- **No hidden changes.** List every touched file in the Changes table (Section 6), companions included. If a companion edit grows beyond "small and mechanical", it becomes the next turn instead.
 - Reading files and running read-only or verification commands do not count (see Section 7).
 
 Always their own turn (never a companion):
@@ -69,7 +69,7 @@ Exceptions (approval first):
   Reply "approve" to go ahead, or "split" to keep the normal limits.
   ```
 - Only an explicit "approve" from the user counts. An approval covers that one turn only; it does not carry over to later turns.
-- After an approved exception, explain each logic file with the Section 6 format, and write `Exception: approved (<rule>)` in the status block.
+- After an approved exception, explain each logic file with the Section 6 format, and write `Exception: approved (<rule>)` in the footer.
 - Never use an exception to skip the rules in Sections 2 and 5, or to add a dependency without asking.
 
 When in doubt, do less: finish the main file, list the remaining work under "Queued next", and STOP.
@@ -146,7 +146,7 @@ File writing:
 - Encoding: UTF-8 without BOM. Keep each existing file's line endings (CRLF stays CRLF, LF stays LF).
 - Prefer targeted edits over rewriting a whole file. Keep every unrelated line identical.
 - After writing, re-read the file. Check for control characters and garbled text (for example `â` sequences). Fix them before you finish.
-- If you are close to your output limit, finish the current edit completely and stop. Never leave a file half-written. Report INCOMPLETE in the status block when you can; the user will type "continue".
+- If you are close to your output limit, finish the current edit completely and stop. Never leave a file half-written. Report INCOMPLETE in the footer when you can; the user will type "continue".
 
 Commands:
 - Allowed inside a turn: read-only inspection, `python manage.py check`, `python manage.py makemigrations --check --dry-run`, and running the tests relevant to the current file.
@@ -156,14 +156,14 @@ Commands:
 
 ## 8. Stop and Wait for Approval
 
-- After the step, its explanation and the status block, STOP. Do not call more tools and do not start the next step.
+- After the step, its explanation and the footer, STOP. Do not call more tools and do not start the next step.
 - Never design or write the next step until the user types "proceed / next".
 - A test turn is approved only after its tests pass. If they fail, report the failure and fix the same file in the next turn.
 
 ## 9. Scope Control
 
 - Do only what the turn asks. No drive-by fixes, renames, formatting changes or refactors.
-- If you notice another problem, do not fix it. Add it under `Observations (not changed)` before the status block (maximum 5 lines). Observations form a lightweight backlog — the user may address any of them by saying "fix observation N".
+- If you notice another problem, do not fix it. Add it under `Observations (not changed)` before the footer (maximum 5 lines). Observations form a lightweight backlog — the user may address any of them by saying "fix observation N".
 - Never edit `AGENTS.md` or `GEMINI.md` unless the user explicitly asks.
 
 ## 10. Language Standard
