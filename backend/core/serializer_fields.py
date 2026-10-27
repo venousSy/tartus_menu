@@ -59,3 +59,19 @@ class BilingualNameField(serializers.Field):
     def to_representation(self, value):
         # Always both keys in the output, so the frontend never has to check for a missing "en".
         return {'ar': value.get('ar', ''), 'en': value.get('en', '')}
+
+
+class BilingualDescriptionField(BilingualNameField):
+    """
+    A description stored as JSON {"ar": "...", "en": "..."} (use_cases.md Global Convention 6).
+
+    Both keys are optional strings; a missing key is stored as "". Other keys are rejected
+    with the same message as in a name, and a sent description replaces the old one as a whole.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.language_fields = {
+            'ar': StrictCharField(allow_blank=True, default=''),
+            'en': StrictCharField(allow_blank=True, default=''),
+        }

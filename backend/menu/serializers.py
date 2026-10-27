@@ -1,6 +1,8 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
-from core.serializer_fields import BilingualNameField
+from core.serializer_fields import BilingualDescriptionField, BilingualNameField
 
 
 class CategorySerializer(serializers.Serializer):
@@ -34,3 +36,34 @@ class ReorderSerializer(serializers.Serializer):
     # An empty list passes here: it is complete for a cafe without categories,
     # and the service rejects it as incomplete otherwise (A2).
     ordered_ids = serializers.ListField(child=serializers.IntegerField())
+
+
+class MenuItemSerializer(serializers.Serializer):
+    """
+    Menu items for the owner dashboard (UC-OWNER-002 and UC-OWNER-013).
+
+    Input (POST, PATCH): category_id, name, price, and the optional description, is_featured, is_new.
+    Read-only, ignored if sent: image_url (UC-OWNER-006), is_available (UC-OWNER-005) and
+    sort_order (UC-OWNER-004). The cafe always comes from request.user.cafe.
+    Output: { id, category_id, name, description, price, image_url, is_available, is_featured,
+    is_new, sort_order }. A plain Serializer for the same reason as CategorySerializer.
+    """
+
+    id = serializers.IntegerField(read_only=True)
+    category_id = serializers.IntegerField()
+    name = BilingualNameField()
+    description = BilingualDescriptionField(required=False)
+    # Global Convention 10: NUMERIC(10,2), 0 or greater, returned as a string such as "50.00".
+    price = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0'))
+    image_url = serializers.CharField(read_only=True)
+    is_available = serializers.BooleanField(read_only=True)
+    # Optional: when not sent, create uses False and edit keeps the current value.
+    is_featured = serializers.BooleanField(required=False)
+    is_new = serializers.BooleanField(required=False)
+    sort_order = serializers.IntegerField(read_only=True)
+
+
+class ItemListQuerySerializer(serializers.Serializer):
+    """Query string of GET /items/: an optional ?category=<id> (UC-OWNER-013 A2: not an integer -> 400)."""
+
+    category = serializers.IntegerField(required=False)
