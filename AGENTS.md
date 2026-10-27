@@ -152,6 +152,7 @@ Commands:
 - Allowed inside a turn: read-only inspection, `python manage.py check`, `python manage.py makemigrations --check --dry-run`, and running the tests relevant to the current file.
 - Run Django commands from the backend folder with the virtual environment active.
 - You may run `git add`, `git commit` and `git push` when the user asks. Stage files by name, never `__pycache__/`, `.env` or other generated or secret files. Use a one-line Conventional Commit message (for example `fix(users): ...`). Never commit or push directly to `main`; use a branch.
+- You may merge your own pull request into `main` yourself, without asking each time, once the full test suite passes on its head. Use a merge commit (`gh pr merge <n> --merge`). Merge stacked PRs bottom first, and retarget the next one to `main` before merging it.
 - Never run a destructive git command: no `push --force`, `reset --hard`, `clean -f`, `branch -D`, and no rewriting of pushed history.
 
 ## 8. Stop and Wait for Approval
