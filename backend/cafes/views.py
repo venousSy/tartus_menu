@@ -1,6 +1,6 @@
 """
 Owner dashboard: cafe settings (use_cases.md UC-OWNER-009, UC-OWNER-010 and UC-OWNER-014)
-and QR codes (UC-OWNER-007).
+and QR codes (UC-OWNER-007 and UC-OWNER-011).
 
 Views stay thin: validate with the serializer, call one service function, return a response.
 The cafe always comes from request.user.cafe; IsCafeOwner guarantees that it exists.
@@ -59,3 +59,12 @@ class QRGenerateView(APIView):
         serializer.is_valid(raise_exception=True)
         codes = services.generate_qr_codes(request.user.cafe, serializer.validated_data['table_count'])
         return Response(QRCodesSerializer(codes).data)  # 200, not 201: it syncs, it may create nothing (A3)
+
+
+class QRPreviewView(APIView):
+    """GET /api/v1/dashboard/qr/preview/ (UC-OWNER-011): read-only, same answer as qr/generate/."""
+
+    permission_classes = [IsCafeOwner, IsActiveCafe]  # Global Convention 5 (A2): only GET settings skips it
+
+    def get(self, request):
+        return Response(QRCodesSerializer(services.preview_qr_codes(request.user.cafe)).data)
