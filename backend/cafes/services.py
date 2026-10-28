@@ -1,6 +1,6 @@
 """
 Business rules for the cafe settings of the owner dashboard (use_cases.md UC-OWNER-009, UC-OWNER-010
-and UC-OWNER-014) and its tables for the QR codes (UC-OWNER-007).
+and UC-OWNER-014) and its tables for the QR codes (UC-OWNER-007 and UC-OWNER-011).
 
 Views pass the cafe from request.user.cafe, never from the request body or URL.
 """
@@ -101,12 +101,22 @@ def sync_tables(cafe, table_count):
         tables.filter(table_number__lte=table_count, is_active=False).update(is_active=True, updated_at=now)
         tables.filter(table_number__gt=table_count, is_active=True).update(is_active=False, updated_at=now)
 
+    return active_tables(cafe)
+
+
+def active_tables(cafe):
+    """The cafe's active tables in ascending table_number order (UC-OWNER-007, 008 and 011)."""
     return list(CafeTable.objects.filter(cafe=cafe, is_active=True).order_by('table_number'))
 
 
 def generate_qr_codes(cafe, table_count):
     """UC-OWNER-007: sync the tables (step 2), then build the QR code of each active table (step 3)."""
     return _qr_codes(cafe, sync_tables(cafe, table_count))
+
+
+def preview_qr_codes(cafe):
+    """UC-OWNER-011: read-only, same answer as generate; { "table_count": 0, "tables": [] } without tables (A1)."""
+    return _qr_codes(cafe, active_tables(cafe))
 
 
 def _qr_codes(cafe, tables):
