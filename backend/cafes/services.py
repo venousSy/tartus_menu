@@ -1,20 +1,20 @@
 """
 Business rules for the cafe settings of the owner dashboard (use_cases.md UC-OWNER-009, UC-OWNER-010
-and UC-OWNER-014) and its tables for the QR codes (UC-OWNER-007 and UC-OWNER-011).
+and UC-OWNER-014) and its tables for the QR codes (UC-OWNER-007, UC-OWNER-008 and UC-OWNER-011).
 
 Views pass the cafe from request.user.cafe, never from the request body or URL.
 """
 
 from django.db import transaction
 from django.utils import timezone
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from core.images import LOGO_MAX_SIDE, process_image
 from core.media_storage import delete_image_on_commit, store_image
 from core.revalidation import schedule_menu_revalidation
 
 from .models import Cafe, CafeTable
-from .qr import qr_png_data_url, table_url
+from .qr import qr_codes_pdf, qr_png_data_url, table_url
 
 
 def get_settings(cafe):
@@ -117,6 +117,19 @@ def generate_qr_codes(cafe, table_count):
 def preview_qr_codes(cafe):
     """UC-OWNER-011: read-only, same answer as generate; { "table_count": 0, "tables": [] } without tables (A1)."""
     return _qr_codes(cafe, active_tables(cafe))
+
+
+def qr_pdf(cafe):
+    """
+    UC-OWNER-008: the PDF bytes, one page per active table in table_number order.
+
+    Raises ValidationError (400) when the cafe has no active table (A1). Unlike the preview, which
+    answers an empty list, an empty PDF would only print blank paper.
+    """
+    tables = active_tables(cafe)
+    if not tables:
+        raise ValidationError({'detail': 'Please generate QR codes first.'})
+    return qr_codes_pdf(cafe, tables)
 
 
 def _qr_codes(cafe, tables):
