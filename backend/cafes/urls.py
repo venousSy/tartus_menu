@@ -1,11 +1,11 @@
 """
-Owner dashboard endpoint for the cafe settings (system_design.md section 3.3).
+Owner dashboard endpoints for the cafe settings and the QR codes (system_design.md section 3.3).
 core/urls.py includes this file under /api/v1/dashboard/, next to menu/urls.py.
 """
 
 from django.urls import path
 
-from .views import CafeLogoView, CafeSettingsView
+from .views import CafeLogoView, CafeSettingsView, QRGenerateView
 
 # Namespace for reverse(): reverse('cafes:settings') -> /api/v1/dashboard/settings/
 app_name = 'cafes'
@@ -13,4 +13,5 @@ app_name = 'cafes'
 urlpatterns = [
     path('settings/', CafeSettingsView.as_view(), name='settings'),  # UC-OWNER-014 (GET), UC-OWNER-009 (PATCH)
     path('settings/logo/', CafeLogoView.as_view(), name='settings-logo'),  # UC-OWNER-010 (POST)
+    path('qr/generate/', QRGenerateView.as_view(), name='qr-generate'),  # UC-OWNER-007 (POST)
 ]
