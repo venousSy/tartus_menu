@@ -1,9 +1,13 @@
 """
 API integration tests for the cafe settings endpoints (use_cases.md UC-OWNER-009, UC-OWNER-010
-and UC-OWNER-014). Each test sends real HTTP requests through URL -> view -> service -> database.
+and UC-OWNER-014) and the QR code endpoints (UC-OWNER-007, UC-OWNER-008 and UC-OWNER-011).
+Each test sends real HTTP requests through URL -> view -> service -> database.
 """
 
+import base64
 import json
+import re
+import zlib
 from io import BytesIO
 from unittest import mock
 
@@ -17,7 +21,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import AccessToken
 
-from .models import Cafe, SubscriptionPlan
+from .models import Cafe, CafeTable, SubscriptionPlan
 
 User = get_user_model()
 
@@ -299,3 +303,153 @@ class CafeLogoTests(CafeAPITestCase):
 
         urlopen.assert_called_once()
         self.assertEqual(json.loads(urlopen.call_args.args[0].data), {'slugs': ['tartus-coffee']})
+
+
+def pdf_page_texts(content):
+    """The strings drawn on each PDF page. reportlab stores each page's drawing commands zlib + ASCII85 encoded."""
+    pages = re.findall(rb'\nstream\r?\n(.*?)~>endstream', content, re.DOTALL)
+    commands = [zlib.decompress(base64.a85decode(page)) for page in pages]
+    return [[text.decode() for text in re.findall(rb'\((.*?)\) Tj', page)] for page in commands]
+
+
+@override_settings(PUBLIC_MENU_BASE_URL='https://menu.domain.com')
+class QRCodeTests(CafeAPITestCase):
+    """POST qr/generate/ (UC-OWNER-007), GET qr/preview/ (UC-OWNER-011), GET qr/download-pdf/ (UC-OWNER-008)"""
+
+    generate_url = reverse('cafes:qr-generate')
+    preview_url = reverse('cafes:qr-preview')
+    pdf_url = reverse('cafes:qr-download-pdf')
+
+    def generate(self, table_count):
+        return self.client.post(self.generate_url, {'table_count': table_count}, format='json')
+
+    def tokens(self, response):
+        return {table['table_number']: table['qr_token'] for table in response.data['tables']}
+
+    def test_generate_returns_the_active_tables_with_their_qr_codes(self):  # UC-OWNER-007 main flow
+        response = self.generate(3)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['table_count'], 3)
+        rows = CafeTable.objects.filter(cafe=self.cafe).order_by('table_number')
+        expected = [(row.pk, row.table_number, f'https://menu.domain.com/menu/tartus-coffee?table={row.table_number}',
+                     str(row.qr_token)) for row in rows]
+        self.assertEqual([(t['id'], t['table_number'], t['url'], t['qr_token']) for t in response.data['tables']],
+                         expected)
+        for table in response.data['tables']:
+            prefix, png = table['qr_image_url'].split(',')
+            self.assertEqual(prefix, 'data:image/png;base64')
+            self.assertEqual(Image.open(BytesIO(base64.b64decode(png))).format, 'PNG')
+
+    def test_same_count_again_changes_nothing(self):  # A3
+        first = self.generate(3)
+        second = self.generate(3)
+
+        self.assertEqual(second.data, first.data)
+        self.assertEqual(CafeTable.objects.filter(cafe=self.cafe).count(), 3)
+
+    def test_smaller_count_deactivates_and_keeps_the_tokens(self):  # A4, step 2 (b) and (c)
+        tokens = self.tokens(self.generate(3))
+
+        smaller = self.generate(1)
+        self.assertEqual((smaller.data['table_count'], self.tokens(smaller)), (1, {1: tokens[1]}))
+        self.assertEqual(CafeTable.objects.filter(cafe=self.cafe, is_active=False).count(), 2)  # not deleted
+        self.assertEqual(pdf_page_texts(b''.join(self.client.get(self.pdf_url).streaming_content)),
+                         [['1', 'https://menu.domain.com/menu/tartus-coffee?table=1']])  # gone from the PDF
+
+        self.assertEqual(self.tokens(self.generate(3)), tokens)  # switched on again with the same tokens
+
+    def test_invalid_table_count_returns_400(self):  # A1, A2
+        too_small = ['Ensure this value is greater than or equal to 1.']
+        not_integer = ['A valid integer is required.']
+        cases = [
+            ('missing', {}, ['This field is required.']),
+            ('text', {'table_count': 'abc'}, not_integer),
+            ('decimal', {'table_count': 12.5}, not_integer),
+            ('zero', {'table_count': 0}, too_small),
+            ('negative', {'table_count': -1}, too_small),
+            ('over 200', {'table_count': 201}, ['Ensure this value is less than or equal to 200.']),  # A2
+        ]
+        for label, body, errors in cases:
+            with self.subTest(label):
+                response = self.client.post(self.generate_url, body, format='json')
+
+                self.assertEqual((response.status_code, response.data),
+                                 (status.HTTP_400_BAD_REQUEST, {'table_count': errors}))
+        self.assertFalse(CafeTable.objects.exists())
+
+    def test_preview_returns_the_generate_answer_and_changes_nothing(self):  # UC-OWNER-011 main flow
+        generated = self.generate(2)
+        before = list(CafeTable.objects.values_list('pk', 'is_active', 'updated_at'))
+
+        response = self.client.get(self.preview_url)
+
+        self.assertEqual((response.status_code, response.data), (status.HTTP_200_OK, generated.data))
+        self.assertEqual(list(CafeTable.objects.values_list('pk', 'is_active', 'updated_at')), before)
+
+    def test_urls_follow_the_current_slug(self):  # UC-OWNER-008 note: built on every request
+        self.generate(1)
+        Cafe.objects.filter(pk=self.cafe.pk).update(slug='sea-view')  # a Super Admin changed it (UC-ADMIN-006)
+
+        preview = self.client.get(self.preview_url)
+        pdf = b''.join(self.client.get(self.pdf_url).streaming_content)
+
+        url = 'https://menu.domain.com/menu/sea-view?table=1'
+        self.assertEqual(preview.data['tables'][0]['url'], url)
+        self.assertEqual(pdf_page_texts(pdf), [['1', url]])
+
+    def test_no_active_tables(self):  # UC-OWNER-011 A1, UC-OWNER-008 A1
+        preview = self.client.get(self.preview_url)
+        pdf = self.client.get(self.pdf_url)
+
+        self.assertEqual((preview.status_code, preview.data), (status.HTTP_200_OK, {'table_count': 0, 'tables': []}))
+        self.assertEqual((pdf.status_code, pdf.data),
+                         (status.HTTP_400_BAD_REQUEST, {'detail': 'Please generate QR codes first.'}))
+
+    def test_pdf_has_one_page_per_active_table_in_order(self):  # UC-OWNER-008 main flow
+        self.generate(3)
+
+        response = self.client.get(self.pdf_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response['Content-Type'], 'application/pdf')
+        self.assertEqual(response['Content-Disposition'], 'attachment; filename="qrcodes.pdf"')
+        content = b''.join(response.streaming_content)
+        self.assertTrue(content.startswith(b'%PDF-'))
+        self.assertEqual(pdf_page_texts(content), [  # the table number and the URL under each code
+            [str(n), f'https://menu.domain.com/menu/tartus-coffee?table={n}'] for n in (1, 2, 3)
+        ])
+
+    def test_tables_of_another_cafe_are_never_touched_or_shown(self):  # tenant isolation
+        other = Cafe.objects.create(
+            owner=User.objects.create_user(email='other@cafe.com'), plan=self.basic, slug='other', is_active=True
+        )
+        other_tables = [CafeTable.objects.create(cafe=other, table_number=n) for n in (1, 2, 3, 4)]
+
+        self.assertEqual(self.client.get(self.preview_url).data, {'table_count': 0, 'tables': []})
+        self.assertEqual(self.client.get(self.pdf_url).status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self.generate(2).data['table_count'], 2)
+        self.assertEqual(list(CafeTable.objects.filter(cafe=other, is_active=True).order_by('table_number')),
+                         other_tables)
+
+    def test_access_rules(self):  # Global Conventions 2 and 5, UC-OWNER-007 A5, 008 A2, 011 A2
+        admin = User.objects.create_user(email='admin@platform.com', role=User.Role.SYSTEM_ADMIN)
+        requests = [('generate', lambda: self.generate(2)), ('preview', lambda: self.client.get(self.preview_url)),
+                    ('pdf', lambda: self.client.get(self.pdf_url))]
+        callers = [
+            ('no token', None, 401, {'detail': 'Authentication credentials were not provided.'}),
+            ('system admin', admin, 403, {'detail': 'You do not have permission to perform this action.'}),
+            ('inactive cafe', self.owner, 403, INACTIVE),
+        ]
+        Cafe.objects.filter(pk=self.cafe.pk).update(is_active=False)
+        for label, user, status_code, body in callers:
+            if user is None:
+                self.client.credentials()
+            else:
+                self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {AccessToken.for_user(user)}')
+            for name, send in requests:
+                with self.subTest(caller=label, endpoint=name):
+                    response = send()
+
+                    self.assertEqual((response.status_code, response.data), (status_code, body))
+        self.assertFalse(CafeTable.objects.exists())
