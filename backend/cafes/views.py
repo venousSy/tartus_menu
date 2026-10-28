@@ -1,11 +1,14 @@
 """
 Owner dashboard: cafe settings (use_cases.md UC-OWNER-009, UC-OWNER-010 and UC-OWNER-014)
-and QR codes (UC-OWNER-007 and UC-OWNER-011).
+and QR codes (UC-OWNER-007, UC-OWNER-008 and UC-OWNER-011).
 
 Views stay thin: validate with the serializer, call one service function, return a response.
 The cafe always comes from request.user.cafe; IsCafeOwner guarantees that it exists.
 """
 
+from io import BytesIO
+
+from django.http import FileResponse
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -68,3 +71,14 @@ class QRPreviewView(APIView):
 
     def get(self, request):
         return Response(QRCodesSerializer(services.preview_qr_codes(request.user.cafe)).data)
+
+
+class QRDownloadPDFView(APIView):
+    """GET /api/v1/dashboard/qr/download-pdf/ (UC-OWNER-008): the print-ready PDF as a download."""
+
+    permission_classes = [IsCafeOwner, IsActiveCafe]  # Global Convention 5 (A2)
+
+    def get(self, request):
+        pdf = services.qr_pdf(request.user.cafe)
+        # FileResponse streams the bytes and sets Content-Disposition: attachment; filename="qrcodes.pdf".
+        return FileResponse(BytesIO(pdf), as_attachment=True, filename='qrcodes.pdf', content_type='application/pdf')
