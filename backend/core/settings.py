@@ -209,6 +209,15 @@ CORS_ALLOWED_ORIGINS = [] if DEBUG else env_list('CORS_ALLOWED_ORIGINS')
 FRONTEND_REVALIDATE_URL = os.getenv('FRONTEND_REVALIDATE_URL', '')
 FRONTEND_REVALIDATE_SECRET = os.getenv('FRONTEND_REVALIDATE_SECRET', '')
 
+# Where customers open the menu; QR codes point to <this>/menu/<slug>?table=N (UC-OWNER-007).
+PUBLIC_MENU_BASE_URL = os.getenv('PUBLIC_MENU_BASE_URL', '').rstrip('/')
+if not PUBLIC_MENU_BASE_URL:
+    if DEBUG:
+        PUBLIC_MENU_BASE_URL = 'http://localhost:3000'  # the Next.js dev server
+    else:
+        # A printed QR code with a wrong address cannot be fixed later: fail at startup instead.
+        raise ImproperlyConfigured("PUBLIC_MENU_BASE_URL must be set in production.")
+
 # Production HTTPS settings.
 # Nginx terminates TLS and must always set X-Forwarded-Proto, otherwise this header can be spoofed.
 # The HTTP -> HTTPS redirect and HSTS are left to Nginx (deployment step).

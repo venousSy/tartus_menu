@@ -50,3 +50,28 @@ class LogoUploadSerializer(serializers.Serializer):
 
     # FileField, not ImageField: the service checks the content (core.images) with the use case's messages.
     image = serializers.FileField()
+
+
+class QRGenerateSerializer(serializers.Serializer):
+    """Body of POST qr/generate/ (UC-OWNER-007): { "table_count": 1-200 }."""
+
+    # A1 (missing, not an integer, 0 or negative) and A2 (> 200) use DRF's own field-level messages,
+    # e.g. {"table_count": ["Ensure this value is less than or equal to 200."]}.
+    table_count = serializers.IntegerField(min_value=1, max_value=200)
+
+
+class QRTableSerializer(serializers.Serializer):
+    """One active table with its QR code, as built by cafes.services."""
+
+    id = serializers.IntegerField()
+    table_number = serializers.IntegerField()
+    url = serializers.CharField()
+    qr_token = serializers.UUIDField()
+    qr_image_url = serializers.CharField()  # "data:image/png;base64,..."
+
+
+class QRCodesSerializer(serializers.Serializer):
+    """Answer of qr/generate/ (UC-OWNER-007) and qr/preview/ (UC-OWNER-011): same shape for both."""
+
+    table_count = serializers.IntegerField()
+    tables = QRTableSerializer(many=True)

@@ -1,10 +1,14 @@
 """
-Owner dashboard: cafe settings (use_cases.md UC-OWNER-009, UC-OWNER-010 and UC-OWNER-014).
+Owner dashboard: cafe settings (use_cases.md UC-OWNER-009, UC-OWNER-010 and UC-OWNER-014)
+and QR codes (UC-OWNER-007, UC-OWNER-008 and UC-OWNER-011).
 
 Views stay thin: validate with the serializer, call one service function, return a response.
 The cafe always comes from request.user.cafe; IsCafeOwner guarantees that it exists.
 """
 
+from io import BytesIO
+
+from django.http import FileResponse
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -12,7 +16,7 @@ from rest_framework.views import APIView
 from users.permissions import IsActiveCafe, IsCafeOwner
 
 from . import services
-from .serializers import CafeSettingsSerializer, LogoUploadSerializer
+from .serializers import CafeSettingsSerializer, LogoUploadSerializer, QRCodesSerializer, QRGenerateSerializer
 
 
 class CafeSettingsView(APIView):
@@ -46,3 +50,35 @@ class CafeLogoView(APIView):
         serializer.is_valid(raise_exception=True)
         cafe = services.upload_logo(request.user.cafe, image_file=serializer.validated_data['image'])
         return Response(CafeSettingsSerializer(cafe).data)
+
+
+class QRGenerateView(APIView):
+    """POST /api/v1/dashboard/qr/generate/ (UC-OWNER-007): { table_count } -> the active tables with QR codes."""
+
+    permission_classes = [IsCafeOwner, IsActiveCafe]  # Global Convention 5 (A5)
+
+    def post(self, request):
+        serializer = QRGenerateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        codes = services.generate_qr_codes(request.user.cafe, serializer.validated_data['table_count'])
+        return Response(QRCodesSerializer(codes).data)  # 200, not 201: it syncs, it may create nothing (A3)
+
+
+class QRPreviewView(APIView):
+    """GET /api/v1/dashboard/qr/preview/ (UC-OWNER-011): read-only, same answer as qr/generate/."""
+
+    permission_classes = [IsCafeOwner, IsActiveCafe]  # Global Convention 5 (A2): only GET settings skips it
+
+    def get(self, request):
+        return Response(QRCodesSerializer(services.preview_qr_codes(request.user.cafe)).data)
+
+
+class QRDownloadPDFView(APIView):
+    """GET /api/v1/dashboard/qr/download-pdf/ (UC-OWNER-008): the print-ready PDF as a download."""
+
+    permission_classes = [IsCafeOwner, IsActiveCafe]  # Global Convention 5 (A2)
+
+    def get(self, request):
+        pdf = services.qr_pdf(request.user.cafe)
+        # FileResponse streams the bytes and sets Content-Disposition: attachment; filename="qrcodes.pdf".
+        return FileResponse(BytesIO(pdf), as_attachment=True, filename='qrcodes.pdf', content_type='application/pdf')

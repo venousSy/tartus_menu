@@ -1,18 +1,20 @@
 """
 Business rules for the cafe settings of the owner dashboard (use_cases.md UC-OWNER-009, UC-OWNER-010
-and UC-OWNER-014).
+and UC-OWNER-014) and its tables for the QR codes (UC-OWNER-007, UC-OWNER-008 and UC-OWNER-011).
 
 Views pass the cafe from request.user.cafe, never from the request body or URL.
 """
 
 from django.db import transaction
-from rest_framework.exceptions import PermissionDenied
+from django.utils import timezone
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from core.images import LOGO_MAX_SIDE, process_image
 from core.media_storage import delete_image_on_commit, store_image
 from core.revalidation import schedule_menu_revalidation
 
-from .models import Cafe
+from .models import Cafe, CafeTable
+from .qr import qr_codes_pdf, qr_png_data_url, table_url
 
 
 def get_settings(cafe):
@@ -72,3 +74,79 @@ def upload_logo(cafe, *, image_file):
         delete_image_on_commit(old_url)
         schedule_menu_revalidation(locked_cafe.slug)
     return locked_cafe
+
+
+def sync_tables(cafe, table_count):
+    """
+    UC-OWNER-007 step 2: tables 1..table_count become active, every higher number inactive.
+
+    Rows are never deleted, so a table keeps its qr_token when it is switched off and on again
+    (A4); sending the same count again writes nothing (A3). table_count was already validated
+    (1-200). Returns the active tables in ascending table_number order.
+    """
+    with transaction.atomic():
+        # Global Convention 8: with the cafe row locked, two parallel calls cannot both create table N.
+        locked_cafe = Cafe.objects.select_for_update().get(pk=cafe.pk)
+        tables = CafeTable.objects.filter(cafe=locked_cafe)
+
+        existing = set(tables.values_list('table_number', flat=True))
+        # (a) a new row, with a new qr_token, for each missing number. bulk_create fills the timestamps.
+        CafeTable.objects.bulk_create(
+            CafeTable(cafe=locked_cafe, table_number=number)
+            for number in range(1, table_count + 1)
+            if number not in existing
+        )
+        # (b) and (c): update() skips auto_now, so updated_at is set here.
+        now = timezone.now()
+        tables.filter(table_number__lte=table_count, is_active=False).update(is_active=True, updated_at=now)
+        tables.filter(table_number__gt=table_count, is_active=True).update(is_active=False, updated_at=now)
+
+    return active_tables(cafe)
+
+
+def active_tables(cafe):
+    """The cafe's active tables in ascending table_number order (UC-OWNER-007, 008 and 011)."""
+    return list(CafeTable.objects.filter(cafe=cafe, is_active=True).order_by('table_number'))
+
+
+def generate_qr_codes(cafe, table_count):
+    """UC-OWNER-007: sync the tables (step 2), then build the QR code of each active table (step 3)."""
+    return _qr_codes(cafe, sync_tables(cafe, table_count))
+
+
+def preview_qr_codes(cafe):
+    """UC-OWNER-011: read-only, same answer as generate; { "table_count": 0, "tables": [] } without tables (A1)."""
+    return _qr_codes(cafe, active_tables(cafe))
+
+
+def qr_pdf(cafe):
+    """
+    UC-OWNER-008: the PDF bytes, one page per active table in table_number order.
+
+    Raises ValidationError (400) when the cafe has no active table (A1). Unlike the preview, which
+    answers an empty list, an empty PDF would only print blank paper.
+    """
+    tables = active_tables(cafe)
+    if not tables:
+        raise ValidationError({'detail': 'Please generate QR codes first.'})
+    return qr_codes_pdf(cafe, tables)
+
+
+def _qr_codes(cafe, tables):
+    """
+    The answer of UC-OWNER-007 and UC-OWNER-011: { table_count, tables: [{ id, table_number, url,
+    qr_token, qr_image_url }] }. `tables` are the active tables in table_number order, so
+    table_count is simply their number (it is never stored).
+    """
+    codes = []
+    for table in tables:
+        # Built from the current slug on every call, so a renamed slug never leaves an old URL behind.
+        url = table_url(cafe, table.table_number)
+        codes.append({
+            'id': table.pk,
+            'table_number': table.table_number,
+            'url': url,
+            'qr_token': table.qr_token,
+            'qr_image_url': qr_png_data_url(url),
+        })
+    return {'table_count': len(codes), 'tables': codes}
