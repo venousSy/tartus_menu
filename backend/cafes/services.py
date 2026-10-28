@@ -14,6 +14,7 @@ from core.media_storage import delete_image_on_commit, store_image
 from core.revalidation import schedule_menu_revalidation
 
 from .models import Cafe, CafeTable
+from .qr import qr_png_data_url, table_url
 
 
 def get_settings(cafe):
@@ -101,3 +102,28 @@ def sync_tables(cafe, table_count):
         tables.filter(table_number__gt=table_count, is_active=True).update(is_active=False, updated_at=now)
 
     return list(CafeTable.objects.filter(cafe=cafe, is_active=True).order_by('table_number'))
+
+
+def generate_qr_codes(cafe, table_count):
+    """UC-OWNER-007: sync the tables (step 2), then build the QR code of each active table (step 3)."""
+    return _qr_codes(cafe, sync_tables(cafe, table_count))
+
+
+def _qr_codes(cafe, tables):
+    """
+    The answer of UC-OWNER-007 and UC-OWNER-011: { table_count, tables: [{ id, table_number, url,
+    qr_token, qr_image_url }] }. `tables` are the active tables in table_number order, so
+    table_count is simply their number (it is never stored).
+    """
+    codes = []
+    for table in tables:
+        # Built from the current slug on every call, so a renamed slug never leaves an old URL behind.
+        url = table_url(cafe, table.table_number)
+        codes.append({
+            'id': table.pk,
+            'table_number': table.table_number,
+            'url': url,
+            'qr_token': table.qr_token,
+            'qr_image_url': qr_png_data_url(url),
+        })
+    return {'table_count': len(codes), 'tables': codes}
