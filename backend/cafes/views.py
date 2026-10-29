@@ -31,6 +31,7 @@ from .serializers import (
     PlatformStatsSerializer,
     QRCodesSerializer,
     QRGenerateSerializer,
+    SubscriptionChangeSerializer,
 )
 
 
@@ -143,21 +144,27 @@ class AdminCafeDetailView(APIView):
 
 
 class AdminCafeActivateView(APIView):
-    """POST /api/v1/admin/cafes/{id}/activate/ (UC-ADMIN-004): answers the updated cafe."""
+    """POST /api/v1/admin/cafes/{id}/activate/ (UC-ADMIN-004): optional { notes }, answers the updated cafe."""
 
     permission_classes = [IsSystemAdmin]
 
     def post(self, request, pk):
-        return Response(AdminCafeSerializer(services.activate_cafe(pk, performed_by=request.user)).data)
+        serializer = SubscriptionChangeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        cafe = services.activate_cafe(pk, performed_by=request.user, **serializer.validated_data)
+        return Response(AdminCafeSerializer(cafe).data)
 
 
 class AdminCafeDeactivateView(APIView):
-    """POST /api/v1/admin/cafes/{id}/deactivate/ (UC-ADMIN-005): answers the updated cafe."""
+    """POST /api/v1/admin/cafes/{id}/deactivate/ (UC-ADMIN-005): optional { notes }, answers the updated cafe."""
 
     permission_classes = [IsSystemAdmin]
 
     def post(self, request, pk):
-        return Response(AdminCafeSerializer(services.deactivate_cafe(pk, performed_by=request.user)).data)
+        serializer = SubscriptionChangeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        cafe = services.deactivate_cafe(pk, performed_by=request.user, **serializer.validated_data)
+        return Response(AdminCafeSerializer(cafe).data)
 
 
 class AdminCafeBillingView(APIView):

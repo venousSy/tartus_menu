@@ -444,6 +444,11 @@ class CreateItemTests(ItemAPITestCase):
                 {**valid, 'description': {'ar': 'Hot', 'fr': 'Chaud'}},
                 {'description': ['Only the keys "ar" and "en" are allowed.']},  # A4
             ),
+            (  # Global Convention 6: at most 100 characters per name, 500 per description
+                {**valid, 'name': {'ar': 'Soup', 'en': 'x' * 101}, 'description': {'ar': 'x' * 501}},
+                {'name': {'en': ['Ensure this field has no more than 100 characters.']},
+                 'description': {'ar': ['Ensure this field has no more than 500 characters.']}},
+            ),
             (
                 {'name': {'ar': 'Soup'}},
                 {'category_id': ['This field is required.'], 'price': ['This field is required.']},

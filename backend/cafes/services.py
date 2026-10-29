@@ -174,17 +174,20 @@ def create_cafe(*, slug, name, plan, owner):
     return get_cafe(cafe.pk)
 
 
-def activate_cafe(cafe_id, *, performed_by):
-    """UC-ADMIN-004: is_active = true, subscription_start_at = now and a BillingEvent 'activated'."""
-    return _set_subscription(cafe_id, performed_by, active=True)
+def activate_cafe(cafe_id, *, performed_by, notes=''):
+    """
+    UC-ADMIN-004: is_active = true, subscription_start_at = now, subscription_end_at = null, and a
+    BillingEvent 'activated' with the admin's notes (for example payment details).
+    """
+    return _set_subscription(cafe_id, performed_by, notes, active=True)
 
 
-def deactivate_cafe(cafe_id, *, performed_by):
+def deactivate_cafe(cafe_id, *, performed_by, notes=''):
     """UC-ADMIN-005, the mirror of activate_cafe: is_active = false and subscription_end_at = now."""
-    return _set_subscription(cafe_id, performed_by, active=False)
+    return _set_subscription(cafe_id, performed_by, notes, active=False)
 
 
-def _set_subscription(cafe_id, performed_by, *, active):
+def _set_subscription(cafe_id, performed_by, notes, *, active):
     with transaction.atomic():
         # Locked: a double click waits for the first commit and then gets A1, so only one BillingEvent is written.
         cafe = _lock_cafe(cafe_id)
@@ -192,12 +195,16 @@ def _set_subscription(cafe_id, performed_by, *, active):
         if cafe.is_active == active:
             raise ValidationError({'detail': f'Cafe is already {state}.'})  # A1
 
-        date_field = 'subscription_start_at' if active else 'subscription_end_at'
+        now = timezone.now()
         cafe.is_active = active
-        setattr(cafe, date_field, timezone.now())
-        cafe.save(update_fields=['is_active', date_field, 'updated_at'])
+        if active:
+            # Both dates describe the current period; earlier periods stay in the billing history.
+            cafe.subscription_start_at, cafe.subscription_end_at = now, None
+        else:
+            cafe.subscription_end_at = now
+        cafe.save(update_fields=['is_active', 'subscription_start_at', 'subscription_end_at', 'updated_at'])
         action = BillingEvent.Action.ACTIVATED if active else BillingEvent.Action.DEACTIVATED
-        BillingEvent.objects.create(cafe=cafe, action=action, performed_by=performed_by)
+        BillingEvent.objects.create(cafe=cafe, action=action, performed_by=performed_by, notes=notes)
         # Global Convention 9: the public page shows the menu again, or the inactive screen (UC-GUEST-002).
         schedule_menu_revalidation(cafe.slug)
     return get_cafe(cafe.pk)
@@ -224,9 +231,12 @@ def update_cafe(cafe_id, *, performed_by, name=None, slug=None, primary_color=No
             changed.append('slug')
         if plan is not None and plan.pk != cafe.plan_id:
             _check_plan_limits(cafe, plan)  # A2
+            notes = f'Plan changed from {cafe.plan.get_name_display()} to {plan.get_name_display()}.'  # step 3
             cafe.plan = plan
             changed.append('plan')
-            BillingEvent.objects.create(cafe=cafe, action=BillingEvent.Action.PLAN_CHANGED, performed_by=performed_by)
+            BillingEvent.objects.create(
+                cafe=cafe, action=BillingEvent.Action.PLAN_CHANGED, performed_by=performed_by, notes=notes
+            )
         # A color is stored even when the plan hides it from customers (Global Convention 7).
         for field, value in (('name', name), ('primary_color', primary_color)):
             if value is not None and value != getattr(cafe, field):

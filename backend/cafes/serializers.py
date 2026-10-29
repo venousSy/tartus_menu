@@ -5,7 +5,7 @@ from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.validators import UniqueValidator
 
-from core.serializer_fields import BilingualNameField
+from core.serializer_fields import BilingualNameField, StrictCharField
 
 from .models import Cafe, SubscriptionPlan
 
@@ -168,6 +168,13 @@ class AdminCafeUpdateSerializer(serializers.Serializer):
             if errors:
                 raise serializers.ValidationError(errors)
         return super().to_internal_value(data)
+
+
+class SubscriptionChangeSerializer(serializers.Serializer):
+    """Optional body of activate/ and deactivate/ (UC-ADMIN-004 and 005): { "notes": "..." }."""
+
+    # Stored on the BillingEvent, e.g. payment details. StrictCharField: a number is rejected (A4).
+    notes = StrictCharField(allow_blank=True, max_length=500, default='')
 
 
 class BillingEventSerializer(serializers.Serializer):

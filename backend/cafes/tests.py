@@ -140,6 +140,7 @@ class CafeSettingsTests(CafeAPITestCase):
             ({'primary_color': 'red'}, {'primary_color': ['Enter a color in #RRGGBB format.']}),  # A3
             ({'primary_color': '#12345'}, {'primary_color': ['Enter a color in #RRGGBB format.']}),
             ({'name': {'en': 'Sea View'}}, {'name': {'ar': ['This field is required.']}}),  # A4
+            ({'name': {'ar': 'x' * 101}}, {'name': {'ar': ['Ensure this field has no more than 100 characters.']}}),
         ]
         for body, errors in cases:
             with self.subTest(body=body):
@@ -609,15 +610,34 @@ class AdminCafeWriteTests(AdminAPITestCase):
         return list(BillingEvent.objects.order_by('created_at', 'pk').values_list('action', 'performed_by'))
 
     def test_deactivate_then_activate(self):  # UC-ADMIN-005 and UC-ADMIN-004 main flows
-        off = self.client.post(self.url('cafe-deactivate'))
-        on = self.client.post(self.url('cafe-activate'))
+        off = self.client.post(self.url('cafe-deactivate'), {'notes': 'Did not pay for May.'}, format='json')
+        on = self.client.post(self.url('cafe-activate'))  # no body: notes are optional
 
         self.assertEqual((off.status_code, off.data['is_active'], on.status_code, on.data['is_active']),
                          (200, False, 200, True))
-        self.cafe.refresh_from_db()
-        self.assertIsNotNone(self.cafe.subscription_end_at)  # set by the deactivation
-        self.assertIsNotNone(self.cafe.subscription_start_at)  # set by the activation
+        self.assertIsNotNone(off.data['subscription_end_at'])  # set by the deactivation
+        # The dates describe the current period: a new start, and the old end cleared (UC-ADMIN-004 step 2).
+        self.assertIsNotNone(on.data['subscription_start_at'])
+        self.assertIsNone(on.data['subscription_end_at'])
         self.assertEqual(self.events(), [('deactivated', self.admin.pk), ('activated', self.admin.pk)])
+        self.assertEqual(list(BillingEvent.objects.order_by('created_at', 'pk').values_list('notes', flat=True)),
+                         ['Did not pay for May.', ''])
+
+    def test_invalid_notes_return_400(self):  # UC-ADMIN-004 A4, UC-ADMIN-005 A3
+        cases = [
+            ('501 characters', {'notes': 'x' * 501}, ['Ensure this field has no more than 500 characters.']),
+            ('a number', {'notes': 123}, ['Not a valid string.']),
+        ]
+        for name in ('cafe-deactivate', 'cafe-activate'):
+            for label, body, errors in cases:
+                with self.subTest(endpoint=name, notes=label):
+                    response = self.client.post(self.url(name), body, format='json')
+
+                    self.assertEqual((response.status_code, response.data),
+                                     (status.HTTP_400_BAD_REQUEST, {'notes': errors}))
+        self.cafe.refresh_from_db()
+        self.assertTrue(self.cafe.is_active)
+        self.assertFalse(BillingEvent.objects.exists())
 
     def test_same_state_again_returns_400(self):  # UC-ADMIN-004 A1, UC-ADMIN-005 A1
         already_active = self.client.post(self.url('cafe-activate'))
@@ -651,7 +671,7 @@ class AdminCafeWriteTests(AdminAPITestCase):
         response = self.client.get(self.url('cafe-billing'))
 
         self.assertEqual([(e['action'], e['notes'], e['performed_by_email']) for e in response.data], [
-            ('activated', 'Paid.', None), ('plan_changed', '', 'admin@platform.com'),
+            ('activated', 'Paid.', None), ('plan_changed', 'Plan changed from Basic to Pro.', 'admin@platform.com'),
             ('deactivated', '', 'admin@platform.com'),
         ])
         self.assertEqual(set(response.data[0]), {'action', 'notes', 'performed_by_email', 'created_at'})

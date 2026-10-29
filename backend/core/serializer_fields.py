@@ -5,6 +5,10 @@ Shared DRF serializer fields, used by more than one app (menu now, cafes later).
 from rest_framework import serializers
 from rest_framework.fields import empty
 
+# Global Convention 6: the most characters per language, enough for a menu card or a phone screen.
+NAME_MAX_LENGTH = 100
+DESCRIPTION_MAX_LENGTH = 500
+
 
 class StrictCharField(serializers.CharField):
     """A CharField that accepts only real strings. DRF's CharField also turns 123 into "123"."""
@@ -21,6 +25,7 @@ class BilingualNameField(serializers.Field):
 
     - "ar" is required and must be a non-empty string.
     - "en" is optional; when missing it is stored as "", so every stored name has both keys.
+    - Each value has at most NAME_MAX_LENGTH characters.
     - Any other key is rejected.
     Errors use DRF's standard messages under each key, e.g. {"name": {"ar": ["This field is required."]}}.
     The object is always validated as a whole, also in a PATCH: a sent name replaces the old one.
@@ -36,8 +41,8 @@ class BilingualNameField(serializers.Field):
         # Standalone child fields, not bound to the parent serializer. In a PATCH the parent
         # has partial=True, and bound fields would then let "ar" be left out.
         self.language_fields = {
-            'ar': StrictCharField(),
-            'en': StrictCharField(allow_blank=True, default=''),
+            'ar': StrictCharField(max_length=NAME_MAX_LENGTH),
+            'en': StrictCharField(allow_blank=True, default='', max_length=NAME_MAX_LENGTH),
         }
 
     def to_internal_value(self, data):
@@ -65,13 +70,14 @@ class BilingualDescriptionField(BilingualNameField):
     """
     A description stored as JSON {"ar": "...", "en": "..."} (use_cases.md Global Convention 6).
 
-    Both keys are optional strings; a missing key is stored as "". Other keys are rejected
-    with the same message as in a name, and a sent description replaces the old one as a whole.
+    Both keys are optional strings of at most DESCRIPTION_MAX_LENGTH characters; a missing key is
+    stored as "". Other keys are rejected with the same message as in a name, and a sent
+    description replaces the old one as a whole.
     """
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.language_fields = {
-            'ar': StrictCharField(allow_blank=True, default=''),
-            'en': StrictCharField(allow_blank=True, default=''),
+            'ar': StrictCharField(allow_blank=True, default='', max_length=DESCRIPTION_MAX_LENGTH),
+            'en': StrictCharField(allow_blank=True, default='', max_length=DESCRIPTION_MAX_LENGTH),
         }
