@@ -10,3 +10,5 @@ urlpatterns = [
     path('api/v1/dashboard/', include('cafes.urls')),
     path('api/v1/menu/', include('menu.public_urls')),
 ]
+
+handler404 = 'core.views.json_not_found'  # Global Convention 2: JSON, not Django's HTML page
