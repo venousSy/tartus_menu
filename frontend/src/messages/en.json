@@ -1,0 +1,12 @@
+{
+  "Menu": {
+    "switchLanguage": "العربية",
+    "categories": "Categories",
+    "table": "Table {number}",
+    "featured": "Featured",
+    "new": "New",
+    "comingSoon": "Menu coming soon",
+    "unavailable": "This menu is temporarily unavailable. Please ask staff for assistance.",
+    "notFound": "Menu not found"
+  }
+}

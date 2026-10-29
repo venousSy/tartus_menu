@@ -3,3 +3,9 @@
 @theme inline {
   --font-sans: var(--font-cairo);
 }
+
+/* The default theme. A cafe whose plan allows branding overrides both colors on its menu page (GC 7). */
+@theme {
+  --color-primary: #6f4e37;
+  --color-on-primary: #ffffff;
+}
