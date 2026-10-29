@@ -1,20 +1,26 @@
 """
 Business rules for the cafe settings of the owner dashboard (use_cases.md UC-OWNER-009, UC-OWNER-010
-and UC-OWNER-014) and its tables for the QR codes (UC-OWNER-007, UC-OWNER-008 and UC-OWNER-011).
+and UC-OWNER-014), its tables for the QR codes (UC-OWNER-007, UC-OWNER-008 and UC-OWNER-011),
+and the Super Admin's cafe management (UC-ADMIN-001 to UC-ADMIN-009).
 
-Views pass the cafe from request.user.cafe, never from the request body or URL.
+Owner views pass the cafe from request.user.cafe, never from the request body or URL.
+Super Admin views pass the cafe id from the URL: the admin manages every cafe.
 """
 
+from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.db.models import Count, Q
 from django.utils import timezone
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from core.images import LOGO_MAX_SIDE, process_image
 from core.media_storage import delete_image_on_commit, store_image
 from core.revalidation import schedule_menu_revalidation
 
-from .models import Cafe, CafeTable
+from .models import BillingEvent, Cafe, CafeTable, SubscriptionPlan
 from .qr import qr_codes_pdf, qr_png_data_url, table_url
+
+User = get_user_model()
 
 
 def get_settings(cafe):
@@ -130,6 +136,98 @@ def qr_pdf(cafe):
     if not tables:
         raise ValidationError({'detail': 'Please generate QR codes first.'})
     return qr_codes_pdf(cafe, tables)
+
+
+# --- Super Admin (UC-ADMIN-001 to UC-ADMIN-009): any cafe, looked up by the id in the URL ---
+
+
+def list_cafes(search=''):
+    """UC-ADMIN-002: every cafe, newest first. `search` matches part of the slug, a name or the owner email."""
+    cafes = Cafe.objects.select_related('plan', 'owner').order_by('-created_at', '-pk')
+    if search:
+        cafes = cafes.filter(
+            Q(slug__icontains=search) | Q(name__ar__icontains=search) | Q(name__en__icontains=search)
+            | Q(owner__email__icontains=search)
+        )
+    return cafes
+
+
+def get_cafe(cafe_id):
+    """UC-ADMIN-003: one cafe with its plan and owner. Raises NotFound (404) for an unknown id."""
+    try:
+        return Cafe.objects.select_related('plan', 'owner').get(pk=cafe_id)
+    except Cafe.DoesNotExist:
+        raise NotFound() from None
+
+
+def create_cafe(*, slug, name, plan, owner):
+    """
+    UC-ADMIN-001: the owner account and its inactive cafe, in one transaction.
+    The serializer already checked the input, including the unique slug (A1) and email (A2).
+    """
+    with transaction.atomic():
+        # The owner first, as the use case says; if the cafe insert fails, the rollback removes the account too.
+        user = User.objects.create_user(
+            email=owner['email'], password=owner['password'], role=User.Role.CAFE_OWNER
+        )
+        cafe = Cafe.objects.create(owner=user, plan=plan, slug=slug, name=name)  # is_active=False by default
+    return get_cafe(cafe.pk)
+
+
+def activate_cafe(cafe_id, *, performed_by):
+    """UC-ADMIN-004: is_active = true, subscription_start_at = now and a BillingEvent 'activated'."""
+    return _set_subscription(cafe_id, performed_by, active=True)
+
+
+def deactivate_cafe(cafe_id, *, performed_by):
+    """UC-ADMIN-005, the mirror of activate_cafe: is_active = false and subscription_end_at = now."""
+    return _set_subscription(cafe_id, performed_by, active=False)
+
+
+def _set_subscription(cafe_id, performed_by, *, active):
+    with transaction.atomic():
+        # Locked: a double click waits for the first commit and then gets A1, so only one BillingEvent is written.
+        cafe = _lock_cafe(cafe_id)
+        state = 'active' if active else 'inactive'
+        if cafe.is_active == active:
+            raise ValidationError({'detail': f'Cafe is already {state}.'})  # A1
+
+        date_field = 'subscription_start_at' if active else 'subscription_end_at'
+        cafe.is_active = active
+        setattr(cafe, date_field, timezone.now())
+        cafe.save(update_fields=['is_active', date_field, 'updated_at'])
+        action = BillingEvent.Action.ACTIVATED if active else BillingEvent.Action.DEACTIVATED
+        BillingEvent.objects.create(cafe=cafe, action=action, performed_by=performed_by)
+        # Global Convention 9: the public page shows the menu again, or the inactive screen (UC-GUEST-002).
+        schedule_menu_revalidation(cafe.slug)
+    return get_cafe(cafe.pk)
+
+
+def _lock_cafe(cafe_id):
+    """The cafe row, locked until the transaction ends (Global Convention 8). NotFound (404) for an unknown id."""
+    try:
+        return Cafe.objects.select_for_update().get(pk=cafe_id)
+    except Cafe.DoesNotExist:
+        raise NotFound() from None
+
+
+def billing_history(cafe_id):
+    """UC-ADMIN-008: the cafe's billing events, newest first; an empty list when there are none (A1)."""
+    if not Cafe.objects.filter(pk=cafe_id).exists():
+        raise NotFound()  # A2
+    return BillingEvent.objects.filter(cafe_id=cafe_id).select_related('performed_by').order_by('-created_at', '-pk')
+
+
+def platform_stats():
+    """UC-ADMIN-009: the cafe counts for the admin home page, in one query."""
+    return Cafe.objects.aggregate(
+        total_cafes=Count('pk'),
+        active_cafes=Count('pk', filter=Q(is_active=True)),
+        inactive_cafes=Count('pk', filter=Q(is_active=False)),
+        # A report per plan, not a plan rule, so counting by the plan code is right here.
+        basic_plan_count=Count('pk', filter=Q(plan__name=SubscriptionPlan.Name.BASIC)),
+        pro_plan_count=Count('pk', filter=Q(plan__name=SubscriptionPlan.Name.PRO)),
+    )
 
 
 def _qr_codes(cafe, tables):
