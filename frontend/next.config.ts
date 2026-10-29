@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   /* config options here */
+  // The repository's root AGENTS.md is the only rule file: stop `next dev`
+  // from writing a second one into frontend/.
+  agentRules: false,
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {
