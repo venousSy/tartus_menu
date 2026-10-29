@@ -14,7 +14,7 @@ from django.utils import timezone
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from core.images import LOGO_MAX_SIDE, process_image
-from core.media_storage import delete_image_on_commit, store_image
+from core.media_storage import delete_folder_on_commit, delete_image_on_commit, store_image
 from core.revalidation import schedule_menu_revalidation
 
 from .models import BillingEvent, Cafe, CafeTable, SubscriptionPlan
@@ -201,6 +201,71 @@ def _set_subscription(cafe_id, performed_by, *, active):
         # Global Convention 9: the public page shows the menu again, or the inactive screen (UC-GUEST-002).
         schedule_menu_revalidation(cafe.slug)
     return get_cafe(cafe.pk)
+
+
+def update_cafe(cafe_id, *, performed_by, name=None, slug=None, primary_color=None, plan=None):
+    """
+    UC-ADMIN-006. PATCH semantics: an argument left as None is not changed. The serializer already
+    rejected is_active and logo_url (A3, A4) and checked the formats (A5, A6).
+
+    Raises ValidationError (400) for a slug that another cafe uses (A1) and for a plan whose limits
+    the cafe exceeds (A2). Only a real plan change writes a BillingEvent 'plan_changed'.
+    """
+    with transaction.atomic():
+        # Global Convention 8: a parallel item create waits, so the limit check below stays true.
+        cafe = _lock_cafe(cafe_id)
+        old_slug = cafe.slug
+        changed = []
+
+        if slug is not None and slug != cafe.slug:
+            if Cafe.objects.filter(slug=slug).exists():
+                raise ValidationError({'slug': ['A cafe with this slug already exists.']})  # A1
+            cafe.slug = slug  # every QR code printed with the old slug stops working (no redirect in the MVP)
+            changed.append('slug')
+        if plan is not None and plan.pk != cafe.plan_id:
+            _check_plan_limits(cafe, plan)  # A2
+            cafe.plan = plan
+            changed.append('plan')
+            BillingEvent.objects.create(cafe=cafe, action=BillingEvent.Action.PLAN_CHANGED, performed_by=performed_by)
+        # A color is stored even when the plan hides it from customers (Global Convention 7).
+        for field, value in (('name', name), ('primary_color', primary_color)):
+            if value is not None and value != getattr(cafe, field):
+                setattr(cafe, field, value)
+                changed.append(field)
+
+        if changed:
+            cafe.save(update_fields=[*changed, 'updated_at'])
+            # Global Convention 9: after a slug change, both pages (dict.fromkeys drops a repeated slug).
+            schedule_menu_revalidation(*dict.fromkeys([old_slug, cafe.slug]))
+    return get_cafe(cafe_id)
+
+
+def _check_plan_limits(cafe, plan):
+    """UC-ADMIN-006 A2. Only non-deleted rows count; images, logo and color never block (Global Convention 7)."""
+    for label, limit, count in (
+        ('categories', plan.max_categories, cafe.categories.filter(deleted_at__isnull=True).count()),
+        ('items', plan.max_items, cafe.menu_items.filter(deleted_at__isnull=True).count()),
+    ):
+        # Decided by the plan's limits, never by its name. NULL means unlimited.
+        if limit is not None and count > limit:
+            raise ValidationError({
+                'detail': f'Cannot downgrade to {plan.get_name_display()}: cafe has {count} {label} (max {limit}).'
+            })
+
+
+def delete_cafe(cafe_id):
+    """
+    UC-ADMIN-007: hard delete of the cafe and its owner account, in one transaction. Irreversible.
+    on_delete=CASCADE removes the categories, items, tables and billing events with the cafe.
+    """
+    with transaction.atomic():
+        cafe = _lock_cafe(cafe_id)
+        cafe.delete()
+        User.objects.filter(pk=cafe.owner_id).delete()  # no account without a cafe is left behind
+        # Only after the commit: on a rollback the rows would still point to these files.
+        delete_folder_on_commit(f'cafes/{cafe_id}')
+        # Global Convention 9: the public page must stop showing the menu.
+        schedule_menu_revalidation(cafe.slug)
 
 
 def _lock_cafe(cafe_id):
