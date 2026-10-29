@@ -201,6 +201,11 @@ billing_events
 }
 ```
 
+**Activate / Deactivate Request** (optional body; `notes` is at most 500 characters and is stored on the BillingEvent):
+```json
+{ "notes": "Paid 3 months in cash." }
+```
+
 ---
 
 ### 3.3 Cafe Owner — Dashboard

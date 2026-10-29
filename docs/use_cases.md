@@ -88,6 +88,7 @@ The fields name (cafes, categories, menu items) and description (menu items) are
 
 - name: "ar" is required and must be a non-empty string. "en" is optional: it may be missing or an empty string.
 - description: optional. When present, "ar" and "en" are both optional strings.
+- Maximum length per language: 100 characters for name, 500 for description. A longer value: 400 Bad Request with DRF's standard message, for example {"name": {"ar": ["Ensure this field has no more than 100 characters."]}}.
 - Any other key is rejected: 400 Bad Request — {"<field>": ["Only the keys \"ar\" and \"en\" are allowed."]}.
 - Other validation errors (missing or blank "ar", a value that is not a string) use DRF's standard field-level errors under the field name, for example {"name": {"ar": ["This field is required."]}}.
 - Display fallback: when the reader chose English and the "en" value is missing or empty, the "ar" value is shown.
@@ -316,20 +317,21 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 | **Actor** | Super Admin |
 | **Trigger** | Admin clicks "Activate" on a cafe detail page |
 | **Preconditions** | Cafe exists; is_active = false |
-| **Postconditions (Success)** | cafe.is_active = true; subscription_start_at set to now; a BillingEvent (action='activated') is created |
+| **Postconditions (Success)** | cafe.is_active = true; subscription_start_at set to now and subscription_end_at cleared (null), so both dates describe the current period; a BillingEvent (action='activated') is created |
 | **API** | POST /api/v1/admin/cafes/{id}/activate/ |
 | **Architectural Note** | Service Layer method CafeService.activate(cafe, performed_by). Wrapped in atomic. Creates the BillingEvent audit record in the same transaction. |
 
 **Main Flow:**
-1. Admin triggers activation.
-2. Service sets is_active = true, subscription_start_at = now().
-3. Service creates BillingEvent(action='activated', performed_by=admin).
+1. Admin triggers activation, optionally with { "notes": "Paid 3 months in cash." } (a string of at most 500 characters, for example payment details).
+2. Service sets is_active = true, subscription_start_at = now(), subscription_end_at = null.
+3. Service creates BillingEvent(action='activated', performed_by=admin, notes=the sent notes or "").
 4. Returns updated cafe object.
 
 **Alternate Flows:**
 - **A1 — Cafe already active:** 400 Bad Request — {"detail": "Cafe is already active."}.
 - **A2 — Cafe not found:** 404 Not Found.
 - **A3 — Non-admin caller:** 403 Forbidden.
+- **A4 — notes is not a string or longer than 500 characters:** 400 Bad Request with a field-level error on notes.
 
 ---
 
@@ -347,14 +349,15 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 | **Architectural Note** | Mirror of UC-ADMIN-004. Service Layer enforces atomicity. |
 
 **Main Flow:**
-1. Admin triggers deactivation.
+1. Admin triggers deactivation, optionally with { "notes": "..." } (same rule as UC-ADMIN-004).
 2. Service sets is_active = false, subscription_end_at = now().
-3. Service creates BillingEvent(action='deactivated', performed_by=admin).
+3. Service creates BillingEvent(action='deactivated', performed_by=admin, notes=the sent notes or "").
 4. Returns updated cafe object.
 
 **Alternate Flows:**
 - **A1 — Cafe already inactive:** 400 Bad Request — {"detail": "Cafe is already inactive."}.
 - **A2 — Cafe not found:** 404 Not Found.
+- **A3 — Invalid notes:** 400 Bad Request, as UC-ADMIN-004 A4.
 
 ---
 
@@ -374,7 +377,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 **Main Flow:**
 1. Admin sends partial update (any combination of: name, slug, primary_color, plan).
 2. System validates slug uniqueness (if changed).
-3. If plan changed, system logs a BillingEvent.
+3. If plan changed, system logs a BillingEvent(action='plan_changed') with the notes "Plan changed from <old> to <new>." using the plan display names, for example "Plan changed from Basic to Pro."
 4. Returns updated cafe.
 
 **Alternate Flows:**
