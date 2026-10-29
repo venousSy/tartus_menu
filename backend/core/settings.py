@@ -218,6 +218,13 @@ if not PUBLIC_MENU_BASE_URL:
         # A printed QR code with a wrong address cannot be fixed later: fail at startup instead.
         raise ImproperlyConfigured("PUBLIC_MENU_BASE_URL must be set in production.")
 
+# Path of the Django admin site, without slashes (system_design.md sections 1 and 5). A non-obvious
+# path keeps bots from finding the login page at /admin/; Nginx routes the same path to Django.
+DJANGO_ADMIN_PATH = os.getenv('DJANGO_ADMIN_PATH', '').strip('/')
+if not DEBUG and DJANGO_ADMIN_PATH in ('', 'admin'):
+    raise ImproperlyConfigured("DJANGO_ADMIN_PATH must be set to a non-obvious path in production.")
+DJANGO_ADMIN_PATH = DJANGO_ADMIN_PATH or 'admin'  # development default
+
 # Production HTTPS settings.
 # Nginx terminates TLS and must always set X-Forwarded-Proto, otherwise this header can be spoofed.
 # The HTTP -> HTTPS redirect and HSTS are left to Nginx (deployment step).
