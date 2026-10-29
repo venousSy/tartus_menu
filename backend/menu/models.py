@@ -72,6 +72,10 @@ class MenuItem(models.Model):
     class Meta:
         db_table = 'menu_items'
         ordering = ['sort_order', 'id']
+        constraints = [
+            # system_design.md 2.2: CHECK price >= 0 (Global Convention 10), also for writers that skip the API.
+            models.CheckConstraint(condition=models.Q(price__gte=0), name='menu_item_price_not_negative'),
+        ]
 
     def save(self, *args, **kwargs):
         # Tenant-isolation invariant: the denormalized cafe must equal the category's cafe.

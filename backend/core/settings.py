@@ -218,6 +218,32 @@ if not PUBLIC_MENU_BASE_URL:
         # A printed QR code with a wrong address cannot be fixed later: fail at startup instead.
         raise ImproperlyConfigured("PUBLIC_MENU_BASE_URL must be set in production.")
 
+# Path of the Django admin site, without slashes (system_design.md sections 1 and 5). A non-obvious
+# path keeps bots from finding the login page at /admin/; Nginx routes the same path to Django.
+DJANGO_ADMIN_PATH = os.getenv('DJANGO_ADMIN_PATH', '').strip('/')
+if not DEBUG and DJANGO_ADMIN_PATH in ('', 'admin'):
+    raise ImproperlyConfigured("DJANGO_ADMIN_PATH must be set to a non-obvious path in production.")
+DJANGO_ADMIN_PATH = DJANGO_ADMIN_PATH or 'admin'  # development default
+
+# Logging to the console (stderr), where Docker collects it. Django's other loggers keep their defaults.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'plain': {'format': '{asctime} {levelname} {name}: {message}', 'style': '{'},
+    },
+    'handlers': {
+        'console': {'class': 'logging.StreamHandler', 'formatter': 'plain'},
+    },
+    'loggers': {
+        # Our modules (core.revalidation, core.media_storage) log errors that never fail the request.
+        'core': {'handlers': ['console'], 'level': 'INFO'},
+        # Server errors (5xx) with their traceback. Django's default only e-mails them, and no ADMINS are set.
+        # 4xx answers are WARNING and stay out; Nginx logs every request anyway.
+        'django.request': {'handlers': ['console'], 'level': 'ERROR', 'propagate': False},
+    },
+}
+
 # Production HTTPS settings.
 # Nginx terminates TLS and must always set X-Forwarded-Proto, otherwise this header can be spoofed.
 # The HTTP -> HTTPS redirect and HSTS are left to Nginx (deployment step).
