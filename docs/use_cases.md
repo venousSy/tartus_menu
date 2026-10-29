@@ -256,7 +256,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 
 **Alternate Flows:**
 - **A1 — Duplicate slug:** 400 Bad Request — {"slug": ["A cafe with this slug already exists."]}.
-- **A2 — Duplicate owner email:** 400 Bad Request — {"owner.email": ["A user with this email already exists."]}.
+- **A2 — Duplicate owner email:** 400 Bad Request — {"owner": {"email": ["A user with this email already exists."]}} (nested, like every owner field error; same shape as the name errors of Global Convention 6).
 - **A3 — Invalid plan name:** 400 Bad Request.
 - **A4 — Non-admin caller:** 403 Forbidden.
 - **A5 — Invalid name (for example missing or blank "ar", or an unknown key):** 400 Bad Request with field-level errors under name (Global Convention 6).

@@ -1,22 +1,37 @@
 """
 Owner dashboard: cafe settings (use_cases.md UC-OWNER-009, UC-OWNER-010 and UC-OWNER-014)
 and QR codes (UC-OWNER-007, UC-OWNER-008 and UC-OWNER-011).
+Super Admin: cafe management (UC-ADMIN-001 to UC-ADMIN-009).
 
 Views stay thin: validate with the serializer, call one service function, return a response.
-The cafe always comes from request.user.cafe; IsCafeOwner guarantees that it exists.
+In owner views the cafe always comes from request.user.cafe; IsCafeOwner guarantees that it exists.
+Admin views take the cafe id from the URL; IsSystemAdmin checks role == SYSTEM_ADMIN, never is_staff.
 """
 
 from io import BytesIO
 
 from django.http import FileResponse
+from rest_framework import status
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from users.permissions import IsActiveCafe, IsCafeOwner
+from users.permissions import IsActiveCafe, IsCafeOwner, IsSystemAdmin
 
 from . import services
-from .serializers import CafeSettingsSerializer, LogoUploadSerializer, QRCodesSerializer, QRGenerateSerializer
+from .serializers import (
+    AdminCafeCreateSerializer,
+    AdminCafeSerializer,
+    AdminCafeSummarySerializer,
+    AdminCafeUpdateSerializer,
+    BillingEventSerializer,
+    CafeSettingsSerializer,
+    LogoUploadSerializer,
+    PlatformStatsSerializer,
+    QRCodesSerializer,
+    QRGenerateSerializer,
+)
 
 
 class CafeSettingsView(APIView):
@@ -82,3 +97,82 @@ class QRDownloadPDFView(APIView):
         pdf = services.qr_pdf(request.user.cafe)
         # FileResponse streams the bytes and sets Content-Disposition: attachment; filename="qrcodes.pdf".
         return FileResponse(BytesIO(pdf), as_attachment=True, filename='qrcodes.pdf', content_type='application/pdf')
+
+
+class AdminCafePagination(PageNumberPagination):
+    """UC-ADMIN-002: ?page=N with 20 cafes per page; answers { count, next, previous, results }."""
+
+    page_size = 20
+
+
+class AdminCafeListView(APIView):
+    """GET (UC-ADMIN-002) and POST (UC-ADMIN-001) /api/v1/admin/cafes/"""
+
+    permission_classes = [IsSystemAdmin]
+
+    def get(self, request):
+        cafes = services.list_cafes(search=request.query_params.get('search', '').strip())
+        paginator = AdminCafePagination()
+        page = paginator.paginate_queryset(cafes, request, view=self)
+        return paginator.get_paginated_response(AdminCafeSummarySerializer(page, many=True).data)
+
+    def post(self, request):
+        serializer = AdminCafeCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        cafe = services.create_cafe(**serializer.validated_data)
+        return Response(AdminCafeSerializer(cafe).data, status=status.HTTP_201_CREATED)
+
+
+class AdminCafeDetailView(APIView):
+    """GET (UC-ADMIN-003), PATCH (UC-ADMIN-006) and DELETE (UC-ADMIN-007) /api/v1/admin/cafes/{id}/"""
+
+    permission_classes = [IsSystemAdmin]
+
+    def get(self, request, pk):
+        return Response(AdminCafeSerializer(services.get_cafe(pk)).data)
+
+    def patch(self, request, pk):
+        serializer = AdminCafeUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        cafe = services.update_cafe(pk, performed_by=request.user, **serializer.validated_data)
+        return Response(AdminCafeSerializer(cafe).data)
+
+    def delete(self, request, pk):
+        services.delete_cafe(pk)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AdminCafeActivateView(APIView):
+    """POST /api/v1/admin/cafes/{id}/activate/ (UC-ADMIN-004): answers the updated cafe."""
+
+    permission_classes = [IsSystemAdmin]
+
+    def post(self, request, pk):
+        return Response(AdminCafeSerializer(services.activate_cafe(pk, performed_by=request.user)).data)
+
+
+class AdminCafeDeactivateView(APIView):
+    """POST /api/v1/admin/cafes/{id}/deactivate/ (UC-ADMIN-005): answers the updated cafe."""
+
+    permission_classes = [IsSystemAdmin]
+
+    def post(self, request, pk):
+        return Response(AdminCafeSerializer(services.deactivate_cafe(pk, performed_by=request.user)).data)
+
+
+class AdminCafeBillingView(APIView):
+    """GET /api/v1/admin/cafes/{id}/billing/ (UC-ADMIN-008): a plain list, newest first, not paginated."""
+
+    permission_classes = [IsSystemAdmin]
+
+    def get(self, request, pk):
+        return Response(BillingEventSerializer(services.billing_history(pk), many=True).data)
+
+
+class AdminStatsView(APIView):
+    """GET /api/v1/admin/stats/ (UC-ADMIN-009)"""
+
+    permission_classes = [IsSystemAdmin]
+
+    def get(self, request):
+        return Response(PlatformStatsSerializer(services.platform_stats()).data)

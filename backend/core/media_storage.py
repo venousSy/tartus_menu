@@ -1,8 +1,9 @@
 """
 Saving processed images to file storage and removing replaced ones.
 
-Shared by item images (UC-OWNER-006) and cafe logos (UC-OWNER-010). The storage is
-STORAGES['default']: Cloudflare R2 when USE_S3=True, backend/media/ in development.
+Shared by item images (UC-OWNER-006) and cafe logos (UC-OWNER-010); a deleted cafe's whole
+folder is removed too (UC-ADMIN-007). The storage is STORAGES['default']: Cloudflare R2
+when USE_S3=True, backend/media/ in development.
 """
 
 import logging
@@ -65,3 +66,29 @@ def _delete_image(url):
     except Exception:
         # A leftover file only costs a little storage.
         logger.exception('Deleting old image %s failed', url)
+
+
+def delete_folder_on_commit(folder):
+    """
+    Delete every stored file under <folder>/ once the current transaction commits (UC-ADMIN-007:
+    cafes/<cafe_id>/ holds the cafe's item images and logos). Best effort, like delete_image_on_commit.
+    """
+    transaction.on_commit(lambda: _delete_folder(folder))
+
+
+def _delete_folder(folder):
+    try:
+        _delete_tree(folder)
+    except FileNotFoundError:
+        pass  # local storages: the cafe never stored a file (R2 simply lists nothing)
+    except Exception:
+        logger.exception('Deleting the stored files under %s/ failed', folder)
+
+
+def _delete_tree(folder):
+    # R2 has no real folders: listdir() groups the keys that start with "<folder>/" by the next "/".
+    directories, files = default_storage.listdir(folder)
+    for name in files:
+        default_storage.delete(f'{folder}/{name}')
+    for name in directories:
+        _delete_tree(f'{folder}/{name}')

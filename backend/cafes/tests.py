@@ -1,6 +1,7 @@
 """
 API integration tests for the cafe settings endpoints (use_cases.md UC-OWNER-009, UC-OWNER-010
-and UC-OWNER-014) and the QR code endpoints (UC-OWNER-007, UC-OWNER-008 and UC-OWNER-011).
+and UC-OWNER-014), the QR code endpoints (UC-OWNER-007, UC-OWNER-008 and UC-OWNER-011)
+and the Super Admin endpoints (UC-ADMIN-001 to UC-ADMIN-009).
 Each test sends real HTTP requests through URL -> view -> service -> database.
 """
 
@@ -12,16 +13,20 @@ from io import BytesIO
 from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.urls import reverse
+from django.utils import timezone
 from PIL import Image
 from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import AccessToken
 
-from .models import Cafe, CafeTable, SubscriptionPlan
+from menu.models import Category, MenuItem
+
+from .models import BillingEvent, Cafe, CafeTable, SubscriptionPlan
 
 User = get_user_model()
 
@@ -453,3 +458,310 @@ class QRCodeTests(CafeAPITestCase):
 
                     self.assertEqual((response.status_code, response.data), (status_code, body))
         self.assertFalse(CafeTable.objects.exists())
+
+
+class AdminAPITestCase(CafeAPITestCase):
+    """The shared cafe data plus a Super Admin, who sends every request unless a test changes the token."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.admin = User.objects.create_user(email='admin@platform.com', role=User.Role.SYSTEM_ADMIN)
+
+    def setUp(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {AccessToken.for_user(self.admin)}')
+
+    def url(self, name, cafe=None):
+        """reverse() for the admin URLs; the cafe-level ones get the id of `cafe` (default: the shared cafe)."""
+        if name in ('cafes', 'stats'):
+            return reverse(f'admin_api:{name}')
+        return reverse(f'admin_api:{name}', args=[(cafe or self.cafe).pk])
+
+    def add_cafe(self, slug, plan=None, **fields):
+        owner = User.objects.create_user(email=f'owner@{slug}.com')
+        return Cafe.objects.create(owner=owner, plan=plan or self.basic, slug=slug, **fields)
+
+
+class AdminCafeReadAndCreateTests(AdminAPITestCase):
+    """POST (UC-ADMIN-001) and GET (UC-ADMIN-002) cafes/, GET cafes/{id}/ (UC-ADMIN-003), GET stats/ (UC-ADMIN-009)"""
+
+    create_body = {
+        'slug': 'sea-view', 'name': {'ar': 'Sea View'}, 'plan': 'pro',
+        'owner': {'email': 'New.Owner@Sea.com', 'password': 'initial_pass'},
+    }
+
+    def test_create_returns_201_with_the_inactive_cafe_and_its_owner(self):  # UC-ADMIN-001 main flow
+        response = self.client.post(self.url('cafes'), self.create_body, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        cafe = Cafe.objects.get(slug='sea-view')
+        self.assertEqual(response.data, {
+            'id': cafe.pk, 'name': {'ar': 'Sea View', 'en': ''}, 'slug': 'sea-view', 'plan': 'pro',
+            'is_active': False, 'owner_email': 'new.owner@sea.com',  # stored lowercased
+            'subscription_start_at': None, 'subscription_end_at': None, 'logo_url': '', 'primary_color': '',
+        })
+        owner = cafe.owner
+        self.assertEqual((owner.role, owner.is_staff), (User.Role.CAFE_OWNER, False))
+        self.assertTrue(owner.check_password('initial_pass'))  # stored as a hash
+        self.assertFalse(BillingEvent.objects.filter(cafe=cafe).exists())  # no activation yet
+
+    def test_create_with_invalid_input_returns_400_and_creates_nothing(self):  # A1, A2, A3, A5
+        required = ['This field is required.']
+        cases = [
+            ('slug taken', {'slug': 'tartus-coffee'}, {'slug': ['A cafe with this slug already exists.']}),  # A1
+            ('email taken', {'owner': {'email': 'OWNER@cafe.com', 'password': 'initial_pass'}},  # A2, any case
+             {'owner': {'email': ['A user with this email already exists.']}}),
+            ('unknown plan', {'plan': 'gold'}, {'plan': ['Object with name=gold does not exist.']}),  # A3
+            ('name without ar', {'name': {'en': 'Sea View'}}, {'name': {'ar': required}}),  # A5
+            ('weak password', {'owner': {'email': 'new@sea.com', 'password': '12345678'}},
+             {'owner': {'password': ['This password is too common.', 'This password is entirely numeric.']}}),
+            ('no owner', {'owner': None}, {'owner': ['This field may not be null.']}),
+        ]
+        for label, change, errors in cases:
+            with self.subTest(label):
+                response = self.client.post(self.url('cafes'), {**self.create_body, **change}, format='json')
+
+                self.assertEqual((response.status_code, response.data), (status.HTTP_400_BAD_REQUEST, errors))
+        self.assertEqual((Cafe.objects.count(), User.objects.count()), (1, 2))  # the shared cafe, owner and admin
+
+    def test_list_is_paginated_newest_first(self):  # UC-ADMIN-002 main flow
+        for n in range(21):
+            self.add_cafe(f'cafe-{n}')
+
+        first = self.client.get(self.url('cafes'))
+        second = self.client.get(self.url('cafes'), {'page': 2})
+
+        self.assertEqual((first.status_code, first.data['count'], len(first.data['results'])), (200, 22, 20))
+        self.assertEqual(first.data['results'][0]['slug'], 'cafe-20')
+        self.assertEqual([cafe['slug'] for cafe in second.data['results']], ['cafe-0', 'tartus-coffee'])
+        self.assertEqual(second.data['results'][-1], {
+            'id': self.cafe.pk, 'name': {'ar': 'Tartus Coffee', 'en': ''}, 'slug': 'tartus-coffee', 'plan': 'basic',
+            'is_active': True, 'owner_email': 'owner@cafe.com',
+        })
+
+    def test_search_matches_slug_name_and_owner_email(self):  # UC-ADMIN-002 step 1
+        self.add_cafe('sea-view', name={'ar': 'Sea View', 'en': 'Blue Lounge'})
+        for search, slugs in [('TARTUS', ['tartus-coffee']), ('lounge', ['sea-view']),
+                              ('owner@sea-view', ['sea-view']), ('nothing', [])]:
+            with self.subTest(search=search):
+                response = self.client.get(self.url('cafes'), {'search': search})
+
+                self.assertEqual([cafe['slug'] for cafe in response.data['results']], slugs)
+
+    def test_list_without_cafes(self):  # UC-ADMIN-002 A1
+        Cafe.objects.all().delete()
+
+        response = self.client.get(self.url('cafes'))
+
+        self.assertEqual(response.data, {'count': 0, 'next': None, 'previous': None, 'results': []})
+
+    def test_detail_returns_the_full_cafe(self):  # UC-ADMIN-003 main flow, A1
+        response = self.client.get(self.url('cafe'))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, {
+            'id': self.cafe.pk, 'name': {'ar': 'Tartus Coffee', 'en': ''}, 'slug': 'tartus-coffee', 'plan': 'basic',
+            'is_active': True, 'owner_email': 'owner@cafe.com', 'subscription_start_at': None,
+            'subscription_end_at': None, 'logo_url': '', 'primary_color': '#C0392B',  # stored, hidden on Basic
+        })
+        missing = self.client.get(reverse('admin_api:cafe', args=[self.cafe.pk + 100]))
+        self.assertEqual((missing.status_code, missing.data), (status.HTTP_404_NOT_FOUND, {'detail': 'Not found.'}))
+
+    def test_stats_count_the_cafes(self):  # UC-ADMIN-009
+        self.add_cafe('sea-view', plan=self.pro)  # inactive by default
+
+        response = self.client.get(self.url('stats'))
+
+        self.assertEqual(response.data, {'total_cafes': 2, 'active_cafes': 1, 'inactive_cafes': 1,
+                                         'basic_plan_count': 1, 'pro_plan_count': 1})
+
+    def test_only_a_system_admin_may_call_the_admin_api(self):  # Global Conventions 1 and 2
+        staff_owner = User.objects.create_user(email='staff@cafe.com', is_staff=True)  # is_staff never decides
+        no_role = {'detail': 'You do not have permission to perform this action.'}
+        callers = [
+            ('no token', None, 401, {'detail': 'Authentication credentials were not provided.'}),
+            ('cafe owner', self.owner, 403, no_role),
+            ('owner with is_staff', staff_owner, 403, no_role),
+        ]
+        endpoints = [('get', 'cafes'), ('post', 'cafes'), ('get', 'cafe'), ('patch', 'cafe'), ('delete', 'cafe'),
+                     ('post', 'cafe-activate'), ('post', 'cafe-deactivate'), ('get', 'cafe-billing'), ('get', 'stats')]
+        for label, user, status_code, body in callers:
+            if user is None:
+                self.client.credentials()
+            else:
+                self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {AccessToken.for_user(user)}')
+            for method, name in endpoints:
+                with self.subTest(caller=label, endpoint=f'{method} {name}'):
+                    response = getattr(self.client, method)(self.url(name), {}, format='json')
+
+                    self.assertEqual((response.status_code, response.data), (status_code, body))
+        self.cafe.refresh_from_db()
+        self.assertTrue(self.cafe.is_active)
+        self.assertFalse(BillingEvent.objects.exists())
+
+
+# In memory: a delete must never reach backend/media/ or R2 (UC-ADMIN-007 removes the cafe's folder).
+@override_settings(STORAGES=IN_MEMORY_STORAGES, FRONTEND_REVALIDATE_URL='')
+class AdminCafeWriteTests(AdminAPITestCase):
+    """activate/ (UC-ADMIN-004), deactivate/ (005), PATCH (006), DELETE (007) and billing/ (008)"""
+
+    def events(self):
+        return list(BillingEvent.objects.order_by('created_at', 'pk').values_list('action', 'performed_by'))
+
+    def test_deactivate_then_activate(self):  # UC-ADMIN-005 and UC-ADMIN-004 main flows
+        off = self.client.post(self.url('cafe-deactivate'))
+        on = self.client.post(self.url('cafe-activate'))
+
+        self.assertEqual((off.status_code, off.data['is_active'], on.status_code, on.data['is_active']),
+                         (200, False, 200, True))
+        self.cafe.refresh_from_db()
+        self.assertIsNotNone(self.cafe.subscription_end_at)  # set by the deactivation
+        self.assertIsNotNone(self.cafe.subscription_start_at)  # set by the activation
+        self.assertEqual(self.events(), [('deactivated', self.admin.pk), ('activated', self.admin.pk)])
+
+    def test_same_state_again_returns_400(self):  # UC-ADMIN-004 A1, UC-ADMIN-005 A1
+        already_active = self.client.post(self.url('cafe-activate'))
+        self.client.post(self.url('cafe-deactivate'))
+        already_inactive = self.client.post(self.url('cafe-deactivate'))
+
+        self.assertEqual((already_active.status_code, already_active.data),
+                         (status.HTTP_400_BAD_REQUEST, {'detail': 'Cafe is already active.'}))
+        self.assertEqual((already_inactive.status_code, already_inactive.data),
+                         (status.HTTP_400_BAD_REQUEST, {'detail': 'Cafe is already inactive.'}))
+        self.assertEqual(self.events(), [('deactivated', self.admin.pk)])  # only the real change is logged
+
+    def test_unknown_cafe_returns_404(self):  # UC-ADMIN-004 A2, 005 A2, 006 A7, 007 A1, 008 A2
+        missing = Cafe(pk=self.cafe.pk + 100)
+        for method, name in [('post', 'cafe-activate'), ('post', 'cafe-deactivate'), ('patch', 'cafe'),
+                             ('delete', 'cafe'), ('get', 'cafe-billing')]:
+            with self.subTest(endpoint=f'{method} {name}'):
+                response = getattr(self.client, method)(self.url(name, missing), {}, format='json')
+
+                self.assertEqual((response.status_code, response.data),
+                                 (status.HTTP_404_NOT_FOUND, {'detail': 'Not found.'}))
+
+    def test_billing_history_is_newest_first(self):  # UC-ADMIN-008 main flow, A1
+        self.assertEqual(self.client.get(self.url('cafe-billing')).data, [])  # A1
+        self.client.post(self.url('cafe-deactivate'))
+        self.client.patch(self.url('cafe'), {'plan': 'pro'}, format='json')
+        former_admin = User.objects.create_user(email='former@platform.com', role=User.Role.SYSTEM_ADMIN)
+        BillingEvent.objects.create(cafe=self.cafe, action='activated', performed_by=former_admin, notes='Paid.')
+        former_admin.delete()  # performed_by becomes NULL
+
+        response = self.client.get(self.url('cafe-billing'))
+
+        self.assertEqual([(e['action'], e['notes'], e['performed_by_email']) for e in response.data], [
+            ('activated', 'Paid.', None), ('plan_changed', '', 'admin@platform.com'),
+            ('deactivated', '', 'admin@platform.com'),
+        ])
+        self.assertEqual(set(response.data[0]), {'action', 'notes', 'performed_by_email', 'created_at'})
+
+    def test_edit_changes_the_given_fields(self):  # UC-ADMIN-006 main flow
+        body = {'name': {'ar': 'Sea View', 'en': 'Sea View'}, 'slug': 'sea-view', 'primary_color': '#00FF00',
+                'plan': 'pro'}
+
+        response = self.client.patch(self.url('cafe'), body, format='json')
+        again = self.client.patch(self.url('cafe'), {'plan': 'pro', 'slug': 'sea-view'}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({key: response.data[key] for key in body}, body)
+        self.assertEqual(again.status_code, status.HTTP_200_OK)
+        self.assertEqual(self.events(), [('plan_changed', self.admin.pk)])  # the repeated plan is not logged
+
+    def test_a_color_is_stored_on_basic(self):  # UC-ADMIN-006 note, Global Convention 7
+        response = self.client.patch(self.url('cafe'), {'primary_color': '#00FF00'}, format='json')
+
+        self.assertEqual((response.status_code, response.data['plan'], response.data['primary_color']),
+                         (status.HTTP_200_OK, 'basic', '#00FF00'))
+
+    def test_invalid_edit_returns_400_and_changes_nothing(self):  # A1, A3, A4, A5, A6
+        self.add_cafe('sea-view')
+        cases = [
+            ({'slug': 'sea-view'}, {'slug': ['A cafe with this slug already exists.']}),  # A1
+            ({'slug': 'Sea View'},
+             {'slug': ['Enter a valid "slug" consisting of letters, numbers, underscores or hyphens.']}),
+            ({'is_active': False}, {'is_active': ['Use the activate or deactivate endpoint.']}),  # A3
+            ({'logo_url': 'https://example.com/logo.png', 'name': {'ar': 'X'}},
+             {'logo_url': ['This field cannot be changed here. The cafe owner uploads the logo.']}),  # A4
+            ({'primary_color': 'red'}, {'primary_color': ['Enter a color in #RRGGBB format.']}),  # A5
+            ({'name': {'ar': ''}}, {'name': {'ar': ['This field may not be blank.']}}),  # A6
+        ]
+        for body, errors in cases:
+            with self.subTest(body=body):
+                response = self.client.patch(self.url('cafe'), body, format='json')
+
+                self.assertEqual((response.status_code, response.data), (status.HTTP_400_BAD_REQUEST, errors))
+        self.cafe.refresh_from_db()
+        self.assertEqual((self.cafe.slug, self.cafe.is_active, self.cafe.name['ar'], self.cafe.primary_color),
+                         ('tartus-coffee', True, 'Tartus Coffee', '#C0392B'))
+
+    def test_downgrade_is_blocked_while_the_cafe_exceeds_the_limits(self):  # A2
+        self.use_pro_plan()
+        categories = [Category.objects.create(cafe=self.cafe, name={'ar': f'C{n}', 'en': ''}) for n in range(6)]
+
+        def downgrade():
+            return self.client.patch(self.url('cafe'), {'plan': 'basic'}, format='json')
+
+        too_many_categories = downgrade()
+        Category.all_objects.filter(pk=categories[0].pk).update(deleted_at=timezone.now())  # deleted rows do not count
+        items = MenuItem.objects.bulk_create(  # images never block a downgrade (Global Convention 7)
+            MenuItem(cafe=self.cafe, category=categories[1], name={'ar': 'Tea', 'en': ''}, price='5.00',
+                     image_url='https://media.example.com/tea.webp') for _ in range(51)
+        )
+        too_many_items = downgrade()
+        MenuItem.all_objects.filter(pk=items[0].pk).update(deleted_at=timezone.now())
+        allowed = downgrade()
+
+        self.assertEqual((too_many_categories.status_code, too_many_categories.data), (status.HTTP_400_BAD_REQUEST,
+                         {'detail': 'Cannot downgrade to Basic: cafe has 6 categories (max 5).'}))
+        self.assertEqual((too_many_items.status_code, too_many_items.data), (status.HTTP_400_BAD_REQUEST,
+                         {'detail': 'Cannot downgrade to Basic: cafe has 51 items (max 50).'}))
+        self.assertEqual((allowed.status_code, allowed.data['plan']), (status.HTTP_200_OK, 'basic'))
+        self.assertEqual(self.events(), [('plan_changed', self.admin.pk)])
+
+    def test_delete_removes_the_cafe_its_data_its_owner_and_its_files(self):  # UC-ADMIN-007 main flow
+        category = Category.objects.create(cafe=self.cafe, name={'ar': 'Drinks', 'en': ''})
+        MenuItem.objects.create(cafe=self.cafe, category=category, name={'ar': 'Tea', 'en': ''}, price='5.00')
+        CafeTable.objects.create(cafe=self.cafe, table_number=1)
+        self.client.post(self.url('cafe-deactivate'))  # a billing event
+        other = self.add_cafe('sea-view')
+        for key in [f'cafes/{self.cafe.pk}/items/a.webp', f'cafes/{self.cafe.pk}/logo/b.webp',
+                    f'cafes/{other.pk}/logo/c.webp']:
+            default_storage.save(key, ContentFile(b'webp'))
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.delete(self.url('cafe'))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Cafe.objects.filter(pk=self.cafe.pk).exists())
+        self.assertFalse(User.objects.filter(pk=self.owner.pk).exists())  # no account without a cafe is left
+        for rows in (Category.all_objects, MenuItem.all_objects, CafeTable.objects, BillingEvent.objects):
+            self.assertFalse(rows.filter(cafe_id=self.cafe.pk).exists())
+        for folder in ('items', 'logo'):
+            self.assertEqual(default_storage.listdir(f'cafes/{self.cafe.pk}/{folder}'), ([], []))
+        self.assertTrue(default_storage.exists(f'cafes/{other.pk}/logo/c.webp'))  # other cafes keep their files
+        self.assertTrue(User.objects.filter(pk=self.admin.pk).exists())
+
+    @override_settings(FRONTEND_REVALIDATE_URL='http://frontend.test/internal/revalidate')
+    def test_writes_revalidate_the_public_menu_after_the_commit(self):  # Global Convention 9
+        create_body = {'slug': 'new-cafe', 'name': {'ar': 'New'}, 'plan': 'basic',
+                       'owner': {'email': 'new@cafe.com', 'password': 'initial_pass'}}
+        steps = [
+            ('create', lambda: self.client.post(self.url('cafes'), create_body, format='json'), None),  # not a trigger
+            ('deactivate', lambda: self.client.post(self.url('cafe-deactivate')), ['tartus-coffee']),
+            ('activate', lambda: self.client.post(self.url('cafe-activate')), ['tartus-coffee']),
+            ('slug change', lambda: self.client.patch(self.url('cafe'), {'slug': 'sea-view'}, format='json'),
+             ['tartus-coffee', 'sea-view']),  # the old page and the new one
+            ('nothing changed', lambda: self.client.patch(self.url('cafe'), {'slug': 'sea-view'}, format='json'), None),
+            ('delete', lambda: self.client.delete(self.url('cafe')), ['sea-view']),
+        ]
+        for label, send, slugs in steps:
+            with self.subTest(label), mock.patch('urllib.request.urlopen') as urlopen:
+                with self.captureOnCommitCallbacks(execute=True):
+                    send()
+                    urlopen.assert_not_called()  # nothing is sent before the commit
+
+                if slugs is None:
+                    urlopen.assert_not_called()
+                else:
+                    self.assertEqual(json.loads(urlopen.call_args.args[0].data), {'slugs': slugs})
