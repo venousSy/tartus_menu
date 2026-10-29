@@ -55,6 +55,14 @@ class Cafe(models.Model):
 
     class Meta:
         db_table = 'cafes'
+        constraints = [
+            # system_design.md 2.2: "#RRGGBB" or '' (default theme). The API checks the same rule
+            # (UC-OWNER-009 A3); the database also stops other writers, e.g. the Django admin site.
+            models.CheckConstraint(
+                condition=models.Q(primary_color='') | models.Q(primary_color__regex=r'^#[0-9A-Fa-f]{6}$'),
+                name='cafe_primary_color_format',
+            ),
+        ]
 
     def __str__(self):
         # Fallback to english, then arabic, then slug
@@ -83,7 +91,11 @@ class CafeTable(models.Model):
     class Meta:
         db_table = 'cafe_tables'
         constraints = [
-            models.UniqueConstraint(fields=['cafe', 'table_number'], name='unique_cafe_table_number')
+            models.UniqueConstraint(fields=['cafe', 'table_number'], name='unique_cafe_table_number'),
+            # system_design.md 2.2: 1..200 (CHECK). The validators above only run in forms and full_clean().
+            models.CheckConstraint(
+                condition=models.Q(table_number__gte=1, table_number__lte=200), name='cafe_table_number_range'
+            ),
         ]
 
     def __str__(self):
