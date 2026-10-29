@@ -1,6 +1,7 @@
 """
 API integration tests for the cafe settings endpoints (use_cases.md UC-OWNER-009, UC-OWNER-010
-and UC-OWNER-014) and the QR code endpoints (UC-OWNER-007, UC-OWNER-008 and UC-OWNER-011).
+and UC-OWNER-014), the QR code endpoints (UC-OWNER-007, UC-OWNER-008 and UC-OWNER-011)
+and the Super Admin endpoints (UC-ADMIN-001 to UC-ADMIN-009).
 Each test sends real HTTP requests through URL -> view -> service -> database.
 """
 
@@ -21,7 +22,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import AccessToken
 
-from .models import Cafe, CafeTable, SubscriptionPlan
+from .models import BillingEvent, Cafe, CafeTable, SubscriptionPlan
 
 User = get_user_model()
 
@@ -453,3 +454,143 @@ class QRCodeTests(CafeAPITestCase):
 
                     self.assertEqual((response.status_code, response.data), (status_code, body))
         self.assertFalse(CafeTable.objects.exists())
+
+
+class AdminAPITestCase(CafeAPITestCase):
+    """The shared cafe data plus a Super Admin, who sends every request unless a test changes the token."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.admin = User.objects.create_user(email='admin@platform.com', role=User.Role.SYSTEM_ADMIN)
+
+    def setUp(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {AccessToken.for_user(self.admin)}')
+
+    def url(self, name, cafe=None):
+        """reverse() for the admin URLs; the cafe-level ones get the id of `cafe` (default: the shared cafe)."""
+        if name in ('cafes', 'stats'):
+            return reverse(f'admin_api:{name}')
+        return reverse(f'admin_api:{name}', args=[(cafe or self.cafe).pk])
+
+    def add_cafe(self, slug, plan=None, **fields):
+        owner = User.objects.create_user(email=f'owner@{slug}.com')
+        return Cafe.objects.create(owner=owner, plan=plan or self.basic, slug=slug, **fields)
+
+
+class AdminCafeReadAndCreateTests(AdminAPITestCase):
+    """POST (UC-ADMIN-001) and GET (UC-ADMIN-002) cafes/, GET cafes/{id}/ (UC-ADMIN-003), GET stats/ (UC-ADMIN-009)"""
+
+    create_body = {
+        'slug': 'sea-view', 'name': {'ar': 'Sea View'}, 'plan': 'pro',
+        'owner': {'email': 'New.Owner@Sea.com', 'password': 'initial_pass'},
+    }
+
+    def test_create_returns_201_with_the_inactive_cafe_and_its_owner(self):  # UC-ADMIN-001 main flow
+        response = self.client.post(self.url('cafes'), self.create_body, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        cafe = Cafe.objects.get(slug='sea-view')
+        self.assertEqual(response.data, {
+            'id': cafe.pk, 'name': {'ar': 'Sea View', 'en': ''}, 'slug': 'sea-view', 'plan': 'pro',
+            'is_active': False, 'owner_email': 'new.owner@sea.com',  # stored lowercased
+            'subscription_start_at': None, 'subscription_end_at': None, 'logo_url': '', 'primary_color': '',
+        })
+        owner = cafe.owner
+        self.assertEqual((owner.role, owner.is_staff), (User.Role.CAFE_OWNER, False))
+        self.assertTrue(owner.check_password('initial_pass'))  # stored as a hash
+        self.assertFalse(BillingEvent.objects.filter(cafe=cafe).exists())  # no activation yet
+
+    def test_create_with_invalid_input_returns_400_and_creates_nothing(self):  # A1, A2, A3, A5
+        required = ['This field is required.']
+        cases = [
+            ('slug taken', {'slug': 'tartus-coffee'}, {'slug': ['A cafe with this slug already exists.']}),  # A1
+            ('email taken', {'owner': {'email': 'OWNER@cafe.com', 'password': 'initial_pass'}},  # A2, any case
+             {'owner': {'email': ['A user with this email already exists.']}}),
+            ('unknown plan', {'plan': 'gold'}, {'plan': ['Object with name=gold does not exist.']}),  # A3
+            ('name without ar', {'name': {'en': 'Sea View'}}, {'name': {'ar': required}}),  # A5
+            ('weak password', {'owner': {'email': 'new@sea.com', 'password': '12345678'}},
+             {'owner': {'password': ['This password is too common.', 'This password is entirely numeric.']}}),
+            ('no owner', {'owner': None}, {'owner': ['This field may not be null.']}),
+        ]
+        for label, change, errors in cases:
+            with self.subTest(label):
+                response = self.client.post(self.url('cafes'), {**self.create_body, **change}, format='json')
+
+                self.assertEqual((response.status_code, response.data), (status.HTTP_400_BAD_REQUEST, errors))
+        self.assertEqual((Cafe.objects.count(), User.objects.count()), (1, 2))  # the shared cafe, owner and admin
+
+    def test_list_is_paginated_newest_first(self):  # UC-ADMIN-002 main flow
+        for n in range(21):
+            self.add_cafe(f'cafe-{n}')
+
+        first = self.client.get(self.url('cafes'))
+        second = self.client.get(self.url('cafes'), {'page': 2})
+
+        self.assertEqual((first.status_code, first.data['count'], len(first.data['results'])), (200, 22, 20))
+        self.assertEqual(first.data['results'][0]['slug'], 'cafe-20')
+        self.assertEqual([cafe['slug'] for cafe in second.data['results']], ['cafe-0', 'tartus-coffee'])
+        self.assertEqual(second.data['results'][-1], {
+            'id': self.cafe.pk, 'name': {'ar': 'Tartus Coffee', 'en': ''}, 'slug': 'tartus-coffee', 'plan': 'basic',
+            'is_active': True, 'owner_email': 'owner@cafe.com',
+        })
+
+    def test_search_matches_slug_name_and_owner_email(self):  # UC-ADMIN-002 step 1
+        self.add_cafe('sea-view', name={'ar': 'Sea View', 'en': 'Blue Lounge'})
+        for search, slugs in [('TARTUS', ['tartus-coffee']), ('lounge', ['sea-view']),
+                              ('owner@sea-view', ['sea-view']), ('nothing', [])]:
+            with self.subTest(search=search):
+                response = self.client.get(self.url('cafes'), {'search': search})
+
+                self.assertEqual([cafe['slug'] for cafe in response.data['results']], slugs)
+
+    def test_list_without_cafes(self):  # UC-ADMIN-002 A1
+        Cafe.objects.all().delete()
+
+        response = self.client.get(self.url('cafes'))
+
+        self.assertEqual(response.data, {'count': 0, 'next': None, 'previous': None, 'results': []})
+
+    def test_detail_returns_the_full_cafe(self):  # UC-ADMIN-003 main flow, A1
+        response = self.client.get(self.url('cafe'))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, {
+            'id': self.cafe.pk, 'name': {'ar': 'Tartus Coffee', 'en': ''}, 'slug': 'tartus-coffee', 'plan': 'basic',
+            'is_active': True, 'owner_email': 'owner@cafe.com', 'subscription_start_at': None,
+            'subscription_end_at': None, 'logo_url': '', 'primary_color': '#C0392B',  # stored, hidden on Basic
+        })
+        missing = self.client.get(reverse('admin_api:cafe', args=[self.cafe.pk + 100]))
+        self.assertEqual((missing.status_code, missing.data), (status.HTTP_404_NOT_FOUND, {'detail': 'Not found.'}))
+
+    def test_stats_count_the_cafes(self):  # UC-ADMIN-009
+        self.add_cafe('sea-view', plan=self.pro)  # inactive by default
+
+        response = self.client.get(self.url('stats'))
+
+        self.assertEqual(response.data, {'total_cafes': 2, 'active_cafes': 1, 'inactive_cafes': 1,
+                                         'basic_plan_count': 1, 'pro_plan_count': 1})
+
+    def test_only_a_system_admin_may_call_the_admin_api(self):  # Global Conventions 1 and 2
+        staff_owner = User.objects.create_user(email='staff@cafe.com', is_staff=True)  # is_staff never decides
+        no_role = {'detail': 'You do not have permission to perform this action.'}
+        callers = [
+            ('no token', None, 401, {'detail': 'Authentication credentials were not provided.'}),
+            ('cafe owner', self.owner, 403, no_role),
+            ('owner with is_staff', staff_owner, 403, no_role),
+        ]
+        endpoints = [('get', 'cafes'), ('post', 'cafes'), ('get', 'cafe'), ('patch', 'cafe'), ('delete', 'cafe'),
+                     ('post', 'cafe-activate'), ('post', 'cafe-deactivate'), ('get', 'cafe-billing'), ('get', 'stats')]
+        for label, user, status_code, body in callers:
+            if user is None:
+                self.client.credentials()
+            else:
+                self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {AccessToken.for_user(user)}')
+            for method, name in endpoints:
+                with self.subTest(caller=label, endpoint=f'{method} {name}'):
+                    response = getattr(self.client, method)(self.url(name), {}, format='json')
+
+                    self.assertEqual((response.status_code, response.data), (status_code, body))
+        self.cafe.refresh_from_db()
+        self.assertTrue(self.cafe.is_active)
+        self.assertFalse(BillingEvent.objects.exists())
