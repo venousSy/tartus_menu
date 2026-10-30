@@ -1,14 +1,6 @@
 import type { Metadata } from "next";
-import { Cairo } from "next/font/google";
+import { cairo } from "../fonts";
 import "../globals.css";
-
-// Cairo is a variable font: one file per subset holds every weight, for both
-// Arabic and English text. next/font downloads it at build time and serves it
-// from our own domain, so customers' browsers never contact Google.
-const cairo = Cairo({
-  subsets: ["arabic", "latin"],
-  variable: "--font-cairo",
-});
 
 export const metadata: Metadata = {
   title: "Tartus Smart Digital Menu",
