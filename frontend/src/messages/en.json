@@ -8,5 +8,14 @@
     "comingSoon": "Menu coming soon",
     "unavailable": "This menu is temporarily unavailable. Please ask staff for assistance.",
     "notFound": "Menu not found"
+  },
+  "Login": {
+    "title": "Log in"
+  },
+  "Dashboard": {
+    "title": "Cafe dashboard"
+  },
+  "Admin": {
+    "title": "Super Admin"
   }
 }
