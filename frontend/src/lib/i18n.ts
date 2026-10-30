@@ -5,6 +5,14 @@ export type Lang = "ar" | "en";
 /** A bilingual field from the API: {"ar": "...", "en": "..."}. `name` always has `ar`; `description` may be {}. */
 export type BilingualText = { ar?: string; en?: string };
 
+/** The cookie that keeps a dashboard user's language. Customer pages use localStorage instead. */
+export const LANG_COOKIE = "lang";
+
+/** Any outside value (a cookie, a form field) becomes a supported language; Arabic is the default. */
+export function toLang(value: unknown): Lang {
+  return value === "en" ? "en" : "ar";
+}
+
 export function dirOf(lang: Lang): "rtl" | "ltr" {
   return lang === "ar" ? "rtl" : "ltr";
 }
