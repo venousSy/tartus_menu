@@ -51,7 +51,11 @@ function readTable(): string | null {
 
 const noSubscription = () => () => {};
 
-export function MenuView({ menu, messages }: { menu: PublicMenu; messages: MenuMessages }) {
+export function MenuView({ menu, messages, manifestHref }: {
+  menu: PublicMenu;
+  messages: MenuMessages;
+  manifestHref: string;
+}) {
   const lang = useSyncExternalStore(subscribe, readLang, () => "ar" as const);
   const table = useSyncExternalStore(noSubscription, readTable, () => null);
   const t = createTranslator({ locale: lang, messages: { Menu: messages[lang] }, namespace: "Menu" });
@@ -61,6 +65,16 @@ export function MenuView({ menu, messages }: { menu: PublicMenu; messages: MenuM
     document.documentElement.lang = lang;
     document.documentElement.dir = dirOf(lang);
   }, [lang]);
+
+  // The cafe's web manifest, for "Add to Home Screen". Browsers look for it among the children of
+  // <head>, but the metadata of this streamed page lands in <body>, so the link is added here.
+  useEffect(() => {
+    const link = document.createElement("link");
+    link.rel = "manifest";
+    link.href = manifestHref;
+    document.head.append(link);
+    return () => link.remove();
+  }, [manifestHref]);
 
   // "" means "no color": the default theme from globals.css stays (GC 7).
   const theme = cafe.primary_color

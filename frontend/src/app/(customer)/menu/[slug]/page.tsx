@@ -30,7 +30,8 @@ export default function MenuPage({ params }: Props) {
 }
 
 async function Menu({ params }: Pick<Props, "params">) {
-  const menu = await getPublicMenu((await params).slug);
+  const { slug } = await params;
+  const menu = await getPublicMenu(slug);
   if (!menu) {
     notFound(); // A1: unknown slug
   }
@@ -38,5 +39,11 @@ async function Menu({ params }: Pick<Props, "params">) {
     return <Notice title={menu.cafe.name} messageKey="unavailable" />; // A2 / UC-GUEST-002
   }
   // Only the "Menu" texts go to the browser, as props, not the whole message files.
-  return <MenuView menu={menu} messages={{ ar: ar.Menu, en: en.Menu }} />;
+  return (
+    <MenuView
+      menu={menu}
+      messages={{ ar: ar.Menu, en: en.Menu }}
+      manifestHref={`/menu/${encodeURIComponent(slug)}/manifest.webmanifest`}
+    />
+  );
 }
