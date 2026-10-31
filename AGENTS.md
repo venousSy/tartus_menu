@@ -140,7 +140,8 @@ Commands:
 ## 9. Scope Control
 
 - Do only what the turn asks. No drive-by fixes, renames, formatting changes or refactors.
-- If you notice another problem, do not fix it. Add it under `Observations (not changed)` before the footer (maximum 5 lines). Observations form a lightweight backlog — the user may address any of them by saying "fix observation N".
+- If you notice another problem, do not fix it. Add it under `Observations (not changed)` before the footer (maximum 5 lines).
+- Observations form a lightweight backlog kept in `OBSERVATIONS.md` at the repository root. Give each new one the next free number and add it to that file in the same commit as the step that found it (list the file in the Changes table). The user may address any of them by saying "fix observation N"; when one is fixed, move it to "Fixed" with the commit or PR. Never renumber.
 - Never edit `AGENTS.md` or `GEMINI.md` unless the user explicitly asks.
 
 ## 10. Language Standard
