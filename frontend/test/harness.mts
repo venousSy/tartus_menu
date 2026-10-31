@@ -2,6 +2,7 @@
  * Harness of the integration tests: the real built app (`next start`) in front of a fake Django.
  * startApp() registers before/after hooks, so both servers run while the tests of one file run.
  * `node --test` runs the test files in parallel, so each file passes its own two ports.
+ * `env` adds environment variables for next start (they win over .env.local).
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { createServer, type IncomingMessage } from "node:http";
@@ -14,7 +15,12 @@ export type Answer = (status: number, data?: object) => void;
 /** The fake Django of one test file. `path` is the part after /api/v1, `body` the parsed JSON. */
 export type FakeDjango = (req: IncomingMessage, path: string, body: Record<string, string>, answer: Answer) => unknown;
 
-export function startApp({ nextPort, djangoPort, django }: { nextPort: number; djangoPort: number; django: FakeDjango }) {
+export function startApp({ nextPort, djangoPort, django, env = {} }: {
+  nextPort: number;
+  djangoPort: number;
+  django: FakeDjango;
+  env?: Record<string, string>;
+}) {
   const djangoServer = createServer(async (req, res) => {
     let raw = "";
     for await (const chunk of req) raw += chunk;
@@ -30,7 +36,7 @@ export function startApp({ nextPort, djangoPort, django }: { nextPort: number; d
     await new Promise<void>((resolve) => djangoServer.listen(djangoPort, "127.0.0.1", resolve));
     next = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "-p", String(nextPort)], {
       cwd: new URL("..", import.meta.url),
-      env: { ...process.env, DJANGO_API_URL: `http://127.0.0.1:${djangoPort}/api/v1` },
+      env: { ...process.env, DJANGO_API_URL: `http://127.0.0.1:${djangoPort}/api/v1`, ...env },
       stdio: ["ignore", "ignore", "pipe"],
     });
     next.stderr!.on("data", (chunk) => (nextErrors += chunk));
