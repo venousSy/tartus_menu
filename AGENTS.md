@@ -26,23 +26,16 @@ Rules:
 
 ## 3. One Step Per Turn (Hard Constraint)
 
-Goal: every turn is small enough that the developer can read, understand and review ALL of it in a few minutes. We count steps, not files.
+Goal: every turn does one complete step that the developer can read, understand and review. We count steps, not files.
 
 A **step** is one row of the build order (Section 4) for one feature — for example "the service for categories". A bug fix with one root cause is also one step.
 
-Limits per turn:
-- **One main file.** Only ONE file per turn may receive new logic (a model, service, serializer, permission, view or test). This is the file you explain in Section 6.
-- **Up to 2 companion edits.** A companion edit is a small, mechanical change in another file that the main file needs in order to work. Each one must be about 10 lines or fewer and contain no business logic. Examples:
-  - including the app-level `urls.py` in the root `urls.py`;
-  - adding an app to `INSTALLED_APPS`;
-  - an empty `__init__.py`;
-  - a new variable in `.env.example`;
-  - the migration generated for the model you just changed (see below).
-- **Size budget: about 150 changed lines per turn** (new plus modified code, all files together). If a step is bigger, split it before you start — for example one service function per turn — and say how you split it.
-- **No hidden changes.** List every touched file in the Changes table (Section 6), companions included. If a companion edit grows beyond "small and mechanical", it becomes the next turn instead.
-- Reading files and running read-only or verification commands do not count (see Section 7).
+Size:
+- There is no limit on files or lines per turn. Write every file and every line the step needs.
+- **No hidden changes.** List every touched file in the Changes table (Section 6).
+- Reading files and running read-only or verification commands are always allowed (see Section 7).
 
-Always their own turn (never a companion):
+Always their own turn:
 - A test file.
 - Adding or upgrading a dependency in `requirements.txt` — and ask before adding any dependency.
 - Renaming or deleting a file.
@@ -50,29 +43,13 @@ Always their own turn (never a companion):
 
 Migrations:
 - Generate with `makemigrations`; never hand-write one. Show its content for review.
-- It may be a companion of the model change that caused it.
+- It belongs to the same turn as the model change that caused it.
 - If the generated migration touches models from an earlier turn (broader scope than expected), STOP, show the diff and ask before going on.
 
 Bug fixes across files:
-- If one root cause needs edits in up to 3 files, and the total is about 50 lines or fewer, fix it in one turn. Explain the cause once, then show each file's change.
-- Otherwise fix the main file only and queue the rest.
+- Fix one root cause in one turn, in every file it needs. Explain the cause once, then show each file's change.
 
-Exceptions (approval first):
-- Sometimes a limit above is not practical. Examples: a change that only works if two logic files change together, or a step that cannot be split well under the size budget.
-- In that case, make NO edits yet. Ask for an exception in this format, then STOP and wait:
-  ```
-  EXCEPTION REQUEST
-  Rule: <which limit you need to break>
-  Why: <one or two sentences — why splitting is worse here>
-  Files: <every file you will touch>
-  Size: <about how many lines>
-  Reply "approve" to go ahead, or "split" to keep the normal limits.
-  ```
-- Only an explicit "approve" from the user counts. An approval covers that one turn only; it does not carry over to later turns.
-- After an approved exception, explain each logic file with the Section 6 format, and write `Exception: approved (<rule>)` in the footer.
-- Never use an exception to skip the rules in Sections 2 and 5, or to add a dependency without asking.
-
-When in doubt, do less: finish the main file, list the remaining work under "Queued next", and STOP.
+When in doubt, do less: finish what the step needs, list the remaining work under "Queued next", and STOP.
 
 ## 4. Architecture Rules (Modular Monolith + Service Layer)
 
@@ -108,12 +85,12 @@ Details live in the docs; these are the rules agents most often break.
 - Plan rules are enforced in `services.py` using plan flags and limits (`allows_images`, `allows_branding`, `max_categories`, `max_items`) — never by comparing the plan name.
 - Authorization for admin endpoints uses `role == SYSTEM_ADMIN`, not `is_staff`.
 - API prefix is `/api/v1/`. Errors use DRF format `{"detail": "..."}`. Currency is SYP, hardcoded; there is no currency field.
-- No secrets in code. Read configuration from environment variables. When a new environment variable is introduced, update `.env.example` in the same turn as a companion edit (Section 3).
+- No secrets in code. Read configuration from environment variables. When a new environment variable is introduced, update `.env.example` in the same turn (Section 3).
 - Out of MVP scope — do not build or hint at: `CAFE_STAFF` features, analytics, Redis, table sessions or ordering.
 
 ## 6. Response Format
 
-Pick the tier by the type of the turn's main file.
+Pick the tier by the type of the files the turn changes. When several files get new logic, explain each of them with Tier A.
 
 General rules (all turns):
 - Say each fact once. Never repeat in a later section what an earlier one already said.
@@ -128,7 +105,7 @@ General rules (all turns):
 2. **Key points** — 3–6 bullets. Each bullet points at `file:line` and explains
    one non-obvious decision. Name a SOLID principle or pattern only if it is really applied.
 3. **Analogy** — only the first time a new pattern appears.
-4. **Changes** — a table: `File | What changed | ~Lines`. Companion edits get one row each.
+4. **Changes** — a table: `File | What changed | ~Lines`. Every touched file gets one row.
 
 ### Tier B — config, docs, migrations, URLs, small edits
 One short paragraph (what and why) plus the change itself, or the migration content.
@@ -137,7 +114,6 @@ One short paragraph (what and why) plus the change itself, or the migration cont
 `✅ COMPLETE · Verify: <command> → <result> · Next: <next step>`
 or
 `⚠️ INCOMPLETE · Missing: <what> · Verify: <command> → <result>`
-Add `· Exception: approved (<rule>)` when Section 3 applies.
 
 ## 7. Safe Execution
 
