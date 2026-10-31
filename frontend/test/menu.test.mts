@@ -2,7 +2,8 @@
  * Integration tests of the customer menu: the real built app in front of a fake Django that serves
  * GET /menu/<slug>/. A menu stays cached until Django calls POST /internal/revalidate with the
  * shared secret (system_design.md §3.5, use_cases.md GC 9). Each cafe also has its own web
- * manifest, and the app icons are generated at build time (step 9, installable menu).
+ * manifest, the app icons are generated at build time, and the offline service worker is served
+ * from the site root (step 9, installable menu).
  * Each test uses its own slugs, because the app keeps its cache from one test to the next.
  * Every menu page carries the texts of all its screens in its data (the not-found screen, the
  * messages of MenuView), so the tests look for the menu's own items, or for a screen text that is
@@ -204,4 +205,15 @@ test("every page links the generated icons, the Apple icon included", async () =
     assert.match(html, /<link rel="apple-touch-icon" href="\/apple-icon\?[^"]*"[^>]*sizes="180x180"/, path);
   }
   assert.equal(await pngSize("/apple-icon"), "180x180");
+});
+
+test("the service worker is served from the site root as JavaScript, re-checked on every visit", async () => {
+  // A worker may only control pages under its own folder: MenuView registers /sw.js for /menu/,
+  // which fails (and is ignored on purpose) if the file ever moves into a subfolder.
+  const res = await fetch(`${SITE}/sw.js`);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type") ?? "", /^application\/javascript/);
+  // max-age=0: every cache on the way (browser, proxy) must ask the server again before reusing
+  // it, so a new worker version reaches customers at once.
+  assert.match(res.headers.get("cache-control") ?? "", /max-age=0/);
 });
