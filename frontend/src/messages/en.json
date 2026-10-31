@@ -7,7 +7,8 @@
     "new": "New",
     "comingSoon": "Menu coming soon",
     "unavailable": "This menu is temporarily unavailable. Please ask staff for assistance.",
-    "notFound": "Menu not found"
+    "notFound": "Menu not found",
+    "offline": "You are offline. Prices may have changed."
   },
   "Login": {
     "title": "Log in"

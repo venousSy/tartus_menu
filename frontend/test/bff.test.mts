@@ -4,10 +4,10 @@
  * use_cases.md (UC-AUTH-001..004). `npm test` builds the app first, then runs this file.
  */
 import assert from "node:assert/strict";
-import { type ChildProcess, spawn } from "node:child_process";
-import { createServer } from "node:http";
-import { after, before, beforeEach, test } from "node:test";
+import { beforeEach, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+
+import { type FakeDjango, startApp } from "./harness.mts";
 
 const NEXT_PORT = 4100;
 const DJANGO_PORT = 4101;
@@ -30,17 +30,9 @@ function issuePair(role = "CAFE_OWNER") {
   return pair;
 }
 
-const django = createServer(async (req, res) => {
-  let raw = "";
-  for await (const chunk of req) raw += chunk;
-  const body = raw ? JSON.parse(raw) : {};
-  const path = req.url!.replace("/api/v1", "");
+const fakeDjango: FakeDjango = async (req, path, body, answer) => {
   fake.calls.push(path);
   fake.forwardedFor.push(req.headers["x-forwarded-for"]);
-  const answer = (status: number, data?: object) => {
-    res.writeHead(status, { "Content-Type": "application/json" });
-    res.end(data && JSON.stringify(data));
-  };
   const signedIn = fake.access.has(req.headers.authorization?.replace("Bearer ", "") ?? "");
   const notSignedIn = { detail: "Given token not valid for any token type" };
 
@@ -70,32 +62,9 @@ const django = createServer(async (req, res) => {
     return answer(204);
   }
   answer(404, { detail: "Not found." });
-});
+};
 
-let next: ChildProcess;
-let nextErrors = "";
-before(async () => {
-  await new Promise<void>((resolve) => django.listen(DJANGO_PORT, "127.0.0.1", resolve));
-  next = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "-p", String(NEXT_PORT)], {
-    cwd: new URL("..", import.meta.url),
-    env: { ...process.env, DJANGO_API_URL: `http://127.0.0.1:${DJANGO_PORT}/api/v1` },
-    stdio: ["ignore", "ignore", "pipe"],
-  });
-  next.stderr!.on("data", (chunk) => (nextErrors += chunk));
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await fetch(`${SITE}/login`);
-      return;
-    } catch {
-      if (next.exitCode !== null || attempt === 100) throw new Error(`next start failed:\n${nextErrors}`);
-      await sleep(200);
-    }
-  }
-});
-after(() => {
-  next.kill();
-  django.close();
-});
+startApp({ nextPort: NEXT_PORT, djangoPort: DJANGO_PORT, django: fakeDjango });
 beforeEach(() => {
   Object.assign(fake, { password: "right-password", calls: [], forwardedFor: [], down: false });
   fake.access.clear();

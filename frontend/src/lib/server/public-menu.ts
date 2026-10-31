@@ -33,6 +33,9 @@ export type PublicCafe = {
 
 export type PublicMenu = { cafe: PublicCafe; categories: PublicCategory[] };
 
+/** The cache tag of one cafe's menu; /internal/revalidate must use the very same string. */
+export const menuTag = (slug: string) => `menu:${slug}`;
+
 /**
  * The menu of one cafe as customers see it, or null for an unknown slug (UC-GUEST-001 A1).
  * The result is cached and shared by every customer. It is rebuilt when Django revalidates the
@@ -40,7 +43,7 @@ export type PublicMenu = { cafe: PublicCafe; categories: PublicCategory[] };
  */
 export async function getPublicMenu(slug: string): Promise<PublicMenu | null> {
   "use cache";
-  cacheTag(`menu:${slug}`);
+  cacheTag(menuTag(slug));
   cacheLife({ revalidate: 300 });
 
   const response = await djangoFetch(`/menu/${encodeURIComponent(slug)}/`);

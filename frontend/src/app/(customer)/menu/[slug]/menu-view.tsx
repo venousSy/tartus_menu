@@ -51,16 +51,63 @@ function readTable(): string | null {
 
 const noSubscription = () => () => {};
 
-export function MenuView({ menu, messages }: { menu: PublicMenu; messages: MenuMessages }) {
+// The connection state, for the offline note. The server render and the first browser render
+// assume "online"; the browser's online and offline events update it.
+function subscribeOnline(listener: () => void) {
+  window.addEventListener("online", listener);
+  window.addEventListener("offline", listener);
+  return () => {
+    window.removeEventListener("online", listener);
+    window.removeEventListener("offline", listener);
+  };
+}
+
+const readOffline = () => !navigator.onLine;
+
+export function MenuView({ menu, messages, manifestHref }: {
+  menu: PublicMenu;
+  messages: MenuMessages;
+  manifestHref: string;
+}) {
   const lang = useSyncExternalStore(subscribe, readLang, () => "ar" as const);
   const table = useSyncExternalStore(noSubscription, readTable, () => null);
-  const t = createTranslator({ locale: lang, messages: { Menu: messages[lang] }, namespace: "Menu" });
+  const offline = useSyncExternalStore(subscribeOnline, readOffline, () => false);
+  const t =createTranslator({ locale: lang, messages: { Menu: messages[lang] }, namespace: "Menu" });
   const { cafe, categories } = menu;
 
   useEffect(() => {
     document.documentElement.lang = lang;
     document.documentElement.dir = dirOf(lang);
   }, [lang]);
+
+  // The cafe's web manifest, for "Add to Home Screen". Browsers look for it among the children of
+  // <head>, but the metadata of this streamed page lands in <body>, so the link is added here.
+  useEffect(() => {
+    const link = document.createElement("link");
+    link.rel = "manifest";
+    link.href = manifestHref;
+    document.head.append(link);
+    return () => link.remove();
+  }, [manifestHref]);
+
+  // The offline copy of the menu (public/sw.js). The scope /menu/ keeps the worker away from the
+  // dashboards. A browser without service workers simply shows the menu online only.
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const firstVisit = !navigator.serviceWorker.controller; // this page loaded without the worker
+    navigator.serviceWorker
+      .register("/sw.js", { scope: "/menu/" })
+      .then(() => navigator.serviceWorker.ready)
+      .then((registration) => {
+        if (!firstVisit) return; // later visits pass through the worker, which keeps them itself
+        const files = performance
+          .getEntriesByType("resource")
+          .map((entry) => entry.name)
+          .filter((name) => name.startsWith(`${location.origin}/_next/static/`));
+        registration.active?.postMessage({ type: "keep", page: location.href, files });
+      })
+      .catch(() => {}); // the offline copy is an extra: if it fails, the menu works as before
+  }, []);
 
   // "" means "no color": the default theme from globals.css stays (GC 7).
   const theme = cafe.primary_color
@@ -89,6 +136,12 @@ export function MenuView({ menu, messages }: { menu: PublicMenu; messages: MenuM
           </button>
         </div>
       </header>
+
+      {offline && (
+        <p role="status" className="bg-amber-100 px-4 py-2 text-center text-sm font-semibold text-amber-900">
+          {t("offline")}
+        </p>
+      )}
 
       {categories.length === 0 ? (
         <p className="px-4 py-16 text-center text-lg text-stone-600">{t("comingSoon")}</p>
