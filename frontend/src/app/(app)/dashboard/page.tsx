@@ -10,5 +10,5 @@ export async function generateMetadata(): Promise<Metadata> {
 // Placeholder for the Cafe Owner dashboard (system_design.md §4.2): Categories, Items, QR codes, Settings.
 export default function DashboardPage() {
   const t = useTranslations("Dashboard");
-  return <PageHeader title={t("title")} />;
+  return <PageHeader title={t("title")} signedIn />;
 }

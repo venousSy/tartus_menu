@@ -11,7 +11,18 @@
     "offline": "You are offline. Prices may have changed."
   },
   "Login": {
-    "title": "Log in"
+    "title": "Log in",
+    "email": "Email",
+    "password": "Password",
+    "submit": "Log in",
+    "submitting": "Logging in…",
+    "wrongCredentials": "Wrong email or password.",
+    "missingFields": "Enter your email and password.",
+    "throttled": "Too many attempts. Try again in {seconds, plural, one {# second} other {# seconds}}.",
+    "serverError": "The server could not be reached. Please try again."
+  },
+  "Session": {
+    "logout": "Log out"
   },
   "Dashboard": {
     "title": "Cafe dashboard"
