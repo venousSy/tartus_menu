@@ -194,3 +194,101 @@ test("change-password: success signs the browser out; Django blacklists every re
   assertSignedOut(await post("/bff/auth/change-password", { body, cookie: session.cookie }), 204);
   assert.equal(fake.refresh.size, 0);
 });
+
+// src/proxy.ts: role routing and the single-flight refresh. Sessions come straight from the fake
+// (issuePair); a request with only the refresh cookie is one whose access cookie has expired.
+function get(path: string, cookie = "") {
+  return fetch(`${SITE}${path}`, { redirect: "manual", headers: { Cookie: cookie, "X-Forwarded-For": XFF } });
+}
+function assertRedirect(res: Response, path: string) {
+  assert.equal(res.status, 307);
+  assert.equal(new URL(res.headers.get("location")!, SITE).pathname, path); // Next sends a relative "/login"
+}
+const both = ({ access, refresh }: { access: string; refresh: string }) => `access=${access}; refresh=${refresh}`;
+
+test("proxy: a visitor without a session is sent to /login", async () => {
+  assertRedirect(await get("/dashboard"), "/login");
+  assertRedirect(await get("/admin/cafes"), "/login");
+  assert.equal((await get("/login")).status, 200);
+});
+
+test("proxy: each role lands on its own dashboard, without a refresh", async () => {
+  const owner = both(issuePair());
+  assert.equal((await get("/dashboard", owner)).status, 200);
+  assertRedirect(await get("/admin", owner), "/dashboard");
+  assertRedirect(await get("/login", owner), "/dashboard");
+  const admin = both(issuePair("SYSTEM_ADMIN"));
+  assert.equal((await get("/admin", admin)).status, 200);
+  assertRedirect(await get("/dashboard", admin), "/admin");
+  assertRedirect(await get("/login", admin), "/admin");
+  assert.deepEqual(fake.calls, []);
+});
+
+test("proxy: an expired access cookie is refreshed; a late request in the grace period gets the same pair", async () => {
+  const old = issuePair();
+  const res = await get("/dashboard", `refresh=${old.refresh}`);
+  assert.equal(res.status, 200);
+  const fresh = kept(res);
+  assert.ok(fake.access.has(fresh.access) && fake.refresh.has(fresh.refresh));
+  assert.equal(fake.refresh.has(old.refresh), false); // rotated: the old token is blacklisted
+  assert.deepEqual(fake.forwardedFor, [XFF]);
+  assert.deepEqual(kept(await get("/dashboard", `refresh=${old.refresh}`)), fresh);
+  assert.deepEqual(fake.calls, ["/auth/refresh/"]);
+});
+
+test("proxy: parallel requests with one refresh token share a single refresh", async () => {
+  const { refresh } = issuePair();
+  const responses = await Promise.all([1, 2, 3].map(() => get("/dashboard", `refresh=${refresh}`)));
+  assert.deepEqual(fake.calls, ["/auth/refresh/"]);
+  assert.match(kept(responses[0]).access, /^eyJ/);
+  for (const res of responses) assert.deepEqual(kept(res), kept(responses[0]));
+});
+
+test("proxy: a redirect carries the new pair too", async () => {
+  const res = await get("/admin", `refresh=${issuePair().refresh}`);
+  assertRedirect(res, "/dashboard");
+  assert.match(kept(res).refresh, /^eyJ/);
+});
+
+test("proxy: a BFF route behind it gets the fresh access token", async () => {
+  const body = { old_password: "wrong", new_password: "new-password-1" };
+  const res = await post("/bff/auth/change-password", { body, cookie: `refresh=${issuePair().refresh}` });
+  assert.deepEqual(await res.json(), { old_password: ["Incorrect password."] }); // Django answered, not the BFF's 401
+  assert.match(kept(res).access, /^eyJ/); // the new pair stays in the browser
+  assert.deepEqual(fake.calls, ["/auth/refresh/", "/auth/change-password/"]);
+});
+
+test("proxy: a logout after a refresh blacklists the new token, and its clearing cookies win", async () => {
+  const res = await post("/bff/auth/logout", { cookie: `refresh=${issuePair().refresh}` });
+  assert.equal(res.status, 205);
+  assert.deepEqual(kept(res), { access: "", refresh: "" }); // the route's Set-Cookie headers come last
+  assert.deepEqual(fake.calls, ["/auth/refresh/", "/auth/logout/"]);
+  assert.equal(fake.refresh.size, 0);
+});
+
+test("proxy: a rejected refresh token ends the session", async () => {
+  const { refresh } = issuePair();
+  fake.refresh.delete(refresh); // blacklisted, for example by a logout on another device
+  const res = await get("/dashboard", `refresh=${refresh}`);
+  assertSignedOut(res, 307);
+  assertRedirect(res, "/login");
+});
+
+test("proxy: while Django is down nobody is signed out; the refresh token still tells the role", async () => {
+  const { refresh } = issuePair();
+  fake.down = true;
+  const res = await get("/dashboard", `refresh=${refresh}`);
+  assert.equal(res.status, 200);
+  assert.deepEqual(kept(res), {});
+  assertRedirect(await get("/admin", `refresh=${refresh}`), "/dashboard");
+});
+
+test("proxy: a POST to a page (a Server Function call) is never redirected", async () => {
+  assert.notEqual((await fetch(`${SITE}/dashboard`, { method: "POST", redirect: "manual" })).status, 307);
+});
+
+test("proxy: the customer menu never runs the proxy", async () => {
+  const res = await get("/menu/some-cafe", `refresh=${issuePair().refresh}`);
+  assert.deepEqual(kept(res), {});
+  assert.equal(fake.calls.includes("/auth/refresh/"), false);
+});
