@@ -4,15 +4,15 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { type Lang, pickText, toLang } from "@/lib/i18n";
 import { type Category, getCategories, getItems, getSettings } from "@/lib/server/owner-api";
 import { CreateItemForm } from "./create-item-form";
-import { ItemRow } from "./item-row";
+import { ItemList } from "./item-list";
 
 export async function generateMetadata(): Promise<Metadata> {
   return { title: (await getTranslations("Items"))("title") };
 }
 
-// The Items screen (UC-OWNER-013 list, UC-OWNER-002 create, edit and delete), one category at a
-// time: /dashboard/items?category=<id> (D8). A missing or unknown id, for example an old link to a
-// deleted category, opens the first category.
+// The Items screen (UC-OWNER-013 list, UC-OWNER-002 create, edit and delete, UC-OWNER-004 order,
+// UC-OWNER-005 availability), one category at a time: /dashboard/items?category=<id> (D8). A
+// missing or unknown id, for example an old link to a deleted category, opens the first category.
 export default async function ItemsPage({ searchParams }: PageProps<"/dashboard/items">) {
   const [settings, t] = await Promise.all([getSettings(), getTranslations("Items")]);
   if (!settings.is_active) {
@@ -59,9 +59,7 @@ export default async function ItemsPage({ searchParams }: PageProps<"/dashboard/
       {shown.length === 0 ? (
         <p className="text-stone-600">{t("empty")}</p>
       ) : (
-        <ul className="divide-y divide-stone-200 rounded-lg border border-stone-200">
-          {shown.map((item) => <ItemRow key={item.id} item={item} categories={categories} />)}
-        </ul>
+        <ItemList key={current.id} items={shown} categories={categories} />
       )}
       {max !== null && count >= max ? (
         // The same text Django answers when the limit is reached (A1), shown before the owner tries.

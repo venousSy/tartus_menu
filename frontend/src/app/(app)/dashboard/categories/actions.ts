@@ -1,6 +1,6 @@
 "use server";
 
-import { type ActionState, NOT_FOUND, pathOf, writeThenRefresh } from "@/lib/server/owner-actions";
+import { type ActionState, pathOf, saveOrder, writeThenRefresh } from "@/lib/server/owner-actions";
 
 // The Server Actions of the Categories screen (UC-OWNER-001, UC-OWNER-003). Django checks the
 // role, the subscription, the plan limit, the name and that the category belongs to this cafe.
@@ -45,19 +45,8 @@ export async function deleteCategory(_previous: ActionState, formData: FormData)
 
 /**
  * The new order of all the cafe's categories, saved right after a drag (UC-OWNER-003). The page
- * calls it with the list of ids, not with a form. Django checks that the list names every
- * category of this cafe exactly once (A1: 404, A2: 400) and saves nothing otherwise.
+ * calls it with the list of ids, not with a form (A1: an unknown id, 404; A2: a stale list, 400).
  */
 export async function reorderCategories(orderedIds: readonly number[]): Promise<ActionState> {
-  // TypeScript only describes what the page sends; a request can carry anything. Ids only.
-  if (!Array.isArray(orderedIds) || !orderedIds.every((id) => Number.isSafeInteger(id) && id > 0)) {
-    return { error: NOT_FOUND };
-  }
-  const error = await writeThenRefresh(`${CATEGORIES}reorder/`, {
-    method: "POST",
-    json: { ordered_ids: orderedIds },
-  });
-  // A2 is a field error of "ordered_ids", but the list has no input to show it next to.
-  const listMessage = error?.fields.ordered_ids?.[0];
-  return { error: listMessage ? { form: listMessage, fields: {} } : error };
+  return saveOrder(`${CATEGORIES}reorder/`, orderedIds);
 }

@@ -1,9 +1,9 @@
 "use server";
 
-import { type ActionState, pathOf, writeThenRefresh } from "@/lib/server/owner-actions";
+import { type ActionState, isId, NOT_FOUND, pathOf, saveOrder, writeThenRefresh } from "@/lib/server/owner-actions";
 
-// The Server Actions of the Items screen (UC-OWNER-002). Django checks the category, the plan
-// limit, the texts (GC 6) and the price (GC 10); these actions only carry the form to it.
+// The Server Actions of the Items screen (UC-OWNER-002, 004, 005). Django checks the category,
+// the plan limit, the texts (GC 6) and the price (GC 10); these actions only carry the data to it.
 
 /** What the owner typed into an item form, as the form's inputs hold it. */
 export type ItemValues = {
@@ -53,4 +53,22 @@ export async function updateItem(_previous: ItemFormState, formData: FormData): 
 /** Delete. Django keeps the row with a deletion time (soft delete); customers no longer see it. */
 export async function deleteItem(_previous: ActionState, formData: FormData): Promise<ActionState> {
   return { error: await writeThenRefresh(pathOf(ITEMS, formData), { method: "DELETE" }) };
+}
+
+/**
+ * The new order of one category's items, saved right after a drag (UC-OWNER-004). Called with the
+ * list of ids (A1: several categories, 400; A2: an unknown id, 404).
+ */
+export async function reorderItems(orderedIds: readonly number[]): Promise<ActionState> {
+  return saveOrder(`${ITEMS}reorder/`, orderedIds);
+}
+
+/**
+ * Only the availability of one item, from its switch (UC-OWNER-005): the page shows the new value
+ * at once and calls this with values, not a form. Customers see the change within seconds (GC 9).
+ */
+export async function setItemAvailability(id: number, isAvailable: boolean): Promise<ActionState> {
+  if (!isId(id) || typeof isAvailable !== "boolean") return { error: NOT_FOUND };
+  const json = { is_available: isAvailable };
+  return { error: await writeThenRefresh(`${ITEMS}${id}/availability/`, { method: "PATCH", json }) };
 }
