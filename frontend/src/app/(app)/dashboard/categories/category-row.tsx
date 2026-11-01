@@ -1,9 +1,11 @@
 "use client";
 
-import { useTranslations } from "next-intl";
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { useLocale, useTranslations } from "next-intl";
 import { Fragment, type ReactNode, useActionState, useEffect, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import type { BilingualText } from "@/lib/i18n";
+import { type BilingualText, pickText, toLang } from "@/lib/i18n";
 import type { Category } from "@/lib/server/owner-api";
 import { DANGER_BUTTON, FormAlert, NameFields, PRIMARY_BUTTON, SECONDARY_BUTTON } from "../form-parts";
 import { type ActionState, deleteCategory, type NameFormState, renameCategory, setCategoryVisibility } from "./actions";
@@ -11,14 +13,32 @@ import { type ActionState, deleteCategory, type NameFormState, renameCategory, s
 const IDLE: ActionState = { error: null };
 const NAME_IDLE: NameFormState = { error: null };
 
-/** One category and what the owner can do with it (UC-OWNER-001): rename, hide or show, delete. */
-export function CategoryRow({ category }: { category: Category }) {
+/**
+ * One category and what the owner can do with it: move it by its handle (UC-OWNER-003), rename,
+ * hide or show, delete (UC-OWNER-001). Only the handle starts a drag, so the buttons stay buttons.
+ */
+export function CategoryRow({ category, movable }: { category: Category; movable: boolean }) {
   const t = useTranslations("Categories");
+  const name = pickText(category.name, toLang(useLocale()));
   const [visibility, visibilityAction, visibilityPending] = useActionState(setCategoryVisibility, IDLE);
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
+    id: category.id,
+    disabled: !movable,
+    attributes: { roleDescription: t("dragRole") },
+  });
   return (
-    <li className="flex flex-col gap-2 bg-white px-4 py-3">
+    <li ref={setNodeRef}
+      // Only up and down (x = 0), and a translation, not dnd-kit's scale: rows differ in height.
+      style={{ transform: CSS.Translate.toString(transform && { ...transform, x: 0 }), transition }}
+      className={`relative flex flex-col gap-2 bg-white px-4 py-3 first:rounded-t-lg last:rounded-b-lg ${isDragging ? "z-10 shadow-lg" : ""}`}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-2">
+          {movable && (
+            <button type="button" ref={setActivatorNodeRef} {...attributes} {...listeners} aria-label={t("move", { name })}
+              className="-ms-2 flex min-h-11 min-w-11 cursor-grab touch-none items-center justify-center rounded-lg text-stone-500 active:cursor-grabbing">
+              <GripIcon />
+            </button>
+          )}
           <CategoryName name={category.name} />
           {!category.is_visible && (
             <span className="rounded-full bg-stone-200 px-2 text-xs font-semibold text-stone-700">{t("hidden")}</span>
@@ -43,6 +63,15 @@ export function CategoryRow({ category }: { category: Category }) {
       </div>
       <FormAlert error={visibility.error} />
     </li>
+  );
+}
+
+// Six dots, the usual sign for "drag here". The button around it carries the label.
+function GripIcon() {
+  return (
+    <svg viewBox="0 0 20 20" width="20" height="20" fill="currentColor" aria-hidden="true">
+      {[6, 10, 14].map((y) => [7, 13].map((x) => <circle key={`${x}-${y}`} cx={x} cy={y} r="1.5" />))}
+    </svg>
   );
 }
 

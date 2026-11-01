@@ -46,7 +46,8 @@
     "maxValue": "The value must be {max} or less.",
     "maxDigits": "Use at most {max} digits.",
     "maxDecimals": "Use at most {max} decimal places.",
-    "colorFormat": "Enter a color like #6F4E37."
+    "colorFormat": "Enter a color like #6F4E37.",
+    "listChanged": "The list changed in the meantime. Reload the page and try again."
   },
   "Dashboard": {
     "title": "Cafe dashboard",
@@ -102,7 +103,16 @@
     "deleteWarning": "Its items are deleted too. This cannot be undone.",
     "confirmDelete": "Delete",
     "deleting": "Deleting…",
-    "inactive": "Your categories are kept. You can manage them again once the subscription is active."
+    "inactive": "Your categories are kept. You can manage them again once the subscription is active.",
+    "reorderHint": "Drag a category by its handle to change its place on the menu. The new order is saved at once.",
+    "move": "Move {name}",
+    "dragRole": "movable category",
+    "dragInstructions": "To move a category, press space or enter on its handle, move it with the up and down arrow keys, and press space or enter again to drop it. Press escape to cancel.",
+    "pickedUp": "Picked up {name}, at position {position} of {count}.",
+    "movedTo": "{name} is now at position {position} of {count}.",
+    "droppedAt": "{name} was dropped at position {position} of {count}.",
+    "dragCancelled": "Moving {name} was cancelled.",
+    "savingOrder": "Saving the new order…"
   },
   "Admin": {
     "title": "Super Admin"

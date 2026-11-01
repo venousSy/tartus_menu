@@ -65,3 +65,22 @@ export async function setCategoryVisibility(_previous: ActionState, formData: Fo
 export async function deleteCategory(_previous: ActionState, formData: FormData): Promise<ActionState> {
   return { error: await writeThenRefresh(categoryPath(formData), { method: "DELETE" }) };
 }
+
+/**
+ * The new order of all the cafe's categories, saved right after a drag (UC-OWNER-003). The page
+ * calls it with the list of ids, not with a form. Django checks that the list names every
+ * category of this cafe exactly once (A1: 404, A2: 400) and saves nothing otherwise.
+ */
+export async function reorderCategories(orderedIds: readonly number[]): Promise<ActionState> {
+  // TypeScript only describes what the page sends; a request can carry anything. Ids only.
+  if (!Array.isArray(orderedIds) || !orderedIds.every((id) => Number.isSafeInteger(id) && id > 0)) {
+    return { error: NOT_FOUND };
+  }
+  const error = await writeThenRefresh("/dashboard/categories/reorder/", {
+    method: "POST",
+    json: { ordered_ids: orderedIds },
+  });
+  // A2 is a field error of "ordered_ids", but the list has no input to show it next to.
+  const listMessage = error?.fields.ordered_ids?.[0];
+  return { error: listMessage ? { form: listMessage, fields: {} } : error };
+}

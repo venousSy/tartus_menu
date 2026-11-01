@@ -1,14 +1,15 @@
 import type { Metadata } from "next";
 import { getTranslations } from "next-intl/server";
 import { getCategories, getSettings } from "@/lib/server/owner-api";
-import { CategoryRow } from "./category-row";
+import { CategoryList } from "./category-list";
 import { CreateCategoryForm } from "./create-category-form";
 
 export async function generateMetadata(): Promise<Metadata> {
   return { title: (await getTranslations("Categories"))("title") };
 }
 
-// The Categories screen: the list (UC-OWNER-012), then create, rename, hide and delete (UC-OWNER-001).
+// The Categories screen: the list (UC-OWNER-012) in an order the owner drags (UC-OWNER-003), then
+// create, rename, hide and delete (UC-OWNER-001).
 export default async function CategoriesPage() {
   const [settings, t] = await Promise.all([getSettings(), getTranslations("Categories")]);
   if (!settings.is_active) {
@@ -40,13 +41,7 @@ export default async function CategoriesPage() {
           </p>
         )}
       </div>
-      {count === 0 ? (
-        <p className="text-stone-600">{t("empty")}</p>
-      ) : (
-        <ul className="divide-y divide-stone-200 overflow-hidden rounded-lg border border-stone-200">
-          {categories.map((category) => <CategoryRow key={category.id} category={category} />)}
-        </ul>
-      )}
+      {count === 0 ? <p className="text-stone-600">{t("empty")}</p> : <CategoryList categories={categories} />}
       {max !== null && count >= max ? (
         // The same text Django answers when the limit is reached (A1), shown before the owner tries.
         <p className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">

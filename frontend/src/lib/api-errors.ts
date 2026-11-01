@@ -8,7 +8,7 @@ export type ApiErrorKey =
   | "serverError" | "notFound" | "subscriptionInactive" | "planLimitCategories" | "planLimitItems"
   | "imagesNeedPro" | "colorsNeedPro" | "logosNeedPro" | "imageType" | "imageTooLarge"
   | "imageDimensions" | "imageUploadFailed" | "qrFirst" | "required" | "maxLength" | "invalidNumber"
-  | "invalidInteger" | "minValue" | "maxValue" | "maxDigits" | "maxDecimals" | "colorFormat";
+  | "invalidInteger" | "minValue" | "maxValue" | "maxDigits" | "maxDecimals" | "colorFormat" | "listChanged";
 
 /** A message to show: a known one by key, translated when the page renders, or Django's own text. */
 export type ApiMessage = { key: ApiErrorKey; values?: Record<string, string | number> } | { text: string };
@@ -32,6 +32,7 @@ const KNOWN: [RegExp, ApiErrorKey, string[]?][] = [
   [/^Image dimensions are too large\.$/, "imageDimensions"],
   [/^Image upload failed\. Please try again\.$/, "imageUploadFailed"],
   [/^Please generate QR codes first\.$/, "qrFirst"],
+  [/^The list must include every category exactly once\.$/, "listChanged"],
   [/^Not found\.$/, "notFound"],
   [/^This field (?:is required|may not be blank)\.$/, "required"],
   [/^Ensure this field has no more than (\d+) characters\.$/, "maxLength", ["max"]],
