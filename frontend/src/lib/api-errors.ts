@@ -8,7 +8,8 @@ export type ApiErrorKey =
   | "serverError" | "notFound" | "subscriptionInactive" | "planLimitCategories" | "planLimitItems"
   | "imagesNeedPro" | "colorsNeedPro" | "logosNeedPro" | "imageType" | "imageTooLarge"
   | "imageDimensions" | "imageUploadFailed" | "qrFirst" | "required" | "maxLength" | "invalidNumber"
-  | "invalidInteger" | "minValue" | "maxValue" | "maxDigits" | "maxDecimals" | "colorFormat" | "listChanged";
+  | "invalidInteger" | "minValue" | "maxValue" | "maxDigits" | "maxDecimals" | "maxWholeDigits" | "colorFormat"
+  | "listChanged";
 
 /** A message to show: a known one by key, translated when the page renders, or Django's own text. */
 export type ApiMessage = { key: ApiErrorKey; values?: Record<string, string | number> } | { text: string };
@@ -42,6 +43,7 @@ const KNOWN: [RegExp, ApiErrorKey, string[]?][] = [
   [/^Ensure this value is less than or equal to (\d+)\.$/, "maxValue", ["max"]],
   [/^Ensure that there are no more than (\d+) digits in total\.$/, "maxDigits", ["max"]],
   [/^Ensure that there are no more than (\d+) decimal places\.$/, "maxDecimals", ["max"]],
+  [/^Ensure that there are no more than (\d+) digits before the decimal point\.$/, "maxWholeDigits", ["max"]],
   [/^Enter a color in #RRGGBB format\.$/, "colorFormat"],
 ];
 

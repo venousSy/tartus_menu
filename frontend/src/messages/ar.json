@@ -46,6 +46,7 @@
     "maxValue": "يجب ألا تزيد القيمة على {max}.",
     "maxDigits": "عدد الأرقام أكبر من المسموح ({max}).",
     "maxDecimals": "عدد الخانات العشرية أكبر من المسموح ({max}).",
+    "maxWholeDigits": "الحد الأقصى {max, plural, few {# أرقام} many {# رقمًا} other {# رقم}} قبل الفاصلة العشرية.",
     "colorFormat": "أدخل اللون بالشكل #6F4E37.",
     "listChanged": "تغيّرت القائمة في هذه الأثناء. أعد تحميل الصفحة وحاول مرة أخرى."
   },
@@ -113,6 +114,33 @@
     "droppedAt": "وُضع {name} في الموضع {position} من {count}.",
     "dragCancelled": "أُلغي نقل {name}.",
     "savingOrder": "جارٍ حفظ الترتيب الجديد…"
+  },
+  "Items": {
+    "title": "الأصناف",
+    "count": "{count} من أصل {max} في خطتك",
+    "countUnlimited": "{count, plural, one {صنف واحد} two {صنفان} few {# أصناف} many {# صنفًا} other {# صنف}}",
+    "categoriesLabel": "الأقسام",
+    "noCategories": "أضف قسمًا أولًا، فكل صنف ينتمي إلى قسم.",
+    "toCategories": "الذهاب إلى الأقسام",
+    "empty": "لا توجد أصناف في هذا القسم بعد. أضف الصنف الأول في الأسفل.",
+    "newItem": "صنف جديد",
+    "add": "إضافة الصنف",
+    "adding": "جارٍ الإضافة…",
+    "category": "القسم",
+    "descriptionAr": "الوصف بالعربية (اختياري)",
+    "descriptionEn": "الوصف بالإنجليزية (اختياري)",
+    "price": "السعر (ل.س)",
+    "featured": "مميّز",
+    "new": "جديد",
+    "unavailable": "غير متوفر",
+    "edit": "تعديل",
+    "editTitle": "تعديل الصنف",
+    "delete": "حذف",
+    "deleteTitle": "حذف هذا الصنف؟",
+    "deleteWarning": "لا يمكن التراجع عن ذلك.",
+    "confirmDelete": "حذف",
+    "deleting": "جارٍ الحذف…",
+    "inactive": "أصنافك محفوظة. يمكنك إدارتها من جديد بعد تفعيل الاشتراك."
   },
   "Admin": {
     "title": "لوحة المشرف العام"

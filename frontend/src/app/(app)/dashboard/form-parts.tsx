@@ -3,8 +3,8 @@ import { useId } from "react";
 import type { ApiMessage, FormError } from "@/lib/api-errors";
 import { type BilingualText, dirOf, type Lang, NAME_MAX_LENGTH } from "@/lib/i18n";
 
-// Pieces shared by the dashboard's forms. They show Django's errors (src/lib/api-errors.ts) in the
-// reader's language. No "use client" here: the client forms that import them run them in the browser.
+// Pieces shared by the dashboard's forms and rows. They show Django's errors (src/lib/api-errors.ts)
+// in the reader's language. No "use client" here: the client forms that import them run them in the browser.
 
 export const PRIMARY_BUTTON =
   "min-h-11 rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary disabled:opacity-60";
@@ -12,6 +12,16 @@ export const SECONDARY_BUTTON =
   "min-h-11 rounded-lg border border-stone-300 bg-white px-3 text-sm font-semibold disabled:opacity-60";
 export const DANGER_BUTTON =
   "min-h-11 rounded-lg bg-red-700 px-4 text-sm font-semibold text-white disabled:opacity-60";
+
+/** Both names of a category or an item. <bdi> keeps each name's own direction in a page of either language. */
+export function BilingualName({ name }: { name: BilingualText }) {
+  return (
+    <span className="flex flex-col">
+      <span className="font-semibold"><bdi lang="ar">{name.ar}</bdi></span>
+      {name.en && <span className="text-sm text-stone-600"><bdi lang="en">{name.en}</bdi></span>}
+    </span>
+  );
+}
 
 /** One of Django's messages: a known text in the reader's language (ApiErrors), any other as Django wrote it. */
 export function ApiMessageText({ message }: { message: ApiMessage }) {
@@ -29,35 +39,48 @@ export function FormAlert({ error }: { error: FormError | null }) {
   );
 }
 
+/** Django's messages for one field, below it. The field points here with aria-describedby. */
+export function FieldMessages({ id, messages = [] }: { id: string; messages?: ApiMessage[] }) {
+  if (messages.length === 0) return null;
+  return (
+    <p id={id} className="text-sm text-red-700">
+      {messages.map((message, index) => (
+        <span key={index} className="block"><ApiMessageText message={message} /></span>
+      ))}
+    </p>
+  );
+}
+
 type TextFieldProps = {
   label: string;
   name: string;
-  lang: Lang; // the language of the text typed here, not of the page
+  lang?: Lang; // the language of the text typed here, not of the page; none for a number
   defaultValue: string;
   required?: boolean;
   maxLength?: number;
+  inputMode?: "decimal"; // a keypad with a decimal point on phones
+  multiline?: boolean; // a textarea, for longer texts such as a description
   messages?: ApiMessage[];
 };
 
-/** A labelled input for text in one language, with Django's messages for that field below it. */
-export function TextField({ label, name, lang, defaultValue, required, maxLength, messages = [] }: TextFieldProps) {
+/** A labelled input for text in one language (or a number), with Django's messages for it below. */
+export function TextField({ label, name, lang, defaultValue, required, maxLength, inputMode, multiline, messages = [] }: TextFieldProps) {
   const errorId = useId();
   const invalid = messages.length > 0;
+  const shared = {
+    name, lang, defaultValue, required, maxLength,
+    dir: lang ? dirOf(lang) : "ltr", // numbers read left to right in both languages (GC 10)
+    "aria-invalid": invalid || undefined,
+    "aria-describedby": invalid ? errorId : undefined,
+    className: "min-h-11 rounded-lg border border-stone-300 bg-white px-3 aria-invalid:border-red-600",
+  } as const;
   return (
     <div className="flex flex-col gap-1">
       <label className="flex flex-col gap-1">
         <span className="text-sm font-semibold">{label}</span>
-        <input name={name} lang={lang} dir={dirOf(lang)} defaultValue={defaultValue} required={required}
-          maxLength={maxLength} aria-invalid={invalid || undefined} aria-describedby={invalid ? errorId : undefined}
-          className="min-h-11 rounded-lg border border-stone-300 bg-white px-3 aria-invalid:border-red-600" />
+        {multiline ? <textarea rows={3} {...shared} /> : <input inputMode={inputMode} {...shared} />}
       </label>
-      {invalid && (
-        <p id={errorId} className="text-sm text-red-700">
-          {messages.map((message, index) => (
-            <span key={index} className="block"><ApiMessageText message={message} /></span>
-          ))}
-        </p>
-      )}
+      <FieldMessages id={errorId} messages={messages} />
     </div>
   );
 }

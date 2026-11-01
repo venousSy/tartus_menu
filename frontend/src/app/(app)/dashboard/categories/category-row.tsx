@@ -3,12 +3,13 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useLocale, useTranslations } from "next-intl";
-import { Fragment, type ReactNode, useActionState, useEffect, useId, useRef, useState } from "react";
-import { flushSync } from "react-dom";
-import { type BilingualText, pickText, toLang } from "@/lib/i18n";
+import { useActionState, useEffect, useRef } from "react";
+import { pickText, toLang } from "@/lib/i18n";
+import type { ActionState } from "@/lib/server/owner-actions";
 import type { Category } from "@/lib/server/owner-api";
-import { DANGER_BUTTON, FormAlert, NameFields, PRIMARY_BUTTON, SECONDARY_BUTTON } from "../form-parts";
-import { type ActionState, deleteCategory, type NameFormState, renameCategory, setCategoryVisibility } from "./actions";
+import { CancelButton, DialogButton } from "../dialog-button";
+import { BilingualName, DANGER_BUTTON, FormAlert, NameFields, PRIMARY_BUTTON, SECONDARY_BUTTON } from "../form-parts";
+import { deleteCategory, type NameFormState, renameCategory, setCategoryVisibility } from "./actions";
 
 const IDLE: ActionState = { error: null };
 const NAME_IDLE: NameFormState = { error: null };
@@ -39,7 +40,7 @@ export function CategoryRow({ category, movable }: { category: Category; movable
               <GripIcon />
             </button>
           )}
-          <CategoryName name={category.name} />
+          <BilingualName name={category.name} />
           {!category.is_visible && (
             <span className="rounded-full bg-stone-200 px-2 text-xs font-semibold text-stone-700">{t("hidden")}</span>
           )}
@@ -75,54 +76,6 @@ function GripIcon() {
   );
 }
 
-// Both names of a category. <bdi> keeps each name's own direction inside a page of either language.
-function CategoryName({ name }: { name: BilingualText }) {
-  return (
-    <span className="flex flex-col">
-      <span className="font-semibold"><bdi lang="ar">{name.ar}</bdi></span>
-      {name.en && <span className="text-sm text-stone-600"><bdi lang="en">{name.en}</bdi></span>}
-    </span>
-  );
-}
-
-/**
- * A button and the modal dialog it opens. The dialog and its form are part of the page from the
- * start, so the form exists for a post without JavaScript too. Each opening renders the form anew
- * (`key`): the current values, without the error or the typing of the last time.
- */
-function DialogButton({ label, title, children }: { label: string; title: string; children: ReactNode }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  const [openings, setOpenings] = useState(0);
-  const titleId = useId();
-  return (
-    <>
-      <button type="button" className={SECONDARY_BUTTON}
-        onClick={() => {
-          // The new form must be in place before showModal() moves the focus to its first field.
-          flushSync(() => setOpenings((count) => count + 1));
-          dialog.current?.showModal();
-        }}>
-        {label}
-      </button>
-      <dialog ref={dialog} aria-labelledby={titleId}
-        className="m-auto w-[min(28rem,calc(100%-2rem))] rounded-lg p-4 backdrop:bg-black/40">
-        <h3 id={titleId} className="mb-3 font-bold">{title}</h3>
-        <Fragment key={openings}>{children}</Fragment>
-      </dialog>
-    </>
-  );
-}
-
-// Closes the dialog around the button; the Escape key does the same.
-function CancelButton() {
-  const t = useTranslations("Forms");
-  return (
-    <button type="button" className={SECONDARY_BUTTON} onClick={(event) => event.currentTarget.closest("dialog")?.close()}>
-      {t("cancel")}
-    </button>
-  );
-}
-
 /** A new name for the category. The dialog closes after a successful save and stays open on an error. */
 function RenameForm({ category }: { category: Category }) {
   const t = useTranslations("Forms");
@@ -153,7 +106,7 @@ function DeleteForm({ category }: { category: Category }) {
   return (
     <form action={formAction} className="flex flex-col gap-3">
       <input type="hidden" name="id" value={category.id} />
-      <CategoryName name={category.name} />
+      <BilingualName name={category.name} />
       <p>{t("deleteWarning")}</p>
       <FormAlert error={state.error} />
       <div className="flex justify-end gap-2">

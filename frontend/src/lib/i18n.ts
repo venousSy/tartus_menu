@@ -7,6 +7,8 @@ export type BilingualText = { ar?: string; en?: string };
 
 /** GC 6: a name has at most this many characters per language (Django checks it too). */
 export const NAME_MAX_LENGTH = 100;
+/** GC 6: the same for a description. */
+export const DESCRIPTION_MAX_LENGTH = 500;
 
 /** The cookie that keeps a dashboard user's language. Customer pages use localStorage instead. */
 export const LANG_COOKIE = "lang";

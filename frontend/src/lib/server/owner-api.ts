@@ -28,6 +28,20 @@ export type CafeSettings = {
 /** A category of GET /api/v1/dashboard/categories/ (UC-OWNER-012), hidden ones included. */
 export type Category = { id: number; name: BilingualText; sort_order: number; is_visible: boolean };
 
+/** An item of GET /api/v1/dashboard/items/ (UC-OWNER-013), unavailable ones included. */
+export type MenuItem = {
+  id: number;
+  category_id: number;
+  name: BilingualText;
+  description: BilingualText;
+  price: string; // two decimals, as Django sends it: "50.00" (GC 10)
+  image_url: string;
+  is_available: boolean;
+  is_featured: boolean;
+  is_new: boolean;
+  sort_order: number;
+};
+
 /** A write's result: Django's answer on success (null for 204 No Content), or the error for the form. */
 export type WriteResult<T> = { ok: true; data: T } | { ok: false; error: FormError };
 
@@ -115,4 +129,9 @@ export const getSettings = cache(async (): Promise<CafeSettings> => {
 /** The cafe's categories in menu order (UC-OWNER-012). Django answers 403 for an inactive cafe (GC 5). */
 export function getCategories(): Promise<Category[]> {
   return ownerGet<Category[]>("/dashboard/categories/");
+}
+
+/** All the cafe's items in menu order: by category, then inside it (UC-OWNER-013). 403 when inactive. */
+export function getItems(): Promise<MenuItem[]> {
+  return ownerGet<MenuItem[]>("/dashboard/items/");
 }

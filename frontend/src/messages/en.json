@@ -46,6 +46,7 @@
     "maxValue": "The value must be {max} or less.",
     "maxDigits": "Use at most {max} digits.",
     "maxDecimals": "Use at most {max} decimal places.",
+    "maxWholeDigits": "Use at most {max} digits before the decimal point.",
     "colorFormat": "Enter a color like #6F4E37.",
     "listChanged": "The list changed in the meantime. Reload the page and try again."
   },
@@ -113,6 +114,33 @@
     "droppedAt": "{name} was dropped at position {position} of {count}.",
     "dragCancelled": "Moving {name} was cancelled.",
     "savingOrder": "Saving the new order…"
+  },
+  "Items": {
+    "title": "Items",
+    "count": "{count} of {max} on your plan",
+    "countUnlimited": "{count, plural, one {# item} other {# items}}",
+    "categoriesLabel": "Categories",
+    "noCategories": "Add a category first: every item belongs to one.",
+    "toCategories": "Go to categories",
+    "empty": "No items in this category yet. Add the first one below.",
+    "newItem": "New item",
+    "add": "Add item",
+    "adding": "Adding…",
+    "category": "Category",
+    "descriptionAr": "Arabic description (optional)",
+    "descriptionEn": "English description (optional)",
+    "price": "Price (SYP)",
+    "featured": "Featured",
+    "new": "New",
+    "unavailable": "Unavailable",
+    "edit": "Edit",
+    "editTitle": "Edit item",
+    "delete": "Delete",
+    "deleteTitle": "Delete this item?",
+    "deleteWarning": "This cannot be undone.",
+    "confirmDelete": "Delete",
+    "deleting": "Deleting…",
+    "inactive": "Your items are kept. You can manage them again once the subscription is active."
   },
   "Admin": {
     "title": "Super Admin"
