@@ -24,6 +24,30 @@
   "Session": {
     "logout": "Log out"
   },
+  "ApiErrors": {
+    "serverError": "The server could not be reached. Please try again.",
+    "notFound": "This was not found. It may have been deleted; reload the page.",
+    "subscriptionInactive": "Your subscription is inactive. Please contact support.",
+    "planLimitCategories": "Your {plan} plan allows at most {max, plural, one {# category} other {# categories}}. Upgrade to Pro for unlimited.",
+    "planLimitItems": "Your {plan} plan allows at most {max, plural, one {# item} other {# items}}. Upgrade to Pro for unlimited.",
+    "imagesNeedPro": "Item images require the Pro plan.",
+    "colorsNeedPro": "Custom colors require the Pro plan.",
+    "logosNeedPro": "Custom logos require the Pro plan.",
+    "imageType": "Only JPEG, PNG and WebP images are allowed.",
+    "imageTooLarge": "The image must be under 2 MB.",
+    "imageDimensions": "The image dimensions are too large.",
+    "imageUploadFailed": "The image upload failed. Please try again.",
+    "qrFirst": "Please generate the QR codes first.",
+    "required": "This field is required.",
+    "maxLength": "Use at most {max} characters.",
+    "invalidNumber": "Enter a valid number.",
+    "invalidInteger": "Enter a whole number.",
+    "minValue": "The value must be {min} or more.",
+    "maxValue": "The value must be {max} or less.",
+    "maxDigits": "Use at most {max} digits.",
+    "maxDecimals": "Use at most {max} decimal places.",
+    "colorFormat": "Enter a color like #6F4E37."
+  },
   "Dashboard": {
     "title": "Cafe dashboard"
   },

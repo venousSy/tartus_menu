@@ -24,6 +24,30 @@
   "Session": {
     "logout": "تسجيل الخروج"
   },
+  "ApiErrors": {
+    "serverError": "تعذّر الوصول إلى الخادم. حاول مرة أخرى.",
+    "notFound": "لم يُعثر على هذا العنصر، ربما حُذف. أعد تحميل الصفحة.",
+    "subscriptionInactive": "اشتراكك غير مفعّل. يرجى التواصل مع الدعم.",
+    "planLimitCategories": "تسمح خطة {plan} بحد أقصى {max, plural, one {قسم واحد} two {قسمين} few {# أقسام} many {# قسمًا} other {# قسم}}. رقِّ اشتراكك إلى Pro لعدد غير محدود.",
+    "planLimitItems": "تسمح خطة {plan} بحد أقصى {max, plural, one {صنف واحد} two {صنفين} few {# أصناف} many {# صنفًا} other {# صنف}}. رقِّ اشتراكك إلى Pro لعدد غير محدود.",
+    "imagesNeedPro": "صور الأصناف متاحة في خطة Pro فقط.",
+    "colorsNeedPro": "الألوان المخصصة متاحة في خطة Pro فقط.",
+    "logosNeedPro": "الشعار المخصص متاح في خطة Pro فقط.",
+    "imageType": "يُسمح فقط بصور JPEG وPNG وWebP.",
+    "imageTooLarge": "يجب أن يكون حجم الصورة أقل من 2 ميغابايت.",
+    "imageDimensions": "أبعاد الصورة كبيرة جدًا.",
+    "imageUploadFailed": "فشل رفع الصورة. حاول مرة أخرى.",
+    "qrFirst": "أنشئ رموز QR أولًا.",
+    "required": "هذا الحقل مطلوب.",
+    "maxLength": "الحد الأقصى {max, plural, few {# أحرف} many {# حرفًا} other {# حرف}}.",
+    "invalidNumber": "أدخل رقمًا صالحًا.",
+    "invalidInteger": "أدخل عددًا صحيحًا.",
+    "minValue": "يجب ألا تقل القيمة عن {min}.",
+    "maxValue": "يجب ألا تزيد القيمة على {max}.",
+    "maxDigits": "عدد الأرقام أكبر من المسموح ({max}).",
+    "maxDecimals": "عدد الخانات العشرية أكبر من المسموح ({max}).",
+    "colorFormat": "أدخل اللون بالشكل #6F4E37."
+  },
   "Dashboard": {
     "title": "لوحة تحكم المقهى"
   },

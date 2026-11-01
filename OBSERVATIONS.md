@@ -37,6 +37,7 @@ Rules for this file:
 - **35.** (2026-10-31) `/menu/<unknown slug>` answers HTTP 200, not 404: the page streams (Cache Components), so the status is sent before `notFound()` runs and the "Menu not found" screen is drawn from the stream. UC-GUEST-001 A1 names 404 for the API; the docs do not say which status the frontend page must have. Decide only if it matters (noindex pages).
 - **36.** (2026-10-31) The offline note shows only while `navigator.onLine` is false (the design the user approved in step 9 Q1). On Wi-Fi without internet, `onLine` stays true, so the service worker may serve the saved copy without the note. Fix if wanted: the worker marks the responses it serves from its cache, and the page shows the note for them.
 - **37.** (2026-10-31) `public/sw.js` keeps `/_next/static` files of older deploys in `menu-files-v1` until VERSION changes; the cache of a returning customer grows a little with each deploy. Fix if it matters: prune files the current page did not load.
+- **38.** (2026-11-01) `frontend/src/i18n/request.ts` always takes the language from the `lang` cookie and ignores a locale that code asks for, so `getTranslations({ locale: "en" })` still answers in the cookie's language (found with a temporary check page in step 10.2). The dashboards only use the cookie language today; code that needs a fixed language would get the wrong one. Fix: use the locale next-intl passes to `getRequestConfig` when one is given.
 
 ## Fixed
 
