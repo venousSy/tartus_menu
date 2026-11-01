@@ -5,6 +5,9 @@ export type Lang = "ar" | "en";
 /** A bilingual field from the API: {"ar": "...", "en": "..."}. `name` always has `ar`; `description` may be {}. */
 export type BilingualText = { ar?: string; en?: string };
 
+/** GC 6: a name has at most this many characters per language (Django checks it too). */
+export const NAME_MAX_LENGTH = 100;
+
 /** The cookie that keeps a dashboard user's language. Customer pages use localStorage instead. */
 export const LANG_COOKIE = "lang";
 

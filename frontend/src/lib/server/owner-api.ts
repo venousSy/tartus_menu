@@ -25,6 +25,9 @@ export type CafeSettings = {
   };
 };
 
+/** A category of GET /api/v1/dashboard/categories/ (UC-OWNER-012), hidden ones included. */
+export type Category = { id: number; name: BilingualText; sort_order: number; is_visible: boolean };
+
 /** A write's result: Django's answer on success (null for 204 No Content), or the error for the form. */
 export type WriteResult<T> = { ok: true; data: T } | { ok: false; error: FormError };
 
@@ -40,7 +43,7 @@ export class OwnerApiError extends Error {
   }
 }
 
-type OwnerInit = { method?: "POST" | "PATCH" | "DELETE"; json?: object; form?: FormData };
+export type OwnerInit = { method?: "POST" | "PATCH" | "DELETE"; json?: object; form?: FormData };
 
 /**
  * Calls one of Django's owner endpoints with the signed-in user's access token (system_design.md
@@ -108,3 +111,8 @@ export const getSettings = cache(async (): Promise<CafeSettings> => {
     throw error; // also the redirects of ownerFetch, which work by throwing
   }
 });
+
+/** The cafe's categories in menu order (UC-OWNER-012). Django answers 403 for an inactive cafe (GC 5). */
+export function getCategories(): Promise<Category[]> {
+  return ownerGet<Category[]>("/dashboard/categories/");
+}

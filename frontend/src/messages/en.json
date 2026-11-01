@@ -77,6 +77,33 @@
     "openMenu": "Open the customer menu",
     "newTab": "(opens in a new tab)"
   },
+  "Forms": {
+    "nameAr": "Arabic name",
+    "nameEn": "English name (optional)",
+    "save": "Save",
+    "saving": "Saving…",
+    "cancel": "Cancel"
+  },
+  "Categories": {
+    "title": "Categories",
+    "count": "{count} of {max} on your plan",
+    "countUnlimited": "{count, plural, one {# category} other {# categories}}",
+    "empty": "No categories yet. Add the first one below.",
+    "newCategory": "New category",
+    "add": "Add category",
+    "adding": "Adding…",
+    "hidden": "Hidden",
+    "hide": "Hide",
+    "show": "Show",
+    "rename": "Rename",
+    "renameTitle": "Rename category",
+    "delete": "Delete",
+    "deleteTitle": "Delete this category?",
+    "deleteWarning": "Its items are deleted too. This cannot be undone.",
+    "confirmDelete": "Delete",
+    "deleting": "Deleting…",
+    "inactive": "Your categories are kept. You can manage them again once the subscription is active."
+  },
   "Admin": {
     "title": "Super Admin"
   }
