@@ -28,7 +28,7 @@ export type CafeSettings = {
 /** A write's result: Django's answer on success (null for 204 No Content), or the error for the form. */
 export type WriteResult<T> = { ok: true; data: T } | { ok: false; error: FormError };
 
-/** A Django answer a page cannot use. The page's error screen shows it; the layout reads `status` (403). */
+/** A Django answer a page cannot use. The dashboard's error screen shows it; getSettings reads `status` (403). */
 export class OwnerApiError extends Error {
   readonly status: number;
   readonly error: FormError;
@@ -93,5 +93,18 @@ export async function ownerWrite<T>(path: string, init: OwnerInit): Promise<Writ
   return { ok: true, data: response.status === 204 ? (null as T) : await response.json() };
 }
 
-/** The cafe's settings (UC-OWNER-014). cache(): the layout and the page of one request share one call. */
-export const getSettings = cache(() => ownerGet<CafeSettings>("/dashboard/settings/"));
+/**
+ * The cafe's settings (UC-OWNER-014). cache(): the layout and the page of one request share one call.
+ * It is also the role re-check behind proxy.ts. This is the only owner endpoint without the
+ * active-cafe check (GC 5), so its only 403 is the role check: the account is no longer a Cafe
+ * Owner with a cafe, but the role claim in its token still says so. Django writes that claim at
+ * login and every refresh copies it, so only a new login fixes it: the session ends here.
+ */
+export const getSettings = cache(async (): Promise<CafeSettings> => {
+  try {
+    return await ownerGet<CafeSettings>("/dashboard/settings/");
+  } catch (error) {
+    if (error instanceof OwnerApiError && error.status === 403) redirect("/bff/auth/session-ended");
+    throw error; // also the redirects of ownerFetch, which work by throwing
+  }
+});

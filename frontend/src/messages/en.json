@@ -49,7 +49,33 @@
     "colorFormat": "Enter a color like #6F4E37."
   },
   "Dashboard": {
-    "title": "Cafe dashboard"
+    "title": "Cafe dashboard",
+    "navLabel": "Dashboard pages",
+    "home": "Home",
+    "categories": "Categories",
+    "items": "Items",
+    "qr": "QR codes",
+    "settings": "Settings",
+    "inactive": "Your subscription is inactive. Customers see a “temporarily unavailable” page, and you cannot manage your menu until it is active again. Please contact support.",
+    "loadError": "This page could not be loaded.",
+    "retry": "Try again"
+  },
+  "DashboardHome": {
+    "subscription": "Subscription",
+    "active": "Active",
+    "inactive": "Inactive",
+    "plan": "Plan",
+    "planName": "{name, select, basic {Basic} pro {Pro} other {{name}}}",
+    "categories": "Categories",
+    "items": "Items",
+    "upTo": "Up to {max}",
+    "unlimited": "Unlimited",
+    "itemImages": "Item images",
+    "branding": "Custom logo and color",
+    "yes": "Yes",
+    "no": "No",
+    "openMenu": "Open the customer menu",
+    "newTab": "(opens in a new tab)"
   },
   "Admin": {
     "title": "Super Admin"
