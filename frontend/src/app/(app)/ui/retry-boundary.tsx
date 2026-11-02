@@ -6,7 +6,7 @@ import { useTransition } from "react";
 
 /**
  * The dashboard's error screen, shown in place of a screen whose data could not be read: an
- * OwnerApiError (Django unreachable, a server error) or any other failure while rendering. In
+ * ApiError (Django unreachable, a server error) or any other failure while rendering. In
  * production Next hides an error's details from the browser, so the text is the same for all.
  * redirect() also works by throwing, but catchError lets it pass.
  */
