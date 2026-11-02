@@ -2,14 +2,11 @@
 
 import { useTranslations } from "next-intl";
 import { useActionState, useId } from "react";
+import { PLAN_CODES } from "@/lib/plans";
 import { FieldMessages, FormAlert, NameFields, PRIMARY_BUTTON, TextField } from "../../../ui/form-parts";
 import { type CreateCafeState, createCafe } from "../actions";
 
 const IDLE: CreateCafeState = { error: null };
-
-// The plan codes of the SubscriptionPlan rows (system_design.md §2.2: 'basic' | 'pro'). There is no endpoint that lists
-// them; an unknown code is refused by Django (UC-ADMIN-001 A3).
-const PLANS = ["basic", "pro"] as const;
 
 /** The create form (UC-ADMIN-001): the cafe's address name, names and plan, and its owner's login. */
 export function CreateCafeForm() {
@@ -35,7 +32,7 @@ export function CreateCafeForm() {
         <select key={values?.plan ?? "basic"} name="plan" defaultValue={values?.plan ?? "basic"}
           aria-invalid={planMessages ? true : undefined} aria-describedby={planMessages ? planErrorId : undefined}
           className="min-h-11 rounded-lg border border-stone-300 bg-white px-3 aria-invalid:border-red-600">
-          {PLANS.map((plan) => <option key={plan} value={plan}>{tCafes("planName", { name: plan })}</option>)}
+          {PLAN_CODES.map((plan) => <option key={plan} value={plan}>{tCafes("planName", { name: plan })}</option>)}
         </select>
       </label>
       <FieldMessages id={planErrorId} messages={planMessages} />

@@ -73,3 +73,29 @@ export async function changeSubscription(_previous: SubscriptionState, formData:
   const error = await writeThenRefresh(cafePath(formData, `${change}/`), { method: "POST", json: { notes } });
   return error ? { error, notes } : { error: null, saved: true };
 }
+
+/** What the admin typed in the edit form. `color` is "" for the default theme. */
+export type EditCafeValues = { slug: string; name: { ar: string; en: string }; plan: string; color: string };
+
+/** The edit form's state: the typed values come back after a refusal; `saved` closes the dialog. */
+export type EditCafeState = { error: FormError | null; values?: EditCafeValues; saved?: boolean };
+
+/**
+ * Saves the cafe's names, slug, plan and menu color (UC-ADMIN-006). All four are sent; Django
+ * changes only what differs and writes a "plan_changed" billing event for a new plan. Django checks
+ * a new slug (A1), a downgrade against the plan's limits (A2), the color (A5) and the names (A6).
+ * The color is stored even on a plan without branding (GC 7). An unticked "own color" box means the
+ * default theme: "".
+ */
+export async function updateCafe(_previous: EditCafeState, formData: FormData): Promise<EditCafeState> {
+  const text = (name: string) => String(formData.get(name) ?? "");
+  const values: EditCafeValues = {
+    slug: text("slug"), name: { ar: text("name_ar"), en: text("name_en") }, plan: text("plan"),
+    color: formData.has("custom_color") ? text("primary_color") : "",
+  };
+  const error = await writeThenRefresh(cafePath(formData), {
+    method: "PATCH",
+    json: { name: values.name, slug: values.slug, plan: values.plan, primary_color: values.color },
+  });
+  return error ? { error, values } : { error: null, saved: true };
+}

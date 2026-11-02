@@ -301,6 +301,12 @@
     "notes": "Notes (optional)",
     "notesHint": "Saved in the billing history, for example: Paid 3 months in cash.",
     "activateConfirm": "Activate",
-    "deactivateConfirm": "Deactivate"
+    "deactivateConfirm": "Deactivate",
+    "edit": "Edit",
+    "editTitle": "Edit the cafe",
+    "slugWarning": "Changing the address name stops every printed QR code of this cafe: old addresses do not lead to the new one.",
+    "customColor": "Own color for the customer menu",
+    "colorPick": "Choose the color",
+    "colorHint": "The color is kept on any plan, but customers see it only on a plan with custom branding."
   }
 }
