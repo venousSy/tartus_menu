@@ -54,7 +54,7 @@ export function FieldMessages({ id, messages = [] }: { id: string; messages?: Ap
 type TextFieldProps = {
   label: string;
   name: string;
-  lang?: Lang; // the language of the text typed here, not of the page; none for a number
+  lang?: Lang | "auto"; // the language of the text typed here, not of the page; "auto" for either; none for a number
   defaultValue: string;
   required?: boolean;
   maxLength?: number;
@@ -69,8 +69,9 @@ export function TextField({ label, name, lang, defaultValue, required, maxLength
   const errorId = useId();
   const invalid = messages.length > 0;
   const shared = {
-    name, lang, defaultValue, required, maxLength,
-    dir: lang ? dirOf(lang) : "ltr", // numbers read left to right in both languages (GC 10)
+    name, lang: lang === "auto" ? undefined : lang, defaultValue, required, maxLength,
+    // "auto": each line takes the direction of its first letter. Numbers read left to right (GC 10).
+    dir: lang === "auto" ? "auto" : lang ? dirOf(lang) : "ltr",
     "aria-invalid": invalid || undefined,
     "aria-describedby": invalid ? errorId : undefined,
     className: "min-h-11 rounded-lg border border-stone-300 bg-white px-3 aria-invalid:border-red-600",

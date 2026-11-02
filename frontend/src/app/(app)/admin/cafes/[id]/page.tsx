@@ -8,6 +8,7 @@ import { formatDateTime, pickText, toLang } from "@/lib/i18n";
 import { getBilling, getCafe } from "@/lib/server/admin-api";
 import { ApiError } from "@/lib/server/api";
 import { BilingualName } from "../../../ui/form-parts";
+import { SubscriptionDialog } from "./subscription-dialog";
 
 export async function generateMetadata(): Promise<Metadata> {
   return { title: (await getTranslations("AdminCafe"))("title") };
@@ -29,7 +30,7 @@ async function load(id: string) {
 }
 
 // One cafe for the Super Admin (UC-ADMIN-003) with its billing log (UC-ADMIN-008), as in
-// system_design.md §4.1. Activate, deactivate, edit and delete come in the next steps.
+// system_design.md §4.1, with Activate or Deactivate (UC-ADMIN-004, 005). Edit and delete come next.
 export default async function AdminCafePage({ params }: PageProps<"/admin/cafes/[id]">) {
   const [[cafe, billing], t, locale] = await Promise.all([load((await params).id), getTranslations("AdminCafe"), getLocale()]);
   const lang = toLang(locale);
@@ -42,6 +43,9 @@ export default async function AdminCafePage({ params }: PageProps<"/admin/cafes/
         <span className={`rounded px-2 py-0.5 text-sm font-semibold ${cafe.is_active ? "bg-green-100 text-green-900" : "bg-amber-100 text-amber-900"}`}>
           {cafe.is_active ? t("active") : t("inactive")}
         </span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <SubscriptionDialog id={cafe.id} active={cafe.is_active} />
       </div>
       <dl className="grid gap-px overflow-hidden rounded-lg border border-stone-200 bg-stone-200 sm:grid-cols-2">
         <Row label={t("slug")}>
@@ -63,7 +67,8 @@ export default async function AdminCafePage({ params }: PageProps<"/admin/cafes/
             </span>
           ) : t("defaultColor")}
         </Row>
-        <Row label={t("logo")}>
+        {/* The seventh row: wide, so two columns leave no empty cell. */}
+        <Row label={t("logo")} wide>
           {cafe.logo_url
             ? <Image src={cafe.logo_url} alt={t("logoAlt", { name: pickText(cafe.name, lang) })} width={64} height={64} unoptimized className="size-16 rounded-lg bg-stone-100 object-contain" />
             : t("noLogo")}
@@ -97,9 +102,9 @@ export default async function AdminCafePage({ params }: PageProps<"/admin/cafes/
   );
 }
 
-function Row({ label, children }: { label: string; children: ReactNode }) {
+function Row({ label, children, wide = false }: { label: string; children: ReactNode; wide?: boolean }) {
   return (
-    <div className="flex flex-col gap-1 bg-white px-4 py-3">
+    <div className={`flex flex-col gap-1 bg-white px-4 py-3 ${wide ? "sm:col-span-2" : ""}`}>
       <dt className="text-sm text-stone-600">{label}</dt>
       <dd className="font-semibold">{children}</dd>
     </div>

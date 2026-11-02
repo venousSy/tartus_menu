@@ -291,6 +291,16 @@
     "noBilling": "No events yet.",
     "action": "{action, select, activated {Subscription activated} deactivated {Subscription deactivated} plan_changed {Plan changed} other {{action}}}",
     "by": "by <mail>{email}</mail>",
-    "byDeleted": "by an admin whose account was deleted"
+    "byDeleted": "by an admin whose account was deleted",
+    "activate": "Activate subscription",
+    "deactivate": "Deactivate subscription",
+    "activateTitle": "Activate this cafe's subscription?",
+    "deactivateTitle": "Deactivate this cafe's subscription?",
+    "activateText": "The menu becomes public and the owner can manage it. A new subscription period starts now.",
+    "deactivateText": "Customers see a “temporarily unavailable” page, and the owner cannot change the menu until it is active again. All its data is kept.",
+    "notes": "Notes (optional)",
+    "notesHint": "Saved in the billing history, for example: Paid 3 months in cash.",
+    "activateConfirm": "Activate",
+    "deactivateConfirm": "Deactivate"
   }
 }
