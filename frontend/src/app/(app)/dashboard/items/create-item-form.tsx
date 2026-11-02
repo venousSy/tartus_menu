@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { useActionState } from "react";
-import { FormAlert, PRIMARY_BUTTON } from "../form-parts";
+import { FormAlert, PRIMARY_BUTTON } from "../../ui/form-parts";
 import { createItem, type ItemFormState } from "./actions";
 import { ItemFields, newItemValues } from "./item-fields";
 

@@ -3,7 +3,7 @@
 import { useTranslations } from "next-intl";
 import { useActionState } from "react";
 import { type FormError, SERVER_ERROR, toFormError } from "@/lib/api-errors";
-import { FormAlert, PRIMARY_BUTTON, TextField } from "../form-parts";
+import { FormAlert, PRIMARY_BUTTON, TextField } from "../../ui/form-parts";
 
 // `mismatch`: the two new passwords differ (checked here, Django never sees them). `changed`: done.
 type PasswordState = { error: FormError | null; mismatch?: boolean; changed?: boolean };

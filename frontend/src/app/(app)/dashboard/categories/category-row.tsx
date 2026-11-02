@@ -5,8 +5,8 @@ import { useActionState, useEffect, useRef } from "react";
 import { pickText, toLang } from "@/lib/i18n";
 import type { ActionState } from "@/lib/server/owner-actions";
 import type { Category } from "@/lib/server/owner-api";
-import { CancelButton, DialogButton } from "../dialog-button";
-import { BilingualName, DANGER_BUTTON, FormAlert, NameFields, PRIMARY_BUTTON, SECONDARY_BUTTON } from "../form-parts";
+import { CancelButton, DialogButton } from "../../ui/dialog-button";
+import { BilingualName, DANGER_BUTTON, FormAlert, NameFields, PRIMARY_BUTTON, SECONDARY_BUTTON } from "../../ui/form-parts";
 import { SortableRow } from "../sortable-list";
 import { deleteCategory, type NameFormState, renameCategory, setCategoryVisibility } from "./actions";
 

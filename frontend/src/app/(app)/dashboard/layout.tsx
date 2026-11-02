@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { getSettings } from "@/lib/server/owner-api";
 import { PageHeader } from "../page-header";
 import { DashboardNav } from "./dashboard-nav";
-import { RetryBoundary } from "./retry-boundary";
+import { RetryBoundary } from "../ui/retry-boundary";
 
 // The frame of every Cafe Owner screen (system_design.md §4.2). Next keeps a layout on screen while
 // the owner moves between the screens below it, and renders only the new page.

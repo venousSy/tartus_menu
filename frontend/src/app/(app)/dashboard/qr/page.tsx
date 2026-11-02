@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import { getTranslations } from "next-intl/server";
 import { getQrCodes, getSettings } from "@/lib/server/owner-api";
-import { PRIMARY_BUTTON } from "../form-parts";
+import { PRIMARY_BUTTON } from "../../ui/form-parts";
 import { GenerateForm } from "./generate-form";
 
 export async function generateMetadata(): Promise<Metadata> {

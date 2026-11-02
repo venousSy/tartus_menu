@@ -3,7 +3,7 @@
 import { useTranslations } from "next-intl";
 import { useActionState, useId } from "react";
 import type { CafeSettings } from "@/lib/server/owner-api";
-import { FieldMessages, FormAlert, NameFields, PRIMARY_BUTTON } from "../form-parts";
+import { FieldMessages, FormAlert, NameFields, PRIMARY_BUTTON } from "../../ui/form-parts";
 import { type SettingsFormState, updateSettings } from "./actions";
 
 const IDLE: SettingsFormState = { error: null };

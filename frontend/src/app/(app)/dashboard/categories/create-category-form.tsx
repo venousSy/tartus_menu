@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { useActionState } from "react";
-import { FormAlert, NameFields, PRIMARY_BUTTON } from "../form-parts";
+import { FormAlert, NameFields, PRIMARY_BUTTON } from "../../ui/form-parts";
 import { createCategory, type NameFormState } from "./actions";
 
 const INITIAL: NameFormState = { error: null };
