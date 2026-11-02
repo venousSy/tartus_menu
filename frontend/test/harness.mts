@@ -12,8 +12,11 @@ import { setTimeout as sleep } from "node:timers/promises";
 /** Sends the fake Django's answer: a status and an optional JSON body. */
 export type Answer = (status: number, data?: object) => void;
 
-/** The fake Django of one test file. `path` is the part after /api/v1, `body` the parsed JSON. */
-export type FakeDjango = (req: IncomingMessage, path: string, body: Record<string, string>, answer: Answer) => unknown;
+/**
+ * The fake Django of one test file. `path` is the part after /api/v1, `body` the parsed JSON ({} for
+ * any other body), `raw` the bytes as sent (for example an image upload as multipart/form-data).
+ */
+export type FakeDjango = (req: IncomingMessage, path: string, body: Record<string, string>, answer: Answer, raw: Buffer) => unknown;
 
 export function startApp({ nextPort, djangoPort, django, env = {} }: {
   nextPort: number;
@@ -22,12 +25,14 @@ export function startApp({ nextPort, djangoPort, django, env = {} }: {
   env?: Record<string, string>;
 }) {
   const djangoServer = createServer(async (req, res) => {
-    let raw = "";
-    for await (const chunk of req) raw += chunk;
-    await django(req, req.url!.replace("/api/v1", ""), raw ? JSON.parse(raw) : {}, (status, data) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const raw = Buffer.concat(chunks);
+    const json = raw.length > 0 && (req.headers["content-type"] ?? "").startsWith("application/json");
+    await django(req, req.url!.replace("/api/v1", ""), json ? JSON.parse(raw.toString("utf8")) : {}, (status, data) => {
       res.writeHead(status, { "Content-Type": "application/json" });
       res.end(data && JSON.stringify(data));
-    });
+    }, raw);
   });
 
   let next: ChildProcess;
