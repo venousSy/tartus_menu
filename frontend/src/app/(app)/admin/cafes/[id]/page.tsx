@@ -9,6 +9,7 @@ import { getBilling, getCafe } from "@/lib/server/admin-api";
 import { ApiError } from "@/lib/server/api";
 import { BRAND_COLOR } from "@/app/brand-mark";
 import { BilingualName } from "../../../ui/form-parts";
+import { DeleteDialog } from "./delete-dialog";
 import { EditDialog } from "./edit-dialog";
 import { SubscriptionDialog } from "./subscription-dialog";
 
@@ -32,7 +33,7 @@ async function load(id: string) {
 }
 
 // One cafe for the Super Admin (UC-ADMIN-003) with its billing log (UC-ADMIN-008), as in
-// system_design.md §4.1, with Activate or Deactivate (UC-ADMIN-004, 005) and Edit (UC-ADMIN-006).
+// system_design.md §4.1, with Activate or Deactivate (UC-ADMIN-004, 005), Edit (006) and Delete (007).
 export default async function AdminCafePage({ params }: PageProps<"/admin/cafes/[id]">) {
   const [[cafe, billing], t, locale] = await Promise.all([load((await params).id), getTranslations("AdminCafe"), getLocale()]);
   const lang = toLang(locale);
@@ -49,6 +50,7 @@ export default async function AdminCafePage({ params }: PageProps<"/admin/cafes/
       <div className="flex flex-wrap gap-2">
         <SubscriptionDialog id={cafe.id} active={cafe.is_active} />
         <EditDialog cafe={cafe} defaultColor={BRAND_COLOR} />
+        <DeleteDialog id={cafe.id} name={cafe.name} slug={cafe.slug} />
       </div>
       <dl className="grid gap-px overflow-hidden rounded-lg border border-stone-200 bg-stone-200 sm:grid-cols-2">
         <Row label={t("slug")}>

@@ -99,3 +99,19 @@ export async function updateCafe(_previous: EditCafeState, formData: FormData): 
   });
   return error ? { error, values } : { error: null, saved: true };
 }
+
+/** The delete dialog's state: Django's error, if any. A success leaves the page, so it has no state. */
+export type DeleteCafeState = { error: FormError | null };
+
+/**
+ * Deletes the cafe for good (UC-ADMIN-007): Django removes it, its owner account and all its data
+ * in one transaction, then its images. On success the browser goes back to the list, because this
+ * cafe's page no longer exists.
+ */
+export async function deleteCafe(_previous: DeleteCafeState, formData: FormData): Promise<DeleteCafeState> {
+  const path = cafePath(formData);
+  if (!path) return { error: NOT_FOUND };
+  const result = await adminWrite(path, { method: "DELETE" });
+  if (!result.ok) return { error: result.error };
+  redirect("/admin/cafes"); // outside any try block: redirect() works by throwing
+}

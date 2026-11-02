@@ -307,6 +307,11 @@
     "slugWarning": "Changing the address name stops every printed QR code of this cafe: old addresses do not lead to the new one.",
     "customColor": "Own color for the customer menu",
     "colorPick": "Choose the color",
-    "colorHint": "The color is kept on any plan, but customers see it only on a plan with custom branding."
+    "colorHint": "The color is kept on any plan, but customers see it only on a plan with custom branding.",
+    "delete": "Delete cafe",
+    "deleteTitle": "Delete this cafe for good?",
+    "deleteWarning": "The cafe, its owner's account and all its categories, items, tables, images and billing history are deleted. This cannot be undone, and the customer menu and QR codes stop working.",
+    "deleteConfirm": "Delete for good",
+    "deleting": "Deleting…"
   }
 }
