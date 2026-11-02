@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useLocale, useTranslations } from "next-intl";
 import { useActionState, useEffect, useOptimistic, useRef, useState, useTransition } from "react";
 import type { FormError } from "@/lib/api-errors";
@@ -10,6 +11,7 @@ import { CancelButton, DialogButton } from "../dialog-button";
 import { BilingualName, DANGER_BUTTON, FormAlert, PRIMARY_BUTTON } from "../form-parts";
 import { SortableRow } from "../sortable-list";
 import { deleteItem, type ItemFormState, setItemAvailability, updateItem } from "./actions";
+import { ImageForm } from "./image-form";
 import { ItemFields, itemValues } from "./item-fields";
 
 const IDLE: ActionState = { error: null };
@@ -17,12 +19,21 @@ const ITEM_IDLE: ItemFormState = { error: null };
 
 /**
  * One item and what the owner can do with it: move it by its handle (UC-OWNER-004), switch its
- * availability (UC-OWNER-005), edit, delete (UC-OWNER-002). The image comes with UC-OWNER-006.
+ * availability (UC-OWNER-005), upload an image when the plan allows it (UC-OWNER-006), edit,
+ * delete (UC-OWNER-002).
  */
-export function ItemRow({ item, categories, movable }: { item: MenuItem; categories: Category[]; movable: boolean }) {
+export function ItemRow({ item, categories, movable, allowsImages }: {
+  item: MenuItem;
+  categories: Category[];
+  movable: boolean;
+  allowsImages: boolean; // the plan's flag (GC 3)
+}) {
   const t = useTranslations("Items");
   const lang = toLang(useLocale());
   const name = pickText(item.name, lang);
+  // GC 7: a plan without images keeps the stored image but hides it from customers. It is shown
+  // here faded and marked, and the page says why.
+  const imageHidden = !allowsImages && item.image_url !== "";
   // UC-OWNER-005: the switch shows the new value at once. When the save ends, React shows the
   // server's value: the same after a success, the old one again after a refusal.
   const [available, showAvailable] = useOptimistic(item.is_available);
@@ -38,15 +49,24 @@ export function ItemRow({ item, categories, movable }: { item: MenuItem; categor
   return (
     <SortableRow id={item.id} name={name} movable={movable} roleDescription={t("dragRole")}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-col gap-1">
-          <BilingualName name={item.name} />
-          <span className="text-sm font-semibold">{formatPrice(item.price, lang)}</span>
-          {(item.is_featured || item.is_new) && (
-            <span className="flex flex-wrap gap-1">
-              {item.is_featured && <Badge text={t("featured")} />}
-              {item.is_new && <Badge text={t("new")} />}
-            </span>
+        <div className="flex items-center gap-3">
+          {item.image_url && (
+            <Image src={item.image_url} alt="" width={64} height={64} unoptimized
+              className={`size-16 shrink-0 rounded-lg bg-stone-100 object-cover ${imageHidden ? "opacity-50 grayscale" : ""}`} />
           )}
+          <div className="flex flex-col gap-1">
+            <BilingualName name={item.name} />
+            <span className="text-sm font-semibold">{formatPrice(item.price, lang)}</span>
+            {(item.is_featured || item.is_new || imageHidden) && (
+              <span className="flex flex-wrap gap-1">
+                {item.is_featured && <Badge text={t("featured")} />}
+                {item.is_new && <Badge text={t("new")} />}
+                {imageHidden && (
+                  <span className="rounded-full bg-stone-200 px-2 text-xs font-semibold text-stone-700">{t("imageHidden")}</span>
+                )}
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" role="switch" aria-checked={available} aria-label={t("availableFor", { name })}
@@ -57,6 +77,11 @@ export function ItemRow({ item, categories, movable }: { item: MenuItem; categor
             </span>
             {t("available")}
           </button>
+          {allowsImages && (
+            <DialogButton label={t("image")} title={t("imageTitle")}>
+              <ImageForm item={item} />
+            </DialogButton>
+          )}
           <DialogButton label={t("edit")} title={t("editTitle")}>
             <EditForm item={item} categories={categories} />
           </DialogButton>

@@ -10,10 +10,16 @@ import { ItemRow } from "./item-row";
  * The open category's items in menu order, reordered by drag and drop inside that category
  * (UC-OWNER-004). A Client Component for the same reason as CategoryList.
  */
-export function ItemList({ items, categories }: { items: MenuItem[]; categories: Category[] }) {
+export function ItemList({ items, categories, allowsImages }: {
+  items: MenuItem[];
+  categories: Category[];
+  allowsImages: boolean;
+}) {
   const t = useTranslations("Items");
   return (
     <SortableList rows={items} save={reorderItems} hint={t("reorderHint")} instructions={t("dragInstructions")}
-      renderRow={(item, movable) => <ItemRow item={item} categories={categories} movable={movable} />} />
+      renderRow={(item, movable) => (
+        <ItemRow item={item} categories={categories} movable={movable} allowsImages={allowsImages} />
+      )} />
   );
 }

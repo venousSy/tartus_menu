@@ -146,6 +146,15 @@
     "deleteWarning": "This cannot be undone.",
     "confirmDelete": "Delete",
     "deleting": "Deleting…",
+    "image": "Image",
+    "imageTitle": "Item image",
+    "currentImage": "Current image",
+    "newImage": "New image",
+    "imageHint": "JPEG, PNG or WebP, at most 2 MB.",
+    "upload": "Upload",
+    "uploading": "Uploading…",
+    "imageHidden": "Image hidden",
+    "imagesKept": "Images you added earlier are kept but hidden from customers until you upgrade.",
     "inactive": "Your items are kept. You can manage them again once the subscription is active."
   },
   "Admin": {

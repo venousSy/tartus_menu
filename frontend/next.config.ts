@@ -11,6 +11,13 @@ const nextConfig: NextConfig = {
   agentRules: false,
   cacheComponents: true,
   partialPrefetching: true,
+  experimental: {
+    serverActions: {
+      // Image uploads go through Server Actions. A file may be up to 2 MB (UC-OWNER-006, checked
+      // by Django), plus a few KB of multipart overhead; Nginx allows 3 MB too. The default is 1 MB.
+      bodySizeLimit: "3mb",
+    },
+  },
   turbopack: {
     rules: {
       "*.css": {

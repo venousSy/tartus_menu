@@ -11,8 +11,8 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 // The Items screen (UC-OWNER-013 list, UC-OWNER-002 create, edit and delete, UC-OWNER-004 order,
-// UC-OWNER-005 availability), one category at a time: /dashboard/items?category=<id> (D8). A
-// missing or unknown id, for example an old link to a deleted category, opens the first category.
+// UC-OWNER-005 availability, UC-OWNER-006 images), one category at a time: /dashboard/items?category=<id>
+// (D8). A missing or unknown id, for example an old link to a deleted category, opens the first category.
 export default async function ItemsPage({ searchParams }: PageProps<"/dashboard/items">) {
   const [settings, t] = await Promise.all([getSettings(), getTranslations("Items")]);
   if (!settings.is_active) {
@@ -44,6 +44,7 @@ export default async function ItemsPage({ searchParams }: PageProps<"/dashboard/
   const shown = items.filter((item) => item.category_id === current.id);
   const count = items.length;
   const max = settings.plan.max_items; // null = unlimited; unavailable items count too
+  const allowsImages = settings.plan.allows_images; // the plan's flag, never its name (GC 3)
   const [tErrors, tHome] = await Promise.all([getTranslations("ApiErrors"), getTranslations("DashboardHome")]);
   return (
     <section className="flex flex-col gap-6">
@@ -54,12 +55,19 @@ export default async function ItemsPage({ searchParams }: PageProps<"/dashboard/
             {max === null ? t("countUnlimited", { count }) : t("count", { count, max })}
           </p>
         )}
+        {!allowsImages && (
+          // The text Django answers to an upload on this plan (UC-OWNER-006 A1), so the owner knows
+          // why the rows have no image button; and, when stored images are hidden (GC 7), what happens to them.
+          <p className="text-sm text-stone-600">
+            {tErrors("imagesNeedPro")} {shown.some((item) => item.image_url) && t("imagesKept")}
+          </p>
+        )}
       </div>
       <CategoryTabs categories={categories} current={current} lang={lang} label={t("categoriesLabel")} />
       {shown.length === 0 ? (
         <p className="text-stone-600">{t("empty")}</p>
       ) : (
-        <ItemList key={current.id} items={shown} categories={categories} />
+        <ItemList key={current.id} items={shown} categories={categories} allowsImages={allowsImages} />
       )}
       {max !== null && count >= max ? (
         // The same text Django answers when the limit is reached (A1), shown before the owner tries.
