@@ -13,6 +13,21 @@ export type ActionState = { error: FormError | null };
 
 export const NOT_FOUND: FormError = { form: { key: "notFound" }, fields: {} };
 
+/** An image upload's state: `saved` after a success. A file input cannot be refilled, so no values. */
+export type UploadState = ActionState & { saved?: boolean };
+
+/**
+ * The body of an image upload (item image UC-OWNER-006, logo UC-OWNER-010): only the "image" file
+ * of the form, as multipart/form-data. Anything else in that field is no image; Django then answers
+ * that no file was submitted.
+ */
+export function imageBody(formData: FormData): FormData {
+  const image = formData.get("image");
+  const body = new FormData();
+  if (image instanceof File) body.set("image", image);
+  return body;
+}
+
 /**
  * An id as the browser sent it. Hidden inputs and action arguments can be changed by the user,
  * and TypeScript only describes what the page sends: only a positive whole number may go into a path.

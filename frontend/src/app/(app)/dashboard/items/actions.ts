@@ -1,6 +1,8 @@
 "use server";
 
-import { type ActionState, isId, NOT_FOUND, pathOf, saveOrder, writeThenRefresh } from "@/lib/server/owner-actions";
+import {
+  type ActionState, imageBody, isId, NOT_FOUND, pathOf, saveOrder, type UploadState, writeThenRefresh,
+} from "@/lib/server/owner-actions";
 
 // The Server Actions of the Items screen (UC-OWNER-002, 004, 005, 006). Django checks the category,
 // the plan limit, the texts (GC 6), the price (GC 10) and images; these actions only carry the data to it.
@@ -17,9 +19,6 @@ export type ItemValues = {
 
 /** An item form's state: `values` refill the form after a refused write, `saved` closes the edit dialog. */
 export type ItemFormState = ActionState & { values?: ItemValues; saved?: boolean };
-
-/** The image form's state: `saved` closes its dialog. A file input cannot be refilled, so no values. */
-export type ImageFormState = ActionState & { saved?: boolean };
 
 const ITEMS = "/dashboard/items/";
 
@@ -58,13 +57,10 @@ export async function updateItem(_previous: ItemFormState, formData: FormData): 
  * Django checks the plan's allows_images flag (A1), the item (A7) and the file by its content:
  * type (A2), size (A3) and pixels (A5). It stores a WebP copy on R2 (A4) and removes the old image.
  */
-export async function uploadItemImage(_previous: ImageFormState, formData: FormData): Promise<ImageFormState> {
+export async function uploadItemImage(_previous: UploadState, formData: FormData): Promise<UploadState> {
   const path = pathOf(ITEMS, formData);
-  const image = formData.get("image");
-  const form = new FormData();
-  if (image instanceof File) form.set("image", image); // only the file; anything else is no image
-  const error = await writeThenRefresh(path && `${path}image/`, { method: "POST", form });
-  return error ? { error } : { error: null, saved: true };
+  const error = await writeThenRefresh(path && `${path}image/`, { method: "POST", form: imageBody(formData) });
+  return error ? { error } : { error: null, saved: true }; // saved closes the dialog
 }
 
 /** Delete. Django keeps the row with a deletion time (soft delete); customers no longer see it. */

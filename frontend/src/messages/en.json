@@ -180,6 +180,15 @@
     "colorHint": "Without your own color, customers see the default brown.",
     "saved": "Changes saved.",
     "colorKept": "Your saved color <code>{color}</code> is kept, but customers see the default color until you upgrade.",
+    "logo": "Logo",
+    "currentLogo": "Current logo",
+    "noLogo": "No logo yet.",
+    "newLogo": "New logo",
+    "logoHint": "JPEG, PNG or WebP, at most 2 MB. A transparent background stays transparent.",
+    "uploadLogo": "Upload logo",
+    "uploading": "Uploading…",
+    "logoSaved": "Logo saved.",
+    "logoKept": "Your logo is kept, but customers do not see it until you upgrade.",
     "inactive": "You can change your settings again once the subscription is active."
   },
   "Admin": {
