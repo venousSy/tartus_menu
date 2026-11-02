@@ -266,5 +266,31 @@
     "passwordHint": "Give this password to the owner; they can change it in Settings after logging in.",
     "submit": "Create cafe",
     "creating": "Creating…"
+  },
+  "AdminCafe": {
+    "title": "Cafe details",
+    "back": "Back to the cafes",
+    "active": "Active subscription",
+    "inactive": "Inactive subscription",
+    "slug": "Address name",
+    "openMenu": "Open the customer menu",
+    "newTab": "(opens in a new tab)",
+    "plan": "Plan",
+    "planName": "{name, select, basic {Basic} pro {Pro} other {{name}}}",
+    "owner": "Owner email",
+    "subscriptionStart": "Current subscription started",
+    "subscriptionEnd": "Subscription end",
+    "never": "—",
+    "running": "Running",
+    "color": "Menu color",
+    "defaultColor": "Default color",
+    "logo": "Logo",
+    "logoAlt": "Logo of {name}",
+    "noLogo": "No logo",
+    "billing": "Billing history",
+    "noBilling": "No events yet.",
+    "action": "{action, select, activated {Subscription activated} deactivated {Subscription deactivated} plan_changed {Plan changed} other {{action}}}",
+    "by": "by <mail>{email}</mail>",
+    "byDeleted": "by an admin whose account was deleted"
   }
 }

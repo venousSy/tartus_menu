@@ -266,5 +266,31 @@
     "passwordHint": "أعطِ المالك هذه الكلمة، ويمكنه تغييرها من الإعدادات بعد الدخول.",
     "submit": "إنشاء المقهى",
     "creating": "جارٍ الإنشاء…"
+  },
+  "AdminCafe": {
+    "title": "تفاصيل المقهى",
+    "back": "العودة إلى المقاهي",
+    "active": "اشتراك مفعّل",
+    "inactive": "اشتراك موقوف",
+    "slug": "اسم العنوان",
+    "openMenu": "افتح قائمة الزبائن",
+    "newTab": "(تُفتح في تبويب جديد)",
+    "plan": "الخطة",
+    "planName": "{name, select, basic {Basic} pro {Pro} other {{name}}}",
+    "owner": "بريد المالك",
+    "subscriptionStart": "بداية الاشتراك الحالي",
+    "subscriptionEnd": "نهاية الاشتراك",
+    "never": "—",
+    "running": "مستمر",
+    "color": "لون القائمة",
+    "defaultColor": "اللون الافتراضي",
+    "logo": "الشعار",
+    "logoAlt": "شعار {name}",
+    "noLogo": "لا يوجد شعار",
+    "billing": "سجل الاشتراك",
+    "noBilling": "لا توجد أحداث بعد.",
+    "action": "{action, select, activated {تفعيل الاشتراك} deactivated {إيقاف الاشتراك} plan_changed {تغيير الخطة} other {{action}}}",
+    "by": "بواسطة <mail>{email}</mail>",
+    "byDeleted": "بواسطة مشرف حُذف حسابه"
   }
 }
