@@ -54,7 +54,16 @@
     "passwordTooShort": "كلمة المرور قصيرة جدًا. استخدم {min, plural, one {حرفًا واحدًا} two {حرفين} few {# أحرف} many {# حرفًا} other {# حرف}} على الأقل.",
     "passwordTooCommon": "كلمة المرور هذه شائعة جدًا.",
     "passwordNumeric": "لا يمكن أن تتكوّن كلمة المرور من أرقام فقط.",
-    "passwordTooSimilar": "كلمة المرور قريبة جدًا من بيانات حسابك."
+    "passwordTooSimilar": "كلمة المرور قريبة جدًا من بيانات حسابك.",
+    "slugTaken": "يوجد مقهى آخر بهذا الاسم في العنوان.",
+    "slugFormat": "استخدم أحرفًا إنجليزية وأرقامًا وشرطات (- أو _) فقط، مثل tartus-coffee.",
+    "emailTaken": "يوجد حساب آخر بهذا البريد الإلكتروني.",
+    "emailFormat": "أدخل بريدًا إلكترونيًا صالحًا.",
+    "unknownPlan": "اختر خطة من القائمة.",
+    "alreadyActive": "اشتراك هذا المقهى مفعّل من قبل.",
+    "alreadyInactive": "اشتراك هذا المقهى موقوف من قبل.",
+    "downgradeCategories": "لا يمكن الانتقال إلى خطة {plan}: لدى المقهى {count, plural, one {قسم واحد} two {قسمان} few {# أقسام} many {# قسمًا} other {# قسم}}، والحد الأقصى {max}.",
+    "downgradeItems": "لا يمكن الانتقال إلى خطة {plan}: لدى المقهى {count, plural, one {صنف واحد} two {صنفان} few {# أصناف} many {# صنفًا} other {# صنف}}، والحد الأقصى {max}."
   },
   "Dashboard": {
     "title": "لوحة تحكم المقهى",

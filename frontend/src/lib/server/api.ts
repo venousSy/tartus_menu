@@ -11,8 +11,11 @@ import { ACCESS_COOKIE, REFRESH_COOKIE } from "@/lib/server/session";
 // owner-api.ts and admin-api.ts. Django decides every permission; this module only carries the
 // signed-in user's access token and turns Django's answers into what pages and actions need.
 
-/** A write's result: Django's answer on success (null for 204 No Content), or the error for the form. */
-export type WriteResult<T> = { ok: true; data: T } | { ok: false; error: FormError };
+/**
+ * A write's result: Django's answer on success (null for 204 No Content), or the error for the form
+ * with Django's status (503 when Django could not be reached).
+ */
+export type WriteResult<T> = { ok: true; data: T } | { ok: false; status: number; error: FormError };
 
 /** A Django answer a page cannot use. The dashboard's error screen shows it; callers may read `status` (403). */
 export class ApiError extends Error {
@@ -73,7 +76,7 @@ export async function apiGet<T>(path: string): Promise<T> {
 /** A write from a Server Action. Errors are returned, not thrown, so the form can show them at its fields. */
 export async function apiWrite<T>(path: string, init: ApiInit): Promise<WriteResult<T>> {
   const response = await apiFetch(path, init);
-  if (!response) return { ok: false, error: SERVER_ERROR };
-  if (!response.ok) return { ok: false, error: toFormError(await response.json().catch(() => null)) };
+  if (!response) return { ok: false, status: 503, error: SERVER_ERROR };
+  if (!response.ok) return { ok: false, status: response.status, error: toFormError(await response.json().catch(() => null)) };
   return { ok: true, data: response.status === 204 ? (null as T) : await response.json() };
 }
