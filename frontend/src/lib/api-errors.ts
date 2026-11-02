@@ -10,7 +10,8 @@ export type ApiErrorKey =
   | "imageDimensions" | "imageUploadFailed" | "qrFirst" | "required" | "maxLength" | "invalidNumber"
   | "invalidInteger" | "minValue" | "maxValue" | "maxDigits" | "maxDecimals" | "maxWholeDigits" | "colorFormat"
   | "listChanged" | "wrongPassword" | "samePassword" | "passwordTooShort" | "passwordTooCommon"
-  | "passwordNumeric" | "passwordTooSimilar";
+  | "passwordNumeric" | "passwordTooSimilar" | "slugTaken" | "slugFormat" | "emailTaken" | "emailFormat"
+  | "unknownPlan" | "alreadyActive" | "alreadyInactive" | "downgradeCategories" | "downgradeItems";
 
 /** A message to show: a known one by key, translated when the page renders, or Django's own text. */
 export type ApiMessage = { key: ApiErrorKey; values?: Record<string, string | number> } | { text: string };
@@ -54,6 +55,16 @@ const KNOWN: [RegExp, ApiErrorKey, string[]?][] = [
   [/^This password is too common\.$/, "passwordTooCommon"],
   [/^This password is entirely numeric\.$/, "passwordNumeric"],
   [/^The password is too similar to the .+\.$/, "passwordTooSimilar"], // the field name is English
+  // UC-ADMIN-001 to 006: the admin serializers (DRF's SlugField, EmailField, SlugRelatedField) and services.
+  [/^A cafe with this slug already exists\.$/, "slugTaken"],
+  [/^Enter a valid .slug. consisting of letters, numbers, underscores or hyphens\.$/, "slugFormat"], // “slug” in curly quotes
+  [/^A user with this email already exists\.$/, "emailTaken"],
+  [/^Enter a valid email address\.$/, "emailFormat"],
+  [/^Object with name=.* does not exist\.$/, "unknownPlan"],
+  [/^Cafe is already active\.$/, "alreadyActive"],
+  [/^Cafe is already inactive\.$/, "alreadyInactive"],
+  [/^Cannot downgrade to (.+): cafe has (\d+) categories \(max (\d+)\)\.$/, "downgradeCategories", ["plan", "count", "max"]],
+  [/^Cannot downgrade to (.+): cafe has (\d+) items \(max (\d+)\)\.$/, "downgradeItems", ["plan", "count", "max"]],
 ];
 
 /** One of Django's texts as a message. Numbers stay numbers, so plural rules can use them. */

@@ -38,3 +38,12 @@ export function formatPrice(price: string, lang: Lang): string {
   const amount = price.endsWith(".00") ? price.slice(0, -3) : price;
   return `${amount} ${CURRENCY_LABEL[lang]}`;
 }
+
+/** Every cafe is in Tartus, so dates show Syria's time, not the server's own zone (step 11 decision D7). */
+export const TIME_ZONE = "Asia/Damascus";
+
+/** An ISO 8601 time from the API ("2026-11-02T08:30:00Z") as a date and time: Arabic or English words, Western digits (GC 10). */
+export function formatDateTime(iso: string, lang: Lang): string {
+  return new Intl.DateTimeFormat(`${lang}-u-nu-latn`, { dateStyle: "medium", timeStyle: "short", timeZone: TIME_ZONE })
+    .format(new Date(iso));
+}

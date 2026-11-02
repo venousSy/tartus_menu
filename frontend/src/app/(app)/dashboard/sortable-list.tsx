@@ -24,7 +24,7 @@ import { Fragment, type ReactNode, useId, useOptimistic, useRef, useState, useTr
 import type { FormError } from "@/lib/api-errors";
 import { type BilingualText, pickText, toLang } from "@/lib/i18n";
 import type { ActionState } from "@/lib/server/owner-actions";
-import { FormAlert } from "./form-parts";
+import { FormAlert } from "../ui/form-parts";
 
 type Row = { id: number; name: BilingualText };
 

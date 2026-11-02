@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { useActionState } from "react";
-import { FormAlert, PRIMARY_BUTTON, TextField } from "../form-parts";
+import { FormAlert, PRIMARY_BUTTON, TextField } from "../../ui/form-parts";
 import { generateQrCodes, type QrFormState } from "./actions";
 
 const IDLE: QrFormState = { error: null };

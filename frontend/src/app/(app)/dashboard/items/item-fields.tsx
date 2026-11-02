@@ -3,7 +3,7 @@ import { useId } from "react";
 import type { FormError } from "@/lib/api-errors";
 import { DESCRIPTION_MAX_LENGTH, pickText, toLang } from "@/lib/i18n";
 import type { Category, MenuItem } from "@/lib/server/owner-api";
-import { FieldMessages, NameFields, TextField } from "../form-parts";
+import { FieldMessages, NameFields, TextField } from "../../ui/form-parts";
 import type { ItemValues } from "./actions";
 
 /** The values of a new item's form: empty, in the chosen category. */

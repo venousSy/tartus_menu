@@ -2,10 +2,10 @@ import "server-only";
 
 import { refresh } from "next/cache";
 import type { FormError } from "@/lib/api-errors";
-import { type OwnerInit, ownerWrite } from "@/lib/server/owner-api";
+import { type ApiInit, apiWrite } from "@/lib/server/api";
 
 // What the dashboard's Server Actions share. An action only carries the owner's form to Django
-// (owner-api.ts); Django checks every rule. After a successful write, refresh() renders the page
+// (api.ts); Django checks every rule. After a successful write, refresh() renders the page
 // again with the new data, in the same response.
 
 /** A form's state after its action: Django's error, or null after a success. */
@@ -46,9 +46,9 @@ export function pathOf(base: string, formData: FormData): string | null {
 }
 
 /** One write, then the fresh page. Returns Django's error, or null when the write succeeded. */
-export async function writeThenRefresh(path: string | null, init: OwnerInit): Promise<FormError | null> {
+export async function writeThenRefresh(path: string | null, init: ApiInit): Promise<FormError | null> {
   if (!path) return NOT_FOUND;
-  const result = await ownerWrite(path, init);
+  const result = await apiWrite(path, init);
   if (!result.ok) return result.error;
   refresh(); // works here because only Server Actions call this function
   return null;

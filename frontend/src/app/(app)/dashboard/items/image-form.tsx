@@ -5,8 +5,8 @@ import { useTranslations } from "next-intl";
 import { useActionState, useEffect, useRef } from "react";
 import type { UploadState } from "@/lib/server/owner-actions";
 import type { MenuItem } from "@/lib/server/owner-api";
-import { CancelButton } from "../dialog-button";
-import { BilingualName, FormAlert, PRIMARY_BUTTON } from "../form-parts";
+import { CancelButton } from "../../ui/dialog-button";
+import { BilingualName, FormAlert, PRIMARY_BUTTON } from "../../ui/form-parts";
 import { ImageField, useImageSizeCheck } from "../image-field";
 import { uploadItemImage } from "./actions";
 

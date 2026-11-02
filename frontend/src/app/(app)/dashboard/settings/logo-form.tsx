@@ -3,7 +3,7 @@
 import { useTranslations } from "next-intl";
 import { useActionState } from "react";
 import type { UploadState } from "@/lib/server/owner-actions";
-import { FormAlert, PRIMARY_BUTTON } from "../form-parts";
+import { FormAlert, PRIMARY_BUTTON } from "../../ui/form-parts";
 import { ImageField, useImageSizeCheck } from "../image-field";
 import { uploadLogo } from "./actions";
 

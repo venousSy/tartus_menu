@@ -11,11 +11,17 @@ import { readFileSync } from "node:fs";
 /** A form of a page: what a browser would send, in order, and the names of those fields. */
 export type Form = { fields: [string, string][]; names: string[] };
 
-/** An access cookie with the Cafe Owner role. proxy.ts only reads its claims; the fake Django accepts any token. */
-export function ownerCookie(): string {
+/** An access cookie with a role. proxy.ts only reads its claims; the fake Django accepts any token. */
+function roleCookie(role: string): string {
   const part = (data: object) => Buffer.from(JSON.stringify(data)).toString("base64url");
-  return `access=${part({ alg: "none" })}.${part({ role: "CAFE_OWNER", exp: Math.floor(Date.now() / 1000) + 3600 })}.x`;
+  return `access=${part({ alg: "none" })}.${part({ role, exp: Math.floor(Date.now() / 1000) + 3600 })}.x`;
 }
+
+/** An access cookie with the Cafe Owner role. */
+export const ownerCookie = () => roleCookie("CAFE_OWNER");
+
+/** An access cookie with the Super Admin role. */
+export const adminCookie = () => roleCookie("SYSTEM_ADMIN");
 
 const unescape = (text: string) =>
   text.replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");

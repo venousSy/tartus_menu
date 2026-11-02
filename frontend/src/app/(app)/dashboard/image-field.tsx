@@ -1,6 +1,6 @@
 import { type ChangeEvent, type FormEvent, useId, useState } from "react";
 import type { ApiMessage, FormError } from "@/lib/api-errors";
-import { FieldMessages } from "./form-parts";
+import { FieldMessages } from "../ui/form-parts";
 
 // Shared by the image uploads of the dashboard: item images (UC-OWNER-006) and the logo (UC-OWNER-010).
 // No "use client" here: the client forms that import these run them in the browser.
