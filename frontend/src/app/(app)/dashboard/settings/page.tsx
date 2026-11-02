@@ -3,6 +3,7 @@ import Image from "next/image";
 import { getTranslations } from "next-intl/server";
 import { BRAND_COLOR } from "@/app/brand-mark";
 import { getSettings } from "@/lib/server/owner-api";
+import { ChangePasswordForm } from "./change-password-form";
 import { LogoForm } from "./logo-form";
 import { SettingsForm } from "./settings-form";
 
@@ -10,12 +11,13 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: (await getTranslations("Settings"))("title") };
 }
 
-// The Settings screen: the cafe profile (UC-OWNER-014), its names and menu color (UC-OWNER-009) and
-// its logo (UC-OWNER-010). GET settings is the one owner call that also works for an inactive cafe
-// (GC 5), so this page always reads; only the forms need an active subscription.
+// The Settings screen: the cafe profile (UC-OWNER-014), its names and menu color (UC-OWNER-009), its
+// logo (UC-OWNER-010) and the password (UC-AUTH-004). GET settings is the one owner call that also
+// works for an inactive cafe (GC 5), so this page always reads. The cafe forms need an active
+// subscription; the password form does not (auth endpoints never check it).
 export default async function SettingsPage() {
-  const [settings, t, tErrors] = await Promise.all([
-    getSettings(), getTranslations("Settings"), getTranslations("ApiErrors"),
+  const [settings, t, tErrors, tPassword] = await Promise.all([
+    getSettings(), getTranslations("Settings"), getTranslations("ApiErrors"), getTranslations("Password"),
   ]);
   const branding = settings.plan.allows_branding; // the plan's flag, never its name (GC 3)
   return (
@@ -68,6 +70,10 @@ export default async function SettingsPage() {
           )}
         </p>
       )}
+      <div className="flex flex-col gap-3 rounded-lg border border-stone-200 bg-white p-4">
+        <h3 className="font-bold">{tPassword("title")}</h3>
+        <ChangePasswordForm />
+      </div>
     </section>
   );
 }

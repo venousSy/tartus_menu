@@ -60,11 +60,12 @@ type TextFieldProps = {
   maxLength?: number;
   inputMode?: "decimal" | "numeric"; // a number keypad on phones, with or without a decimal point
   multiline?: boolean; // a textarea, for longer texts such as a description
+  password?: "current-password" | "new-password"; // a password input, with the browser's autocomplete hint
   messages?: ApiMessage[];
 };
 
 /** A labelled input for text in one language (or a number), with Django's messages for it below. */
-export function TextField({ label, name, lang, defaultValue, required, maxLength, inputMode, multiline, messages = [] }: TextFieldProps) {
+export function TextField({ label, name, lang, defaultValue, required, maxLength, inputMode, multiline, password, messages = [] }: TextFieldProps) {
   const errorId = useId();
   const invalid = messages.length > 0;
   const shared = {
@@ -78,7 +79,11 @@ export function TextField({ label, name, lang, defaultValue, required, maxLength
     <div className="flex flex-col gap-1">
       <label className="flex flex-col gap-1">
         <span className="text-sm font-semibold">{label}</span>
-        {multiline ? <textarea rows={3} {...shared} /> : <input inputMode={inputMode} {...shared} />}
+        {multiline ? (
+          <textarea rows={3} {...shared} />
+        ) : (
+          <input inputMode={inputMode} type={password && "password"} autoComplete={password} {...shared} />
+        )}
       </label>
       <FieldMessages id={errorId} messages={messages} />
     </div>

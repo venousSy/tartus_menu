@@ -48,7 +48,13 @@
     "maxDecimals": "Use at most {max} decimal places.",
     "maxWholeDigits": "Use at most {max} digits before the decimal point.",
     "colorFormat": "Enter a color like #6F4E37.",
-    "listChanged": "The list changed in the meantime. Reload the page and try again."
+    "listChanged": "The list changed in the meantime. Reload the page and try again.",
+    "wrongPassword": "The current password is wrong.",
+    "samePassword": "The new password must be different from the current one.",
+    "passwordTooShort": "The password is too short. Use at least {min, plural, one {# character} other {# characters}}.",
+    "passwordTooCommon": "This password is too common.",
+    "passwordNumeric": "The password cannot be only numbers.",
+    "passwordTooSimilar": "The password is too similar to your account details."
   },
   "Dashboard": {
     "title": "Cafe dashboard",
@@ -190,6 +196,18 @@
     "logoSaved": "Logo saved.",
     "logoKept": "Your logo is kept, but customers do not see it until you upgrade.",
     "inactive": "You can change your settings again once the subscription is active."
+  },
+  "Password": {
+    "title": "Change password",
+    "current": "Current password",
+    "new": "New password",
+    "newAgain": "New password again",
+    "hint": "At least 8 characters. Not only numbers, not a common password, and not like your email address. After the change you log in again.",
+    "mismatch": "The two new passwords are not the same.",
+    "change": "Change password",
+    "changing": "Changing…",
+    "changed": "Your password was changed. Log in again with the new password.",
+    "logIn": "Log in"
   },
   "Admin": {
     "title": "Super Admin"

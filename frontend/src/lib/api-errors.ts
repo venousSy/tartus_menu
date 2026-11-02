@@ -9,7 +9,8 @@ export type ApiErrorKey =
   | "imagesNeedPro" | "colorsNeedPro" | "logosNeedPro" | "imageType" | "imageTooLarge"
   | "imageDimensions" | "imageUploadFailed" | "qrFirst" | "required" | "maxLength" | "invalidNumber"
   | "invalidInteger" | "minValue" | "maxValue" | "maxDigits" | "maxDecimals" | "maxWholeDigits" | "colorFormat"
-  | "listChanged";
+  | "listChanged" | "wrongPassword" | "samePassword" | "passwordTooShort" | "passwordTooCommon"
+  | "passwordNumeric" | "passwordTooSimilar";
 
 /** A message to show: a known one by key, translated when the page renders, or Django's own text. */
 export type ApiMessage = { key: ApiErrorKey; values?: Record<string, string | number> } | { text: string };
@@ -46,6 +47,13 @@ const KNOWN: [RegExp, ApiErrorKey, string[]?][] = [
   [/^Ensure that there are no more than (\d+) decimal places\.$/, "maxDecimals", ["max"]],
   [/^Ensure that there are no more than (\d+) digits before the decimal point\.$/, "maxWholeDigits", ["max"]],
   [/^Enter a color in #RRGGBB format\.$/, "colorFormat"],
+  // UC-AUTH-004: the change-password serializer and Django's AUTH_PASSWORD_VALIDATORS.
+  [/^Incorrect password\.$/, "wrongPassword"],
+  [/^The new password must be different from the old password\.$/, "samePassword"],
+  [/^This password is too short\. It must contain at least (\d+) characters?\.$/, "passwordTooShort", ["min"]],
+  [/^This password is too common\.$/, "passwordTooCommon"],
+  [/^This password is entirely numeric\.$/, "passwordNumeric"],
+  [/^The password is too similar to the .+\.$/, "passwordTooSimilar"], // the field name is English
 ];
 
 /** One of Django's texts as a message. Numbers stay numbers, so plural rules can use them. */
