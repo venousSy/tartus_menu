@@ -1,0 +1,17 @@
+# Files that never go into the frontend image.
+# Secrets: the container gets its configuration from Docker Compose, never from a copied env file.
+.env*
+
+# Installed and generated files: the image installs and builds its own.
+node_modules/
+.next/
+*.tsbuildinfo
+next-env.d.ts
+
+# Not needed to build or run the app.
+test/
+README.md
+
+# The Docker files themselves.
+Dockerfile
+.dockerignore

@@ -1,0 +1,19 @@
+# Files that never go into the backend image.
+# Secrets: the container gets its configuration from Docker Compose, never from a copied .env file.
+.env
+.env.*
+
+# Local virtual environment (the image installs its own packages) and Python caches.
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Generated or local-only data.
+staticfiles/
+media/
+*.sqlite3
+
+# The Docker files themselves.
+Dockerfile
+.dockerignore
