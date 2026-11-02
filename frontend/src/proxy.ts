@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 
+import { HOME } from "@/lib/roles";
 import { refreshOnce } from "@/lib/server/refresh";
 import {
   ACCESS_COOKIE,
@@ -10,8 +11,6 @@ import {
   saveTokens,
   type TokenPair,
 } from "@/lib/server/session";
-
-const HOME: Record<Role, string> = { CAFE_OWNER: "/dashboard", SYSTEM_ADMIN: "/admin" };
 
 /**
  * Runs before the signed-in pages and the BFF routes, never before the customer menu (`config`).

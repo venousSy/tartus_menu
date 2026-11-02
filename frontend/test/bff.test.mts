@@ -1,7 +1,8 @@
 /**
  * Integration tests of the BFF (system_design.md §3.6): the real built app (`next start`, with
  * src/proxy.ts and the /bff/auth/* routes) in front of a fake Django that copies the auth API of
- * use_cases.md (UC-AUTH-001..004). `npm test` builds the app first, then runs this file.
+ * use_cases.md (UC-AUTH-001..004) and GET settings (UC-OWNER-014), which every dashboard page
+ * reads. `npm test` builds the app first, then runs this file.
  */
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
@@ -18,6 +19,11 @@ const XFF = "203.0.113.7";
 const fake = {
   password: "", calls: [] as string[], forwardedFor: [] as unknown[], down: false,
   access: new Set<string>(), refresh: new Set<string>(), // the tokens that still work
+};
+// The cafe settings the dashboard layout and home page read (UC-OWNER-014).
+const SETTINGS = {
+  name: { ar: "Test Cafe AR", en: "Test Cafe EN" }, slug: "test-cafe", primary_color: "", logo_url: "", is_active: true,
+  plan: { name: "basic", max_categories: 5, max_items: 20, allows_images: false, allows_branding: false },
 };
 let serial = 0;
 function issuePair(role = "CAFE_OWNER") {
@@ -60,6 +66,9 @@ const fakeDjango: FakeDjango = async (req, path, body, answer) => {
     fake.password = body.new_password;
     fake.refresh.clear();
     return answer(204);
+  }
+  if (path === "/dashboard/settings/") {
+    return signedIn ? answer(200, SETTINGS) : answer(401, notSignedIn);
   }
   answer(404, { detail: "Not found." });
 };
@@ -166,9 +175,18 @@ test("change-password: success signs the browser out; Django blacklists every re
 
 // src/proxy.ts: role routing and the single-flight refresh. Sessions come straight from the fake
 // (issuePair); a request with only the refresh cookie is one whose access cookie has expired.
-function get(path: string, cookie = "") {
-  return fetch(`${SITE}${path}`, { redirect: "manual", headers: { Cookie: cookie, "X-Forwarded-For": XFF } });
+/**
+ * A page visit, read to the end. A streamed page calls Django after its headers have been sent;
+ * reading the whole body makes sure those calls arrived before the test checks them, and never
+ * during the next test.
+ */
+async function get(path: string, cookie = "") {
+  const res = await fetch(`${SITE}${path}`, { redirect: "manual", headers: { Cookie: cookie, "X-Forwarded-For": XFF } });
+  await res.text();
+  return res;
 }
+/** The calls to Django's auth API. Dashboard pages also read their settings; the proxy tests skip those. */
+const authCalls = () => fake.calls.filter((path) => path.startsWith("/auth/"));
 function assertRedirect(res: Response, path: string) {
   assert.equal(res.status, 307);
   assert.equal(new URL(res.headers.get("location")!, SITE).pathname, path); // Next sends a relative "/login"
@@ -190,7 +208,7 @@ test("proxy: each role lands on its own dashboard, without a refresh", async () 
   assert.equal((await get("/admin", admin)).status, 200);
   assertRedirect(await get("/dashboard", admin), "/admin");
   assertRedirect(await get("/login", admin), "/admin");
-  assert.deepEqual(fake.calls, []);
+  assert.deepEqual(authCalls(), []);
 });
 
 test("proxy: an expired access cookie is refreshed; a late request in the grace period gets the same pair", async () => {
@@ -200,15 +218,15 @@ test("proxy: an expired access cookie is refreshed; a late request in the grace 
   const fresh = kept(res);
   assert.ok(fake.access.has(fresh.access) && fake.refresh.has(fresh.refresh));
   assert.equal(fake.refresh.has(old.refresh), false); // rotated: the old token is blacklisted
-  assert.deepEqual(fake.forwardedFor, [XFF]);
+  assert.ok(fake.forwardedFor.every((value) => value === XFF)); // the refresh and the page's own read
   assert.deepEqual(kept(await get("/dashboard", `refresh=${old.refresh}`)), fresh);
-  assert.deepEqual(fake.calls, ["/auth/refresh/"]);
+  assert.deepEqual(authCalls(), ["/auth/refresh/"]);
 });
 
 test("proxy: parallel requests with one refresh token share a single refresh", async () => {
   const { refresh } = issuePair();
   const responses = await Promise.all([1, 2, 3].map(() => get("/dashboard", `refresh=${refresh}`)));
-  assert.deepEqual(fake.calls, ["/auth/refresh/"]);
+  assert.deepEqual(authCalls(), ["/auth/refresh/"]);
   assert.match(kept(responses[0]).access, /^eyJ/);
   for (const res of responses) assert.deepEqual(kept(res), kept(responses[0]));
 });

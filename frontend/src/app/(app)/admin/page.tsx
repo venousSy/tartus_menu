@@ -10,5 +10,5 @@ export async function generateMetadata(): Promise<Metadata> {
 // Placeholder for the Super Admin dashboard (system_design.md §4.1): stats, cafe list, billing.
 export default function AdminPage() {
   const t = useTranslations("Admin");
-  return <PageHeader title={t("title")} />;
+  return <PageHeader title={t("title")} signedIn />;
 }
