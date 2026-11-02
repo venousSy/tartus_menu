@@ -232,5 +232,25 @@
     "basic": "خطة Basic",
     "pro": "خطة Pro",
     "manageCafes": "إدارة المقاهي"
+  },
+  "AdminCafes": {
+    "title": "المقاهي",
+    "create": "إضافة مقهى",
+    "searchLabel": "ابحث بالاسم أو اسم العنوان أو بريد المالك",
+    "search": "بحث",
+    "clear": "مسح البحث",
+    "empty": "لا توجد مقاهٍ بعد. أضف المقهى الأول.",
+    "noMatch": "لا يوجد مقهى يطابق «{search}».",
+    "noSuchPage": "هذه الصفحة غير موجودة.",
+    "firstPage": "العودة إلى الصفحة الأولى",
+    "count": "{count, plural, one {مقهى واحد} two {مقهيان} few {# مقاهٍ} many {# مقهى} other {# مقهى}}",
+    "matches": "{count, plural, one {نتيجة واحدة} two {نتيجتان} few {# نتائج} many {# نتيجة} other {# نتيجة}} لـ«{search}»",
+    "planName": "{name, select, basic {Basic} pro {Pro} other {{name}}}",
+    "active": "مفعّل",
+    "inactive": "موقوف",
+    "pagesLabel": "صفحات القائمة",
+    "previous": "السابقة",
+    "next": "التالية",
+    "pageOf": "الصفحة {page} من {pages}"
   }
 }

@@ -232,5 +232,25 @@
     "basic": "Basic plan",
     "pro": "Pro plan",
     "manageCafes": "Manage cafes"
+  },
+  "AdminCafes": {
+    "title": "Cafes",
+    "create": "Add a cafe",
+    "searchLabel": "Search by name, address name or owner email",
+    "search": "Search",
+    "clear": "Clear search",
+    "empty": "No cafes yet. Add the first one.",
+    "noMatch": "No cafe matches “{search}”.",
+    "noSuchPage": "This page does not exist.",
+    "firstPage": "Back to the first page",
+    "count": "{count, plural, one {# cafe} other {# cafes}}",
+    "matches": "{count, plural, one {# result} other {# results}} for “{search}”",
+    "planName": "{name, select, basic {Basic} pro {Pro} other {{name}}}",
+    "active": "Active",
+    "inactive": "Inactive",
+    "pagesLabel": "List pages",
+    "previous": "Previous",
+    "next": "Next",
+    "pageOf": "Page {page} of {pages}"
   }
 }
