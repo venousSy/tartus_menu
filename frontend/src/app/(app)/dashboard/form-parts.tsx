@@ -58,7 +58,7 @@ type TextFieldProps = {
   defaultValue: string;
   required?: boolean;
   maxLength?: number;
-  inputMode?: "decimal"; // a keypad with a decimal point on phones
+  inputMode?: "decimal" | "numeric"; // a number keypad on phones, with or without a decimal point
   multiline?: boolean; // a textarea, for longer texts such as a description
   messages?: ApiMessage[];
 };

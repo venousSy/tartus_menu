@@ -42,6 +42,18 @@ export type MenuItem = {
   sort_order: number;
 };
 
+/** An active table and its QR code (UC-OWNER-007, UC-OWNER-011). */
+export type QrTable = {
+  id: number;
+  table_number: number;
+  url: string; // the customer menu with ?table=N (GC 4)
+  qr_token: string;
+  qr_image_url: string; // "data:image/png;base64,...": nothing is stored on R2
+};
+
+/** GET /api/v1/dashboard/qr/preview/ (UC-OWNER-011): the active tables in table order. */
+export type QrCodes = { table_count: number; tables: QrTable[] };
+
 /** A write's result: Django's answer on success (null for 204 No Content), or the error for the form. */
 export type WriteResult<T> = { ok: true; data: T } | { ok: false; error: FormError };
 
@@ -134,4 +146,18 @@ export function getCategories(): Promise<Category[]> {
 /** All the cafe's items in menu order: by category, then inside it (UC-OWNER-013). 403 when inactive. */
 export function getItems(): Promise<MenuItem[]> {
   return ownerGet<MenuItem[]>("/dashboard/items/");
+}
+
+/** The cafe's active tables with their QR codes (UC-OWNER-011). Read-only; 403 when inactive. */
+export function getQrCodes(): Promise<QrCodes> {
+  return ownerGet<QrCodes>("/dashboard/qr/preview/");
+}
+
+/**
+ * Django's answer to the PDF download (UC-OWNER-008), as it is, for a route handler to pass on; null
+ * when Django cannot be reached. djangoFetch asks for JSON: DRF would answer 406 to "application/pdf"
+ * (observation 16), and the PDF still comes back, because the view returns the file itself.
+ */
+export function getQrPdf(): Promise<Response | null> {
+  return ownerFetch("/dashboard/qr/download-pdf/");
 }

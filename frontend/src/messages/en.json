@@ -157,6 +157,19 @@
     "imagesKept": "Images you added earlier are kept but hidden from customers until you upgrade.",
     "inactive": "Your items are kept. You can manage them again once the subscription is active."
   },
+  "Qr": {
+    "title": "QR codes",
+    "count": "{count, plural, one {# table} other {# tables}}",
+    "tableCount": "Number of tables",
+    "tableCountHint": "From 1 to 200. Tables you already have keep their codes, so printed codes keep working.",
+    "generate": "Generate QR codes",
+    "generating": "Generating…",
+    "empty": "No QR codes yet. Enter the number of tables and generate them.",
+    "downloadPdf": "Download the PDF for printing",
+    "table": "Table {number}",
+    "qrAlt": "QR code for table {number}",
+    "inactive": "Your tables and QR codes are kept. You can manage them again once the subscription is active."
+  },
   "Admin": {
     "title": "Super Admin"
   }
