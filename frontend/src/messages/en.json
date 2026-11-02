@@ -252,5 +252,19 @@
     "previous": "Previous",
     "next": "Next",
     "pageOf": "Page {page} of {pages}"
+  },
+  "AdminCreate": {
+    "title": "Add a cafe",
+    "back": "Back to the cafes",
+    "intro": "A new cafe starts without an active subscription. Activate it on its page after payment.",
+    "slug": "Address name",
+    "slugHint": "Used in the customer menu address and in the printed QR codes, like tartus-coffee.",
+    "plan": "Plan",
+    "owner": "Owner account",
+    "ownerEmail": "Owner email",
+    "ownerPassword": "Initial password",
+    "passwordHint": "Give this password to the owner; they can change it in Settings after logging in.",
+    "submit": "Create cafe",
+    "creating": "Creating…"
   }
 }

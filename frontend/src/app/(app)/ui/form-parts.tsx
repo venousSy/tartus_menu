@@ -58,7 +58,7 @@ type TextFieldProps = {
   defaultValue: string;
   required?: boolean;
   maxLength?: number;
-  inputMode?: "decimal" | "numeric"; // a number keypad on phones, with or without a decimal point
+  inputMode?: "decimal" | "numeric" | "email"; // a phone keypad for numbers (with or without a point) or emails
   multiline?: boolean; // a textarea, for longer texts such as a description
   password?: "current-password" | "new-password"; // a password input, with the browser's autocomplete hint
   messages?: ApiMessage[];
