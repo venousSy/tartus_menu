@@ -9,8 +9,11 @@ import { createServer, type IncomingMessage } from "node:http";
 import { after, before } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 
-/** Sends the fake Django's answer: a status and an optional JSON body. */
-export type Answer = (status: number, data?: object) => void;
+/**
+ * Sends the fake Django's answer: a status and an optional body, JSON unless it is text (for example
+ * a PDF), with optional headers that replace the default Content-Type.
+ */
+export type Answer = (status: number, data?: object | string, headers?: Record<string, string>) => void;
 
 /**
  * The fake Django of one test file. `path` is the part after /api/v1, `body` the parsed JSON ({} for
@@ -29,9 +32,9 @@ export function startApp({ nextPort, djangoPort, django, env = {} }: {
     for await (const chunk of req) chunks.push(chunk as Buffer);
     const raw = Buffer.concat(chunks);
     const json = raw.length > 0 && (req.headers["content-type"] ?? "").startsWith("application/json");
-    await django(req, req.url!.replace("/api/v1", ""), json ? JSON.parse(raw.toString("utf8")) : {}, (status, data) => {
-      res.writeHead(status, { "Content-Type": "application/json" });
-      res.end(data && JSON.stringify(data));
+    await django(req, req.url!.replace("/api/v1", ""), json ? JSON.parse(raw.toString("utf8")) : {}, (status, data, headers) => {
+      res.writeHead(status, { "Content-Type": "application/json", ...headers });
+      res.end(typeof data === "string" ? data : data && JSON.stringify(data));
     }, raw);
   });
 
