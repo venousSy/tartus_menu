@@ -219,6 +219,18 @@
     "logIn": "Log in"
   },
   "Admin": {
-    "title": "Super Admin"
+    "title": "Super Admin",
+    "navLabel": "Admin pages",
+    "home": "Home",
+    "cafes": "Cafes"
+  },
+  "AdminHome": {
+    "title": "Platform overview",
+    "total": "All cafes",
+    "active": "Active subscriptions",
+    "inactive": "Inactive subscriptions",
+    "basic": "Basic plan",
+    "pro": "Pro plan",
+    "manageCafes": "Manage cafes"
   }
 }
