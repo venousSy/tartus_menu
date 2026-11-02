@@ -170,6 +170,18 @@
     "qrAlt": "QR code for table {number}",
     "inactive": "Your tables and QR codes are kept. You can manage them again once the subscription is active."
   },
+  "Settings": {
+    "title": "Settings",
+    "slug": "Menu address name",
+    "slugHint": "It is part of your menu address and of every printed QR code, so only support can change it.",
+    "colorLegend": "Menu color",
+    "customColor": "Use my own color on the customer menu",
+    "colorPick": "Color",
+    "colorHint": "Without your own color, customers see the default brown.",
+    "saved": "Changes saved.",
+    "colorKept": "Your saved color <code>{color}</code> is kept, but customers see the default color until you upgrade.",
+    "inactive": "You can change your settings again once the subscription is active."
+  },
   "Admin": {
     "title": "Super Admin"
   }
