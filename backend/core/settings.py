@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     'storages',
     
     # Local apps
+    'core',  # no models; installed so Django finds its management command backup_database
     'users',
     'cafes',
     'menu',
@@ -168,6 +169,14 @@ else:
     # Fallback to local storage for early development
     MEDIA_URL = 'media/'
     MEDIA_ROOT = BASE_DIR / 'media'
+
+# Daily database backup (manage.py backup_database, step 14): a separate PRIVATE R2 bucket with its own
+# API token, so the token of the public images bucket can never read a dump. Checked by the command only.
+R2_BACKUP_BUCKET_NAME = os.getenv('R2_BACKUP_BUCKET_NAME', '')
+R2_BACKUP_ACCESS_KEY_ID = os.getenv('R2_BACKUP_ACCESS_KEY_ID', '')
+R2_BACKUP_SECRET_ACCESS_KEY = os.getenv('R2_BACKUP_SECRET_ACCESS_KEY', '')
+# The account's S3 API endpoint; the same as R2_ENDPOINT_URL unless set.
+R2_BACKUP_ENDPOINT_URL = os.getenv('R2_BACKUP_ENDPOINT_URL') or os.getenv('R2_ENDPOINT_URL', '')
 
 
 # Default primary key field type
