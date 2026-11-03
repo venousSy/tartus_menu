@@ -1,6 +1,7 @@
 # CI/CD pipeline (system_design.md §5, "CI/CD Pipeline"; implementation_plan.md step 13).
-# Pull requests into main: run every check. Pushes to main (merged PRs): the same checks; the image build
-# and the deploy are added in steps 13.4 and 13.5.
+# Pull requests into main: run every check and build both images (not pushed).
+# Pushes to main (merged PRs): the same, then push the images to GitHub Container Registry.
+# The deploy is added in step 13.5.
 name: CI/CD
 
 on:
@@ -97,3 +98,41 @@ jobs:
       # After the build, because the type check reads the route types that `next build` generates.
       - name: Type check
         run: npx tsc --noEmit
+
+  # The images that the server pulls (system_design.md §5: "Build Docker images", "docker-compose pull").
+  # On a pull request they are only built, which proves both Dockerfiles still work.
+  images:
+    name: Image ${{ matrix.service }}
+    needs: [backend-tests, frontend-tests]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write  # push to ghcr.io with the built-in GITHUB_TOKEN; no extra secret
+    strategy:
+      matrix:
+        service: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: docker/setup-buildx-action@v4.4.1
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Image names must be lowercase; the owner "venousSy" is not. Same names as compose.yaml.
+      - name: Image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tartus-menu-${{ matrix.service }}" >> "$GITHUB_ENV"
+      # Tagged with the commit SHA (the deploy runs exactly this version) and "latest".
+      # The layer cache lives in GitHub's Actions cache, so unchanged layers (npm ci) are not rebuilt.
+      - uses: docker/build-push-action@v7.4.0
+        with:
+          context: ${{ matrix.service }}
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
