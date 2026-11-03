@@ -26,6 +26,9 @@ services:
       retries: 5
 
   backend:
+    # CI builds this image and pushes it to GitHub Container Registry; the server only pulls it
+    # (system_design.md §5). `build` stays for local builds, which get the same name.
+    image: ghcr.io/venoussy/tartus-menu-backend:${IMAGE_TAG:-latest}
     build: ./backend
     restart: unless-stopped
     depends_on:
@@ -60,6 +63,7 @@ services:
       - static:/app/staticfiles
 
   frontend:
+    image: ghcr.io/venoussy/tartus-menu-frontend:${IMAGE_TAG:-latest}
     build: ./frontend
     restart: unless-stopped
     depends_on:
