@@ -246,8 +246,14 @@ LOGGING = {
 
 # Production HTTPS settings.
 # Nginx terminates TLS and must always set X-Forwarded-Proto, otherwise this header can be spoofed.
-# The HTTP -> HTTPS redirect and HSTS are left to Nginx (deployment step).
+# The HTTP -> HTTPS redirect and HSTS are left to Nginx (deploy/nginx/default.conf.template).
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+    # `check --deploy` warns that Django sets neither of them. Nginx does both, so these two warnings are
+    # expected; silencing them lets CI fail on any other deploy warning (--fail-level WARNING).
+    SILENCED_SYSTEM_CHECKS = [
+        'security.W004',  # SECURE_HSTS_SECONDS: Nginx sends Strict-Transport-Security
+        'security.W008',  # SECURE_SSL_REDIRECT: Nginx redirects port 80 to HTTPS
+    ]

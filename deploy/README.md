@@ -2,13 +2,16 @@
 
 How to put the Docker Compose stack (`compose.yaml`, system_design.md §5) on a fresh server, and how to update it.
 The commands assume Ubuntu 24.04 LTS and are run from the repository folder on the server.
-Steps 13 (CI/CD) and 14 (daily backup and `flushexpiredtokens`) will automate parts of this later.
+After the first setup, GitHub Actions deploys every merge into `main` (section 11).
+Step 14 (daily backup and `flushexpiredtokens`) will automate more later.
 
 ## 1. Before you start
 
 - A VPS with ports 80 and 443 open to the internet.
 - A DNS `A` record for the site's host name (for example `menu.domain.com`) pointing to the VPS.
 - A Cloudflare R2 bucket, an API token for it, and a public custom domain for the bucket.
+- The two images on GitHub Container Registry, public: see section 11.1 (done once, after the first
+  merge into `main`).
 
 ## 2. Install Docker and Certbot
 
@@ -52,11 +55,13 @@ sudo certbot certonly --standalone -d menu.domain.com
 ## 5. Start the stack and prepare the database
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 docker compose exec backend python manage.py migrate
 docker compose exec backend python manage.py createcachetable
 ```
 
+`pull` downloads the images that CI built from the newest commit on `main` (tag `latest`).
 `createcachetable` creates the table for the login rate-limit counters. Both commands are safe to run again.
 
 ## 6. Create the subscription plans
@@ -106,12 +111,79 @@ Certbot remembers these options for every later renewal.
 
 ## 10. Update to a new version
 
+Normally nothing to do: CI deploys every merge into `main` (section 11). By hand, for example while
+automatic deploys are off:
+
 ```bash
-git pull
-docker compose up -d --build
+git pull --ff-only
+docker compose pull
+docker compose up -d
 docker compose exec backend python manage.py migrate
 docker compose exec backend python manage.py createcachetable
 ```
+
+To go back to an earlier version, run the images of that commit (CI keeps every image tagged with its
+commit SHA; the server keeps images it used in the last 7 days):
+
+```bash
+IMAGE_TAG=<commit sha> docker compose up -d
+```
+
+## 11. Automatic deploys from GitHub
+
+The workflow `.github/workflows/ci-cd.yml` tests every pull request. After a merge into `main` it also
+builds both images, pushes them to GitHub Container Registry, and runs the update of section 10 over SSH.
+The deploy job runs only when the repository variable `DEPLOY_ENABLED` is `true`.
+
+### 11.1 Make the images public (once)
+
+The first merge into `main` creates the packages `tartus-menu-backend` and `tartus-menu-frontend`, as
+private packages. On GitHub open your profile, then Packages, then each package, then Package settings,
+and choose "Change visibility" to Public. Without this, `docker compose pull` on the server fails with
+"unauthorized". The images hold no secrets: every secret comes from `.env` at run time.
+
+### 11.2 A deploy user and key
+
+On the VPS, a user that may run Docker and owns the repository folder (members of the `docker` group can
+control every container, so keep this user for deploys only):
+
+```bash
+sudo adduser --disabled-password deploy
+sudo usermod -aG docker deploy
+```
+
+Clone the repository as this user (section 3). On your own computer, make a key pair used only for deploys
+(no passphrase, because CI cannot type one) and allow it on the VPS:
+
+```bash
+ssh-keygen -t ed25519 -f tartus_deploy -N "" -C "github-actions deploy"
+ssh-copy-id -i tartus_deploy.pub deploy@menu.domain.com
+```
+
+Read the server's own host key. Compare its fingerprint with the one the VPS shows for
+`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`, so you know the key really is your server's:
+
+```bash
+ssh-keyscan -t ed25519 menu.domain.com > tartus_known_hosts
+ssh-keygen -lf tartus_known_hosts
+```
+
+### 11.3 Secrets and the switch
+
+Save the five values as repository secrets (GitHub: Settings, Secrets and variables, Actions), or with the
+GitHub CLI from the folder that holds the two files:
+
+```bash
+gh secret set VPS_HOST --body "menu.domain.com"
+gh secret set VPS_USER --body "deploy"
+gh secret set VPS_APP_DIR --body "/home/deploy/tartus_menu"
+gh secret set VPS_SSH_KEY < tartus_deploy
+gh secret set VPS_KNOWN_HOSTS < tartus_known_hosts
+gh variable set DEPLOY_ENABLED --body "true"
+```
+
+Then delete the private key file `tartus_deploy` from your computer; GitHub keeps the only copy it needs.
+The next merge into `main` deploys. Set `DEPLOY_ENABLED` to anything else to stop automatic deploys.
 
 ## Useful commands
 
