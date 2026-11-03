@@ -2,14 +2,15 @@
 
 How to put the Docker Compose stack (`compose.yaml`, system_design.md §5) on a fresh server, and how to update it.
 The commands assume Ubuntu 24.04 LTS and are run from the repository folder on the server.
-After the first setup, GitHub Actions deploys every merge into `main` (section 11).
-Step 14 (daily backup and `flushexpiredtokens`) will automate more later.
+After the first setup, GitHub Actions deploys every merge into `main` (section 11), and the `backup`
+service dumps the database every night (section 12).
 
 ## 1. Before you start
 
 - A VPS with ports 80 and 443 open to the internet.
 - A DNS `A` record for the site's host name (for example `menu.domain.com`) pointing to the VPS.
 - A Cloudflare R2 bucket, an API token for it, and a public custom domain for the bucket.
+- A second, private R2 bucket for database backups, with its own API token (section 12.1).
 - The two images on GitHub Container Registry, public: see section 11.1 (done once, after the first
   merge into `main`).
 
@@ -184,6 +185,71 @@ gh variable set DEPLOY_ENABLED --body "true"
 
 Then delete the private key file `tartus_deploy` from your computer; GitHub keeps the only copy it needs.
 The next merge into `main` deploys. Set `DEPLOY_ENABLED` to anything else to stop automatic deploys.
+
+## 12. Database backups
+
+The `backup` service runs two jobs every night (`backend/crontab`, times in UTC):
+02:00 `backup_database` (pg_dump, gzip, upload as `backups/YYYY-MM-DD.sql.gz`) and
+02:30 `flushexpiredtokens` (removes expired login tokens).
+
+### 12.1 The backup bucket and its token (once)
+
+In the Cloudflare dashboard, under R2:
+
+1. Create a bucket, for example `tartus-backups`. Give it **no** custom domain and no public access: a dump
+   holds every cafe's data and the password hashes.
+2. Create an R2 API token with "Object Read & Write" permission for **this bucket only**.
+3. Put the bucket name and the token's key ID and secret into `.env` (`R2_BACKUP_BUCKET_NAME`,
+   `R2_BACKUP_ACCESS_KEY_ID`, `R2_BACKUP_SECRET_ACCESS_KEY`), then run `docker compose up -d`.
+
+### 12.2 Keep 30 days (once)
+
+In the backup bucket's settings, add an object lifecycle rule: prefix `backups/`, delete objects
+30 days after they were uploaded (system_design.md §5). R2 then removes old dumps by itself.
+
+### 12.3 Check that backups work
+
+Run one backup now, then read the service's log, where every nightly run also appears:
+
+```bash
+docker compose exec backup python manage.py backup_database
+docker compose logs --tail 20 backup
+```
+
+The first command prints `Uploaded backups/<date>.sql.gz (<size> bytes).`; the new file is listed in the
+bucket in the Cloudflare dashboard. A failed run says why in the log (for example a wrong token).
+
+### 12.4 Restore drill (every month)
+
+A backup is only proven once it has been restored. Download a recent dump from the bucket in the
+Cloudflare dashboard, copy it to the server, and restore it into a throwaway PostgreSQL 16, not into
+the live database:
+
+```bash
+docker run -d --name restore-check -e POSTGRES_PASSWORD=restore-check postgres:16-alpine
+sleep 5
+gunzip -c 2026-11-03.sql.gz | docker exec -i restore-check psql -U postgres -v ON_ERROR_STOP=1 -q -o /dev/null
+docker exec restore-check psql -U postgres -c "select count(*) from cafes" -c "select count(*) from menu_items"
+docker rm -f restore-check
+```
+
+`ON_ERROR_STOP=1` stops at the first error, so a clean run means the whole dump is usable. `-o /dev/null`
+hides the normal query results of the restore; errors are still shown.
+
+### 12.5 Restore after a disaster
+
+Only when the live data is lost or broken. This replaces the whole database with the dump. Use the
+`DB_USER` and `DB_NAME` values of your `.env` (here the defaults `postgres` and `tartus_db`):
+
+```bash
+docker compose stop nginx frontend backend backup
+docker compose exec db psql -U postgres -d postgres -c "DROP DATABASE tartus_db WITH (FORCE)"
+docker compose exec db psql -U postgres -d postgres -c "CREATE DATABASE tartus_db"
+gunzip -c 2026-11-03.sql.gz | docker compose exec -T db psql -U postgres -d tartus_db -v ON_ERROR_STOP=1 -q -o /dev/null
+docker compose up -d
+```
+
+Everything written after that dump's night is lost; uploaded images stay in the images bucket.
 
 ## Useful commands
 
