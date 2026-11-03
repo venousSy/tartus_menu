@@ -1,7 +1,7 @@
 # CI/CD pipeline (system_design.md §5, "CI/CD Pipeline"; implementation_plan.md step 13).
 # Pull requests into main: run every check and build both images (not pushed).
-# Pushes to main (merged PRs): the same, then push the images to GitHub Container Registry.
-# The deploy is added in step 13.5.
+# Pushes to main (merged PRs): the same, then push the images to GitHub Container Registry and deploy them
+# to the VPS over SSH (only when the repository variable DEPLOY_ENABLED is "true"; deploy/README.md).
 name: CI/CD
 
 on:
@@ -136,3 +136,54 @@ jobs:
           labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  # system_design.md §5: SSH into the VPS, pull the new images, restart, migrate, create the cache table.
+  # Secrets cannot be read in `if:`, so a repository variable switches the job on once the VPS exists.
+  deploy:
+    name: Deploy to the VPS
+    needs: images
+    if: github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    # Deploys run one after another, never in parallel, and a running deploy is never cancelled.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      # VPS_KNOWN_HOSTS is the server's own key: ssh refuses to talk to any other server.
+      - name: Set up SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      # The script between the EOF lines runs on the VPS. $1 = app folder, $2 = this commit's SHA.
+      - name: Pull and restart on the VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" \
+            bash -s -- "$VPS_APP_DIR" "$GITHUB_SHA" <<'EOF'
+          set -euo pipefail
+          cd "$1"
+          # New compose.yaml and Nginx template from main.
+          before=$(git rev-parse HEAD)
+          git pull --ff-only
+          # Run exactly the images built from this commit.
+          export IMAGE_TAG="$2"
+          docker compose pull backend frontend
+          docker compose up -d
+          # Nginx reads its template only when it starts: restart it only when the template changed.
+          if ! git diff --quiet "$before" HEAD -- deploy/nginx; then
+            docker compose restart nginx
+          fi
+          docker compose exec -T backend python manage.py migrate --noinput
+          docker compose exec -T backend python manage.py createcachetable
+          # Remove images that no container uses and that are older than 7 days (older versions stay
+          # available for a quick rollback during that week).
+          docker image prune -af --filter "until=168h"
+          EOF
