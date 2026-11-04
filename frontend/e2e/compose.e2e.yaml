@@ -1,0 +1,42 @@
+# Changes to compose.yaml for the end-to-end tests. Only frontend/e2e/stack.ts uses this file, as the
+# second --file after compose.yaml, with the project name tartus-menu-e2e and the values of e2e.env.
+# Paths are relative to the repository root (the folder of the first --file).
+
+services:
+  backend:
+    environment:
+      # The QR codes must lead to the test site, which listens on a local port.
+      PUBLIC_MENU_BASE_URL: https://localhost:4243
+
+  # One-shot helper, started only with "docker compose run --rm certs" (the profile keeps it out of "up").
+  # It writes a self-signed certificate for localhost to the place where Nginx expects Let's Encrypt's
+  # files. It runs the backend image only because that image already contains openssl.
+  certs:
+    image: ghcr.io/venoussy/tartus-menu-backend:${IMAGE_TAG:-latest}
+    profiles: [tools]
+    user: root
+    entrypoint: []
+    command:
+      - sh
+      - -c
+      - >-
+        mkdir -p /etc/letsencrypt/live/localhost &&
+        openssl req -x509 -newkey rsa:2048 -nodes -days 7 -subj /CN=localhost
+        -addext subjectAltName=DNS:localhost
+        -keyout /etc/letsencrypt/live/localhost/privkey.pem
+        -out /etc/letsencrypt/live/localhost/fullchain.pem
+    volumes:
+      - certs:/etc/letsencrypt
+
+  nginx:
+    # !override replaces the lists of compose.yaml instead of adding to them: only HTTPS, only on this
+    # computer, and no host folders (/etc/letsencrypt does not exist on a developer machine or in CI).
+    ports: !override
+      - "127.0.0.1:4243:443"
+    volumes: !override
+      - ./deploy/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - static:/var/www/static:ro
+      - certs:/etc/letsencrypt:ro
+
+volumes:
+  certs:
