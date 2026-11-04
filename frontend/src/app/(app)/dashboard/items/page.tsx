@@ -67,7 +67,7 @@ export default async function ItemsPage({ searchParams }: PageProps<"/dashboard/
       {shown.length === 0 ? (
         <p className="text-stone-600">{t("empty")}</p>
       ) : (
-        <ItemList key={current.id} items={shown} categories={categories} allowsImages={allowsImages} />
+        <ItemList key={`list-${current.id}`} items={shown} categories={categories} allowsImages={allowsImages} />
       )}
       {max !== null && count >= max ? (
         // The same text Django answers when the limit is reached (A1), shown before the owner tries.
@@ -75,7 +75,7 @@ export default async function ItemsPage({ searchParams }: PageProps<"/dashboard/
           {tErrors("planLimitItems", { plan: tHome("planName", { name: settings.plan.name }), max })}
         </p>
       ) : (
-        <CreateItemForm key={current.id} categoryId={current.id} />
+        <CreateItemForm key={`form-${current.id}`} categoryId={current.id} />
       )}
     </section>
   );
