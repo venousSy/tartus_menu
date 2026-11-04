@@ -137,11 +137,48 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
+  # The whole product in a real browser (implementation_plan.md step 15): `npm run e2e` builds the images from
+  # this commit, starts the Compose stack behind Nginx with a self-signed certificate (frontend/e2e/), seeds it,
+  # runs the Playwright tests and deletes the stack again. All values are throwaway ones from e2e/e2e.env.
+  e2e:
+    name: End-to-end tests
+    needs: [backend-tests, frontend-tests]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      # Chromium and the Linux libraries it needs; the version comes from @playwright/test in the lockfile.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: End-to-end tests
+        run: npm run e2e
+      # The HTML report and the traces of the failed tests (playwright.config.ts: trace "retain-on-failure").
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 14
+
   # system_design.md §5: SSH into the VPS, pull the new images, restart, migrate, create the cache table.
   # Secrets cannot be read in `if:`, so a repository variable switches the job on once the VPS exists.
   deploy:
     name: Deploy to the VPS
-    needs: images
+    # Only a version that passed every test, the end-to-end ones included, reaches the server.
+    needs: [images, e2e]
     if: github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-24.04
     # Deploys run one after another, never in parallel, and a running deploy is never cancelled.

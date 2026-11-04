@@ -10,6 +10,10 @@ next-env.d.ts
 
 # Not needed to build or run the app.
 test/
+e2e/
+playwright.config.ts
+test-results/
+playwright-report/
 README.md
 
 # The Docker files themselves.
