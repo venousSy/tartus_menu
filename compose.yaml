@@ -1,11 +1,37 @@
 # Production stack on one VPS (system_design.md §5, "Docker Services").
 # Values come from the file .env next to this one (copy .env.example). Addresses inside the Docker network,
 # and settings that must always be the same in production, are written here and not in .env.
-# The backup service is added in step 14.
 
 # Fixed project name: it prefixes the volumes (tartus-menu_pgdata), so they never collide with the
 # local development database volume "tartus_pgdata".
 name: tartus-menu
+
+# Django's settings, shared by the backend and backup services (both run the backend image).
+# "x-" blocks are ignored by Compose itself; "&django-environment" names this block so services can reuse it.
+x-django-environment: &django-environment
+  DJANGO_DEBUG: "False"
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?set DJANGO_SECRET_KEY in .env}
+  # "backend" is the host name Next.js uses on the Docker network (http://backend:8000).
+  DJANGO_ALLOWED_HOSTS: ${DOMAIN:?set DOMAIN in .env},backend
+  DJANGO_ADMIN_PATH: ${DJANGO_ADMIN_PATH:?set DJANGO_ADMIN_PATH in .env}
+  # One proxy (Nginx) in front of Django on both paths (system_design.md §3.6).
+  DJANGO_NUM_PROXIES: "1"
+  LOGIN_THROTTLE_RATE: ${LOGIN_THROTTLE_RATE:-5/min}
+  DB_NAME: ${DB_NAME}
+  DB_USER: ${DB_USER}
+  DB_PASSWORD: ${DB_PASSWORD}
+  DB_HOST: db
+  DB_PORT: "5432"
+  FRONTEND_REVALIDATE_URL: http://frontend:3000/internal/revalidate
+  FRONTEND_REVALIDATE_SECRET: ${FRONTEND_REVALIDATE_SECRET:?set FRONTEND_REVALIDATE_SECRET in .env}
+  PUBLIC_MENU_BASE_URL: https://${DOMAIN}
+  # Uploaded images always go to R2: a container's own disk is lost when it is replaced.
+  USE_S3: "True"
+  R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:?set R2_ACCESS_KEY_ID in .env}
+  R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:?set R2_SECRET_ACCESS_KEY in .env}
+  R2_BUCKET_NAME: ${R2_BUCKET_NAME:?set R2_BUCKET_NAME in .env}
+  R2_ENDPOINT_URL: ${R2_ENDPOINT_URL:?set R2_ENDPOINT_URL in .env}
+  R2_CUSTOM_DOMAIN: ${R2_CUSTOM_DOMAIN:?set R2_CUSTOM_DOMAIN in .env}
 
 services:
   db:
@@ -34,33 +60,30 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    environment:
-      DJANGO_DEBUG: "False"
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?set DJANGO_SECRET_KEY in .env}
-      # "backend" is the host name Next.js uses on the Docker network (http://backend:8000).
-      DJANGO_ALLOWED_HOSTS: ${DOMAIN:?set DOMAIN in .env},backend
-      DJANGO_ADMIN_PATH: ${DJANGO_ADMIN_PATH:?set DJANGO_ADMIN_PATH in .env}
-      # One proxy (Nginx) in front of Django on both paths (system_design.md §3.6).
-      DJANGO_NUM_PROXIES: "1"
-      LOGIN_THROTTLE_RATE: ${LOGIN_THROTTLE_RATE:-5/min}
-      DB_NAME: ${DB_NAME}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_HOST: db
-      DB_PORT: "5432"
-      FRONTEND_REVALIDATE_URL: http://frontend:3000/internal/revalidate
-      FRONTEND_REVALIDATE_SECRET: ${FRONTEND_REVALIDATE_SECRET:?set FRONTEND_REVALIDATE_SECRET in .env}
-      PUBLIC_MENU_BASE_URL: https://${DOMAIN}
-      # Uploaded images always go to R2: a container's own disk is lost when it is replaced.
-      USE_S3: "True"
-      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:?set R2_ACCESS_KEY_ID in .env}
-      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:?set R2_SECRET_ACCESS_KEY in .env}
-      R2_BUCKET_NAME: ${R2_BUCKET_NAME:?set R2_BUCKET_NAME in .env}
-      R2_ENDPOINT_URL: ${R2_ENDPOINT_URL:?set R2_ENDPOINT_URL in .env}
-      R2_CUSTOM_DOMAIN: ${R2_CUSTOM_DOMAIN:?set R2_CUSTOM_DOMAIN in .env}
+    environment: *django-environment
     volumes:
       # collectstatic writes the Django admin's CSS and JS here at every start; Nginx will serve them.
       - static:/app/staticfiles
+
+  # Daily jobs (system_design.md §5, "Scheduled Jobs"): the backend image, but instead of Gunicorn it runs
+  # supercronic with backend/crontab (02:00 UTC backup_database, 02:30 UTC flushexpiredtokens).
+  backup:
+    image: ghcr.io/venoussy/tartus-menu-backend:${IMAGE_TAG:-latest}
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    # No entrypoint: collectstatic is only needed by the backend service.
+    entrypoint: []
+    command: ["supercronic", "/app/crontab"]
+    environment:
+      <<: *django-environment
+      # Only this service gets the backup token: the backend never needs to read or write dumps.
+      R2_BACKUP_BUCKET_NAME: ${R2_BACKUP_BUCKET_NAME:?set R2_BACKUP_BUCKET_NAME in .env}
+      R2_BACKUP_ACCESS_KEY_ID: ${R2_BACKUP_ACCESS_KEY_ID:?set R2_BACKUP_ACCESS_KEY_ID in .env}
+      R2_BACKUP_SECRET_ACCESS_KEY: ${R2_BACKUP_SECRET_ACCESS_KEY:?set R2_BACKUP_SECRET_ACCESS_KEY in .env}
+      R2_BACKUP_ENDPOINT_URL: ${R2_BACKUP_ENDPOINT_URL:-}
 
   frontend:
     image: ghcr.io/venoussy/tartus-menu-frontend:${IMAGE_TAG:-latest}
