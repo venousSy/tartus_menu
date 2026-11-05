@@ -7,6 +7,11 @@
 limit_req_zone $binary_remote_addr zone=login:10m rate=10r/m;
 limit_req_status 429;
 
+# Public menu pages per client IP (system_design.md §3.4: Django does not throttle the public menu API).
+# Generous, because all customers of one cafe may share one IP behind its Wi-Fi: the burst lets a full
+# cafe scan its QR codes at once, the steady rate stops one address from flooding Django with unknown slugs.
+limit_req_zone $binary_remote_addr zone=menu:10m rate=2r/s;
+
 # Do not tell the internet which Nginx version runs here.
 server_tokens off;
 
@@ -95,6 +100,7 @@ server {
     }
 
     location /menu/ {
+        limit_req zone=menu burst=100 nodelay;
         add_header X-Robots-Tag "noindex, nofollow" always;
         add_header Strict-Transport-Security "max-age=31536000" always;
         proxy_pass $frontend;
