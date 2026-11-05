@@ -1,13 +1,6 @@
 import { request } from "@playwright/test";
 import { ADMIN_EMAIL, ADMIN_PASSWORD, BASE_URL, compose } from "./stack";
 
-// The two plans of deploy/README.md §6 (system_design.md §6 example).
-const CREATE_PLANS = `
-from cafes.models import SubscriptionPlan as P
-P.objects.get_or_create(name='basic', defaults={'max_categories': 5, 'max_items': 20})
-P.objects.get_or_create(name='pro', defaults={'allows_images': True, 'allows_branding': True})
-`;
-
 function manage(...args: string[]): void {
   compose(["exec", "-T", "backend", "python", "manage.py", ...args]);
 }
@@ -40,7 +33,7 @@ export default async function globalSetup(): Promise<() => void> {
 
   manage("migrate", "--noinput");
   manage("createcachetable");
-  manage("shell", "-c", CREATE_PLANS);
+  manage("create_plans"); // the two plans of deploy/README.md §6
   // "-e NAME" without a value copies NAME from the docker client's environment, so the password is not
   // part of the command line.
   compose(
