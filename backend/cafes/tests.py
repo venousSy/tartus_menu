@@ -269,8 +269,11 @@ class CafeLogoTests(CafeAPITestCase):
         with (
             mock.patch.object(default_storage, 'save', side_effect=OSError('R2 is down')),
             self.assertLogs('core.media_storage', level='ERROR'),  # logged server-side
+            self.assertLogs('django.request', level='ERROR') as request_log,  # Django logs every 5xx
         ):
             response = self.upload(image_file())
+
+        self.assertIn('Bad Gateway: /api/v1/dashboard/settings/logo/', request_log.output[0])
 
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
         self.assertEqual(response.data, {'detail': 'Image upload failed. Please try again.'})
