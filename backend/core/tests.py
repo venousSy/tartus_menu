@@ -1,19 +1,25 @@
 """
-Tests for the project-wide pieces in core/: the JSON 404 handler (use_cases.md Global Convention 2) and the
-daily backup command (system_design.md §5, "Scheduled Jobs").
+Tests for the project-wide pieces in core/: the JSON 404 handler (use_cases.md Global Convention 2), the
+JSON-only API in production, and the daily backup command (system_design.md §5, "Scheduled Jobs").
 """
 
 import gzip
 import io
+import os
+import runpy
 import shutil
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest import mock
 
 from botocore.exceptions import ClientError
+from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import SimpleTestCase, TestCase, override_settings
+from rest_framework.settings import perform_import
+from rest_framework.views import APIView
 
 BACKUP_SETTINGS = {
     'R2_BACKUP_BUCKET_NAME': 'tartus-backups',
@@ -40,6 +46,59 @@ class JsonNotFoundTests(SimpleTestCase):
                 self.assertEqual(response.status_code, 404)
                 self.assertEqual(response['Content-Type'], 'application/json')
                 self.assertEqual(response.json(), {'detail': 'Not found.'})
+
+
+def rest_framework_setting(debug):
+    """REST_FRAMEWORK as settings.py builds it for DJANGO_DEBUG=`debug`, with valid production values.
+
+    settings.py reads DJANGO_DEBUG once, at import; the test runner only turns settings.DEBUG off later,
+    so the imported REST_FRAMEWORK follows the developer's .env. Running the file again shows both cases.
+    """
+    env = {
+        'DJANGO_DEBUG': 'True' if debug else 'False',
+        'DJANGO_SECRET_KEY': 'test-secret-key',
+        'DJANGO_ALLOWED_HOSTS': 'menu.example.test',
+        'PUBLIC_MENU_BASE_URL': 'https://menu.example.test',
+        'DJANGO_ADMIN_PATH': 'hidden-admin',
+        'USE_S3': 'False',
+    }
+    with mock.patch.dict(os.environ, env):  # load_dotenv never overrides variables that are already set
+        return runpy.run_path(str(Path(settings.BASE_DIR) / 'core' / 'settings.py'))['REST_FRAMEWORK']
+
+
+class JsonOnlyApiTests(SimpleTestCase):
+    """Production answers JSON only: DRF's Browsable API is a development tool (DEBUG=True)."""
+
+    JSON = ('rest_framework.renderers.JSONRenderer',)
+    BROWSER_ACCEPT = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+
+    def test_renderers_follow_debug(self):
+        self.assertEqual(rest_framework_setting(debug=False)['DEFAULT_RENDERER_CLASSES'], self.JSON)
+        self.assertEqual(
+            rest_framework_setting(debug=True)['DEFAULT_RENDERER_CLASSES'],
+            self.JSON + ('rest_framework.renderers.BrowsableAPIRenderer',),
+        )
+
+    def get_with_production_renderers(self, accept):
+        # DRF copies DEFAULT_RENDERER_CLASSES into APIView.renderer_classes when the class is defined,
+        # so override_settings cannot change it afterwards: give APIView the production classes instead.
+        names = rest_framework_setting(debug=False)['DEFAULT_RENDERER_CLASSES']
+        renderers = perform_import(names, 'DEFAULT_RENDERER_CLASSES')
+        with mock.patch.object(APIView, 'renderer_classes', renderers):
+            return self.client.get('/api/v1/dashboard/settings/', HTTP_ACCEPT=accept)
+
+    def test_a_browser_gets_json_not_the_browsable_api_page(self):
+        response = self.get_with_production_renderers(self.BROWSER_ACCEPT)
+
+        self.assertEqual(response.status_code, 401)  # no token
+        self.assertEqual(response['Content-Type'], 'application/json')
+        self.assertNotIn(b'<html', response.content)
+
+    def test_html_only_is_not_acceptable(self):
+        response = self.get_with_production_renderers('text/html')
+
+        self.assertEqual(response.status_code, 406)
+        self.assertEqual(response['Content-Type'], 'application/json')
 
 
 class FakePgDump:
