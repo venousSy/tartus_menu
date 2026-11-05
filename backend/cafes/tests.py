@@ -531,6 +531,21 @@ class AdminCafeReadAndCreateTests(AdminAPITestCase):
                 self.assertEqual((response.status_code, response.data), (status.HTTP_400_BAD_REQUEST, errors))
         self.assertEqual((Cafe.objects.count(), User.objects.count()), (1, 2))  # the shared cafe, owner and admin
 
+    def test_a_lost_race_for_the_slug_or_email_still_returns_400(self):  # A1, A2 with two parallel requests
+        # Without the serializer's check, as when a parallel request commits the same slug or email just
+        # after this one was checked: only the database's unique constraint stops it, and it must not be a 500.
+        cases = [
+            ('slug taken', {'slug': 'tartus-coffee'}, {'slug': ['A cafe with this slug already exists.']}),
+            ('email taken', {'owner': {'email': 'OWNER@cafe.com', 'password': 'initial_pass'}},
+             {'owner': {'email': ['A user with this email already exists.']}}),
+        ]
+        for label, change, errors in cases:
+            with self.subTest(label), mock.patch('rest_framework.validators.UniqueValidator.__call__'):
+                response = self.client.post(self.url('cafes'), {**self.create_body, **change}, format='json')
+
+                self.assertEqual((response.status_code, response.data), (status.HTTP_400_BAD_REQUEST, errors))
+        self.assertEqual((Cafe.objects.count(), User.objects.count()), (1, 2))  # no owner left without a cafe
+
     def test_list_is_paginated_newest_first(self):  # UC-ADMIN-002 main flow
         for n in range(21):
             self.add_cafe(f'cafe-{n}')
@@ -720,6 +735,18 @@ class AdminCafeWriteTests(AdminAPITestCase):
         self.cafe.refresh_from_db()
         self.assertEqual((self.cafe.slug, self.cafe.is_active, self.cafe.name['ar'], self.cafe.primary_color),
                          ('tartus-coffee', True, 'Tartus Coffee', '#C0392B'))
+
+    def test_a_lost_race_for_a_new_slug_still_returns_400(self):  # A1 with two parallel requests
+        self.add_cafe('sea-view')
+        # The service's "slug is free" check answers yes, as when a parallel edit takes the slug just after it:
+        # only the database's unique constraint stops this save. exists() is the only one in this request.
+        with mock.patch('django.db.models.query.QuerySet.exists', return_value=False):
+            response = self.client.patch(self.url('cafe'), {'slug': 'sea-view', 'name': {'ar': 'X'}}, format='json')
+
+        self.assertEqual((response.status_code, response.data),
+                         (status.HTTP_400_BAD_REQUEST, {'slug': ['A cafe with this slug already exists.']}))
+        self.cafe.refresh_from_db()
+        self.assertEqual((self.cafe.slug, self.cafe.name['ar']), ('tartus-coffee', 'Tartus Coffee'))  # rolled back
 
     def test_downgrade_is_blocked_while_the_cafe_exceeds_the_limits(self):  # A2
         self.use_pro_plan()
