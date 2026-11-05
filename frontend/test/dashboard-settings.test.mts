@@ -27,8 +27,8 @@ const settings = () => ({
     ? { name: "pro", max_categories: null, max_items: null, allows_images: true, allows_branding: true }
     : { name: "basic", max_categories: 5, max_items: 20, allows_images: false, allows_branding: false },
 });
-// BilingualNameField: "ar" required and not blank; DRF trims spaces.
-function nameErrors({ ar, en = "" }: { ar?: string; en?: string }) {
+// BilingualNameField: "ar" required and not blank; DRF trims spaces. "en" has no rule to fake here.
+function nameErrors({ ar }: { ar?: string; en?: string }) {
   if (ar === undefined) return { name: { ar: ["This field is required."] } };
   if (ar.trim() === "") return { name: { ar: ["This field may not be blank."] } };
   return null;
