@@ -198,6 +198,13 @@ REST_FRAMEWORK = {
     # Number of trusted proxies in front of Django; throttling reads the client IP with it.
     # Production (Nginx): 1. Default 0 ignores X-Forwarded-For, so a client cannot fake its IP.
     'NUM_PROXIES': int(os.getenv('DJANGO_NUM_PROXIES', '0')),
+    # The frontend only reads JSON. DRF's Browsable API (an HTML page per endpoint that shows its
+    # allowed methods) stays a development tool and is off when DEBUG is False.
+    'DEFAULT_RENDERER_CLASSES': (
+        ('rest_framework.renderers.JSONRenderer', 'rest_framework.renderers.BrowsableAPIRenderer')
+        if DEBUG else
+        ('rest_framework.renderers.JSONRenderer',)
+    ),
 }
 
 # Simple JWT Configuration
