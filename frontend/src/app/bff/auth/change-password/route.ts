@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 
-import { djangoFetch } from "@/lib/server/django";
+import { djangoFetch, forwardedForHeader, passThrough } from "@/lib/server/django";
 import { rejectCrossOrigin } from "@/lib/server/origin";
 import { ACCESS_COOKIE, clearTokens } from "@/lib/server/session";
 
@@ -23,13 +23,12 @@ export async function POST(request: Request) {
   }
 
   // The body goes to Django unchanged: its serializer checks both passwords.
-  const forwardedFor = request.headers.get("x-forwarded-for");
   const response = await djangoFetch("/auth/change-password/", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${access}`,
       "Content-Type": "application/json",
-      ...(forwardedFor ? { "X-Forwarded-For": forwardedFor } : {}),
+      ...forwardedForHeader(request.headers.get("x-forwarded-for")),
     },
     body: await request.text(),
   });
@@ -41,10 +40,7 @@ export async function POST(request: Request) {
   // 400 wrong old password, weak or unchanged new password, missing fields; 401 rejected access
   // token (A1-A5): same status and body, so the form can show Django's messages. The cookies stay.
   if (response.status >= 400 && response.status < 500) {
-    return new Response(response.body, {
-      status: response.status,
-      headers: { "Content-Type": response.headers.get("content-type") ?? "application/json" },
-    });
+    return passThrough(response);
   }
   throw new Error(`The change-password API answered ${response.status}.`);
 }

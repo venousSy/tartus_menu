@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 
-import { djangoFetch } from "@/lib/server/django";
+import { djangoFetch, forwardedForHeader, passThrough } from "@/lib/server/django";
 import { rejectCrossOrigin } from "@/lib/server/origin";
 import { saveTokens } from "@/lib/server/session";
 
@@ -17,12 +17,11 @@ export async function POST(request: Request) {
 
   // The body goes to Django unchanged: its serializer is the only place that validates it.
   // X-Forwarded-For too, so the login throttle counts the browser's IP, not ours.
-  const forwardedFor = request.headers.get("x-forwarded-for");
   const response = await djangoFetch("/auth/login/", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(forwardedFor ? { "X-Forwarded-For": forwardedFor } : {}),
+      ...forwardedForHeader(request.headers.get("x-forwarded-for")),
     },
     body: await request.text(),
   });
@@ -30,10 +29,7 @@ export async function POST(request: Request) {
   // 400 missing fields, 401 wrong credentials or inactive account, 429 too many attempts
   // (UC-AUTH-001 A1-A4): same status and body, so the login page can show Django's message.
   if (response.status >= 400 && response.status < 500) {
-    return new Response(response.body, {
-      status: response.status,
-      headers: { "Content-Type": response.headers.get("content-type") ?? "application/json" },
-    });
+    return passThrough(response);
   }
   if (!response.ok) {
     throw new Error(`The login API answered ${response.status}.`);
