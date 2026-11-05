@@ -11,7 +11,7 @@ service dumps the database every night (section 12).
 - A DNS `A` record for the site's host name (for example `menu.domain.com`) pointing to the VPS.
 - A Cloudflare R2 bucket, an API token for it, and a public custom domain for the bucket.
 - A second, private R2 bucket for database backups, with its own API token (section 12.1).
-- The two images on GitHub Container Registry, public: see section 11.1 (done once, after the first
+- The two images on GitHub Container Registry, public: see section 11.1 (checked once, after the first
   merge into `main`).
 
 ## 2. Install Docker and Certbot
@@ -136,12 +136,21 @@ The workflow `.github/workflows/ci-cd.yml` tests every pull request. After a mer
 builds both images, pushes them to GitHub Container Registry, and runs the update of section 10 over SSH.
 The deploy job runs only when the repository variable `DEPLOY_ENABLED` is `true`.
 
-### 11.1 Make the images public (once)
+### 11.1 Check that the images are public (once)
 
-The first merge into `main` creates the packages `tartus-menu-backend` and `tartus-menu-frontend`, as
-private packages. On GitHub open your profile, then Packages, then each package, then Package settings,
-and choose "Change visibility" to Public. Without this, `docker compose pull` on the server fails with
-"unauthorized". The images hold no secrets: every secret comes from `.env` at run time.
+The first merge into `main` creates the packages `tartus-menu-backend` and `tartus-menu-frontend`. They
+are normally public already: the image label `org.opencontainers.image.source` links them to this public
+repository. Check it on a machine that is not logged in to `ghcr.io`:
+
+```bash
+docker manifest inspect ghcr.io/venoussy/tartus-menu-backend:latest
+docker manifest inspect ghcr.io/venoussy/tartus-menu-frontend:latest
+```
+
+Both must print a manifest, not "unauthorized". If one is private, open your GitHub profile, then
+Packages, then that package, then Package settings, and choose "Change visibility" to Public. Without
+this, `docker compose pull` on the server fails with "unauthorized". The images hold no secrets: every
+secret comes from `.env` at run time.
 
 ### 11.2 A deploy user and key
 
