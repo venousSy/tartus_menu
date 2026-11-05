@@ -67,16 +67,16 @@ docker compose exec backend python manage.py createcachetable
 
 ## 6. Create the subscription plans
 
-A new database has no plans, and cafes cannot be created without one. The values below are the example
-of system_design.md §6; choose your own limits (`None` means unlimited):
+A new database has no plans, and cafes cannot be created without one. This creates Basic (5 categories,
+20 items, no images or branding) and Pro (unlimited, images and branding), the example of
+system_design.md §6:
 
 ```bash
-docker compose exec backend python manage.py shell -c "
-from cafes.models import SubscriptionPlan as P
-P.objects.get_or_create(name='basic', defaults={'max_categories': 5, 'max_items': 20})
-P.objects.get_or_create(name='pro', defaults={'allows_images': True, 'allows_branding': True})
-"
+docker compose exec backend python manage.py create_plans
 ```
+
+Choose other Basic limits with `--basic-max-categories N` and `--basic-max-items N`. The command is safe
+to run again: a plan that already exists is left unchanged.
 
 ## 7. Create the Super Admin
 

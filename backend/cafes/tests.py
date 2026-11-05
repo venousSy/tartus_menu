@@ -3,20 +3,23 @@ API integration tests for the cafe settings endpoints (use_cases.md UC-OWNER-009
 and UC-OWNER-014), the QR code endpoints (UC-OWNER-007, UC-OWNER-008 and UC-OWNER-011)
 and the Super Admin endpoints (UC-ADMIN-001 to UC-ADMIN-009).
 Each test sends real HTTP requests through URL -> view -> service -> database.
+The last class tests the create_plans management command (deploy/README.md §6).
 """
 
 import base64
 import json
 import re
 import zlib
-from io import BytesIO
+from io import BytesIO, StringIO
 from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import override_settings
+from django.core.management import call_command
+from django.core.management.base import CommandError
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from PIL import Image
@@ -785,3 +788,50 @@ class AdminCafeWriteTests(AdminAPITestCase):
                     urlopen.assert_not_called()
                 else:
                     self.assertEqual(json.loads(urlopen.call_args.args[0].data), {'slugs': slugs})
+
+
+class CreatePlansCommandTests(TestCase):
+    """python manage.py create_plans on a database without plans (deploy/README.md §6)."""
+
+    FIELDS = ('max_categories', 'max_items', 'allows_images', 'allows_branding')
+
+    def run_command(self, *args):
+        out = StringIO()
+        call_command('create_plans', *args, stdout=out)
+        return out.getvalue()
+
+    def plan_values(self, name):
+        return SubscriptionPlan.objects.values(*self.FIELDS).get(name=name)
+
+    def test_creates_the_two_plans_of_system_design_6(self):
+        output = self.run_command()
+
+        self.assertEqual(self.plan_values('basic'), {
+            'max_categories': 5, 'max_items': 20, 'allows_images': False, 'allows_branding': False,
+        })
+        self.assertEqual(self.plan_values('pro'), {
+            'max_categories': None, 'max_items': None, 'allows_images': True, 'allows_branding': True,
+        })
+        self.assertEqual(output, 'Basic: created.\nPro: created.\n')
+
+    def test_options_set_the_basic_limits(self):
+        self.run_command('--basic-max-categories', '3', '--basic-max-items', '40')
+
+        basic = self.plan_values('basic')
+        self.assertEqual((basic['max_categories'], basic['max_items']), (3, 40))
+
+    def test_second_run_leaves_existing_plans_unchanged(self):
+        self.run_command()
+        SubscriptionPlan.objects.filter(name='basic').update(max_categories=8)  # tuned on purpose
+
+        output = self.run_command()
+
+        self.assertEqual(SubscriptionPlan.objects.count(), 2)
+        self.assertEqual(self.plan_values('basic')['max_categories'], 8)
+        self.assertEqual(output, 'Basic: already exists, left unchanged.\nPro: already exists, left unchanged.\n')
+
+    def test_limit_below_one_is_refused(self):
+        for value in ('0', '-2', 'five'):
+            with self.subTest(value), self.assertRaises(CommandError):
+                self.run_command('--basic-max-categories', value)
+        self.assertFalse(SubscriptionPlan.objects.exists())
