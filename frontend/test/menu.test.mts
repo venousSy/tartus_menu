@@ -217,3 +217,9 @@ test("the service worker is served from the site root as JavaScript, re-checked 
   // it, so a new worker version reaches customers at once.
   assert.match(res.headers.get("cache-control") ?? "", /max-age=0/);
 });
+
+test("the bare domain sends the visitor to the login page", async () => {
+  const res = await fetch(`${SITE}/`, { redirect: "manual" });
+  assert.equal(res.status, 307);
+  assert.equal(new URL(res.headers.get("location") ?? "", SITE).pathname, "/login");
+});
