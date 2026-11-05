@@ -218,6 +218,18 @@ test("the service worker is served from the site root as JavaScript, re-checked 
   assert.match(res.headers.get("cache-control") ?? "", /max-age=0/);
 });
 
+test("every answer carries the security headers: no framing, no sniffing, same-origin referrer", async () => {
+  menus.set("headers-cafe", menuWith("Latte"));
+  // A menu page, a page behind proxy.ts, the redirect of the bare domain, a static file and a 404.
+  for (const path of ["/menu/headers-cafe", "/login", "/", "/sw.js", "/menu/no-such-cafe-headers"]) {
+    const res = await fetch(`${SITE}${path}`, { redirect: "manual" });
+    assert.equal(res.headers.get("x-frame-options"), "DENY", path);
+    assert.equal(res.headers.get("content-security-policy"), "frame-ancestors 'none'", path);
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff", path);
+    assert.equal(res.headers.get("referrer-policy"), "same-origin", path);
+  }
+});
+
 test("the bare domain sends the visitor to the login page", async () => {
   const res = await fetch(`${SITE}/`, { redirect: "manual" });
   assert.equal(res.status, 307);
