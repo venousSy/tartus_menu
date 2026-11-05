@@ -426,6 +426,7 @@ All services run inside Docker Compose on a single VPS.
 
 - Every proxied location sets `X-Forwarded-For $proxy_add_x_forwarded_for` and `X-Forwarded-Proto`.
 - `limit_req` (per client IP) on `/api/v1/auth/login/`, the BFF login route and the Django admin login page.
+- A separate, generous `limit_req` zone (per client IP) on the `/menu/` pages (§3.4 public menu note). Many customers of one cafe may share one IP behind its Wi-Fi.
 - `client_max_body_size 3m` (the API limits uploads to 2 MB; larger bodies are rejected before Django).
 - `add_header X-Robots-Tag "noindex, nofollow"` on `/menu/`.
 - HTTP → HTTPS redirect and HSTS.
