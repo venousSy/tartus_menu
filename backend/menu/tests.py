@@ -5,6 +5,7 @@ Each test sends real HTTP requests through URL -> view -> service -> database.
 """
 
 import json
+import urllib.error
 from datetime import timedelta
 from decimal import Decimal
 from io import BytesIO
@@ -809,6 +810,43 @@ class MenuRevalidationTests(CategoryAPITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertEqual(callbacks, [])  # no revalidation was even scheduled
+
+    def create_category(self):
+        """One successful write (UC-OWNER-001), with its on_commit callbacks run as after a commit."""
+        with self.captureOnCommitCallbacks(execute=True):
+            return self.client.post(self.list_url, {'name': {'ar': 'Food'}}, format='json')
+
+    @override_settings(FRONTEND_REVALIDATE_SECRET='test-revalidate-secret')
+    def test_the_call_carries_the_secret_and_a_short_timeout(self):  # system_design.md 3.5
+        with mock.patch('urllib.request.urlopen') as urlopen:
+            self.create_category()
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.get_method(), 'POST')
+        self.assertEqual(request.full_url, 'http://frontend.test/internal/revalidate')
+        # urllib stores header names with only the first letter upper case.
+        self.assertEqual(request.get_header('X-revalidate-secret'), 'test-revalidate-secret')
+        self.assertEqual(request.get_header('Content-type'), 'application/json')
+        self.assertEqual(urlopen.call_args.kwargs, {'timeout': 2})  # a slow frontend never holds the owner
+
+    def test_a_failed_call_is_only_logged(self):  # system_design.md 3.5: it never fails the write
+        refused = urllib.error.URLError('connection refused')
+        with (
+            mock.patch('urllib.request.urlopen', side_effect=refused),
+            self.assertLogs('core.revalidation', level='ERROR') as log,
+        ):
+            response = self.create_category()  # would raise here if the error escaped
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn("Menu revalidation failed for slugs ['tartus-coffee']", log.output[0])
+
+    @override_settings(FRONTEND_REVALIDATE_URL='')
+    def test_an_empty_url_sends_nothing(self):  # not configured, e.g. local development
+        with mock.patch('urllib.request.urlopen') as urlopen:
+            response = self.create_category()
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        urlopen.assert_not_called()
 
 
 class PublicMenuTests(APITestCase):
