@@ -8,7 +8,7 @@ Super Admin views pass the cafe id from the URL: the admin manages every cafe.
 """
 
 from django.contrib.auth import get_user_model
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -165,12 +165,21 @@ def create_cafe(*, slug, name, plan, owner):
     UC-ADMIN-001: the owner account and its inactive cafe, in one transaction.
     The serializer already checked the input, including the unique slug (A1) and email (A2).
     """
-    with transaction.atomic():
-        # The owner first, as the use case says; if the cafe insert fails, the rollback removes the account too.
-        user = User.objects.create_user(
-            email=owner['email'], password=owner['password'], role=User.Role.CAFE_OWNER
-        )
-        cafe = Cafe.objects.create(owner=user, plan=plan, slug=slug, name=name)  # is_active=False by default
+    try:
+        with transaction.atomic():
+            # The owner first, as the use case says; if the cafe insert fails, the rollback removes the account too.
+            user = User.objects.create_user(
+                email=owner['email'], password=owner['password'], role=User.Role.CAFE_OWNER
+            )
+            cafe = Cafe.objects.create(owner=user, plan=plan, slug=slug, name=name)  # is_active=False by default
+    except IntegrityError:
+        # A parallel request with the same email or slug got past the serializer's check first, and the
+        # database's unique constraint stopped this one: answer the 400 that the check would have given.
+        if User.objects.filter(email=User.objects.normalize_email(owner['email'])).exists():
+            raise ValidationError({'owner': {'email': ['A user with this email already exists.']}}) from None  # A2
+        if Cafe.objects.filter(slug=slug).exists():
+            raise ValidationError({'slug': ['A cafe with this slug already exists.']}) from None  # A1
+        raise
     return get_cafe(cafe.pk)
 
 
@@ -244,7 +253,13 @@ def update_cafe(cafe_id, *, performed_by, name=None, slug=None, primary_color=No
                 changed.append(field)
 
         if changed:
-            cafe.save(update_fields=[*changed, 'updated_at'])
+            try:
+                cafe.save(update_fields=[*changed, 'updated_at'])
+            except IntegrityError:
+                # The slug is the only unique field here: a parallel request took it after the check above.
+                if 'slug' in changed:
+                    raise ValidationError({'slug': ['A cafe with this slug already exists.']}) from None  # A1
+                raise
             # Global Convention 9: after a slug change, both pages (dict.fromkeys drops a repeated slug).
             schedule_menu_revalidation(*dict.fromkeys([old_slug, cafe.slug]))
     return get_cafe(cafe_id)
