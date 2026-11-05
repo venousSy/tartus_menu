@@ -54,7 +54,7 @@
     "passwordTooShort": "The password is too short. Use at least {min, plural, one {# character} other {# characters}}.",
     "passwordTooCommon": "This password is too common.",
     "passwordNumeric": "The password cannot be only numbers.",
-    "passwordTooSimilar": "The password is too similar to your account details.",
+    "passwordTooSimilar": "The password is too similar to the account's email address.",
     "slugTaken": "Another cafe already uses this address name.",
     "slugFormat": "Use only English letters, numbers, hyphens or underscores, like tartus-coffee.",
     "emailTaken": "Another account already uses this email address.",
