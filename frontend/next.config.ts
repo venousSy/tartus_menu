@@ -4,6 +4,17 @@ import createNextIntlPlugin from "next-intl/plugin";
 // Connects next-intl to src/i18n/request.ts.
 const withNextIntl = createNextIntlPlugin();
 
+// Django's own answers get these from its middleware; Next.js pages need them here. Set in Nginx
+// instead, they would be doubled on /api/ and lost on /menu/ (a location with its own add_header).
+const SECURITY_HEADERS = [
+  // No page may be shown inside another site's frame (clickjacking). The CSP form is the modern one.
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  // The same value as Django's default: other sites never see which page a visitor came from.
+  { key: "Referrer-Policy", value: "same-origin" },
+];
+
 const nextConfig: NextConfig = {
   /* config options here */
   // The repository's root AGENTS.md is the only rule file: stop `next dev`
@@ -11,6 +22,9 @@ const nextConfig: NextConfig = {
   agentRules: false,
   cacheComponents: true,
   partialPrefetching: true,
+  async headers() {
+    return [{ source: "/:path*", headers: SECURITY_HEADERS }];
+  },
   experimental: {
     serverActions: {
       // Image uploads go through Server Actions. A file may be up to 2 MB (UC-OWNER-006, checked
