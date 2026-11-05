@@ -22,8 +22,12 @@ ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1
 COPY package.json package-lock.json .npmrc ./
 # Reuse the packages of stage 1 and remove the dev ones: no second download from the npm registry.
+# The lock file marks Playwright "devOptional" (next lists it as an optional peer), so prune keeps it;
+# it is deleted by name. `--omit=optional` is no fix: it would also drop sharp's and swc's platform builds.
 COPY --from=deps /app/node_modules ./node_modules
-RUN npm prune --omit=dev
+RUN npm prune --omit=dev \
+ && rm -rf node_modules/@playwright node_modules/playwright node_modules/playwright-core \
+           node_modules/.bin/playwright node_modules/.bin/playwright-core
 COPY --from=build /app/next.config.ts ./
 COPY --from=build /app/public ./public
 # The "node" user (built into the base image) owns .next/, so the server can write its page cache there (ISR).
