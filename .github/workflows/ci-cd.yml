@@ -97,7 +97,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       # Fails on any known vulnerability in the packages that ship (best_practices_research.md §6).
-      # Dev-only tooling (lint, tests) is left out with --omit=dev: it never runs in production (OBSERVATIONS.md 56).
+      # Dev-only tooling (lint, tests) is left out with --omit=dev: it never runs in production (OBSERVATIONS.md 42).
       - name: Dependency audit
         run: npm audit --omit=dev
       - name: Lint
