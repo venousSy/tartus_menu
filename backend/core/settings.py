@@ -166,8 +166,10 @@ if USE_S3:
     # may cache it for a year (UC-OWNER-006).
     AWS_S3_OBJECT_PARAMETERS = {'CacheControl': 'public, max-age=31536000, immutable'}
 else:
-    # Fallback to local storage for early development
-    MEDIA_URL = 'media/'
+    # Local storage, for development only (Compose always sets USE_S3=True). Django serves these files
+    # itself in DEBUG (core/urls.py). The URL is absolute because the pages come from Next.js on another
+    # port: a relative /media/... would be asked from Next.js, which has no such files.
+    MEDIA_URL = os.getenv('DJANGO_MEDIA_URL') or 'http://127.0.0.1:8000/media/'
     MEDIA_ROOT = BASE_DIR / 'media'
 
 # Daily database backup (manage.py backup_database, step 14): a separate PRIVATE R2 bucket with its own

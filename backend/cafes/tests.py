@@ -37,7 +37,8 @@ INACTIVE = {'detail': 'Your subscription is inactive. Please contact support.'}
 
 # Uploads are kept in memory during tests: nothing reaches R2 or backend/media/.
 IN_MEMORY_STORAGES = {
-    'default': {'BACKEND': 'django.core.files.storage.InMemoryStorage'},
+    # A fixed base_url, so the URLs in the tests do not depend on DJANGO_MEDIA_URL.
+    'default': {'BACKEND': 'django.core.files.storage.InMemoryStorage', 'OPTIONS': {'base_url': '/media/'}},
     'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
 }
 
