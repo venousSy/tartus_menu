@@ -24,7 +24,7 @@ from .serializers import (
     PublicMenuSerializer,
     ReorderSerializer,
 )
-              
+
 # Global Convention 5: role check first, then the active-subscription check.
 OWNER_OF_ACTIVE_CAFE = [IsCafeOwner, IsActiveCafe]
 
