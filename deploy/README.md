@@ -198,18 +198,33 @@ The next merge into `main` deploys. Set `DEPLOY_ENABLED` to anything else to sto
 ## 12. Database backups
 
 The `backup` service runs two jobs every night (`backend/crontab`, times in UTC):
-02:00 `backup_database` (pg_dump, gzip, upload as `backups/YYYY-MM-DD.sql.gz`) and
+02:00 `backup_database` (pg_dump, gzip, encrypt with `age`, upload as `backups/YYYY-MM-DD.sql.gz.age`) and
 02:30 `flushexpiredtokens` (removes expired login tokens).
 
-### 12.1 The backup bucket and its token (once)
+A dump holds every cafe's data and the password hashes. It is encrypted for your `age` public key before
+it leaves the server, and only the private key, which never goes on the server, can read it. A leaked
+backup token or a stolen dump then shows nothing.
 
-In the Cloudflare dashboard, under R2:
+### 12.1 The encryption key, the backup bucket and its token (once)
 
-1. Create a bucket, for example `tartus-backups`. Give it **no** custom domain and no public access: a dump
-   holds every cafe's data and the password hashes.
+First the key pair, on **your own computer**, not on the server. Install `age` (https://age-encryption.org;
+Windows: `winget install FiloSottile.age`), then:
+
+```bash
+age-keygen -o tartus-backup-key.txt
+```
+
+It prints `Public key: age1...`. Keep `tartus-backup-key.txt` (the private key) somewhere safe outside
+the server, for example in a password manager, plus one offline copy. Without it no backup can ever be
+restored.
+
+Then, in the Cloudflare dashboard, under R2:
+
+1. Create a bucket, for example `tartus-backups`. Give it **no** custom domain and no public access.
 2. Create an R2 API token with "Object Read & Write" permission for **this bucket only**.
-3. Put the bucket name and the token's key ID and secret into `.env` (`R2_BACKUP_BUCKET_NAME`,
-   `R2_BACKUP_ACCESS_KEY_ID`, `R2_BACKUP_SECRET_ACCESS_KEY`), then run `docker compose up -d`.
+3. Put the bucket name, the token's key ID and secret, and the `age1...` public key into `.env`
+   (`R2_BACKUP_BUCKET_NAME`, `R2_BACKUP_ACCESS_KEY_ID`, `R2_BACKUP_SECRET_ACCESS_KEY`,
+   `BACKUP_AGE_PUBLIC_KEY`), then run `docker compose up -d`.
 
 ### 12.2 Keep 30 days (once)
 
@@ -225,14 +240,21 @@ docker compose exec backup python manage.py backup_database
 docker compose logs --tail 20 backup
 ```
 
-The first command prints `Uploaded backups/<date>.sql.gz (<size> bytes).`; the new file is listed in the
-bucket in the Cloudflare dashboard. A failed run says why in the log (for example a wrong token).
+The first command prints `Uploaded backups/<date>.sql.gz.age (<size> bytes).`; the new file is listed in
+the bucket in the Cloudflare dashboard. A failed run says why in the log (for example a wrong token, or
+a missing `BACKUP_AGE_PUBLIC_KEY`: the command never uploads an unencrypted dump).
 
 ### 12.4 Restore drill (every month)
 
 A backup is only proven once it has been restored. Download a recent dump from the bucket in the
-Cloudflare dashboard, copy it to the server, and restore it into a throwaway PostgreSQL 16, not into
-the live database:
+Cloudflare dashboard and decrypt it **on your own computer**, where the private key is:
+
+```bash
+age --decrypt -i tartus-backup-key.txt -o 2026-11-03.sql.gz 2026-11-03.sql.gz.age
+```
+
+Copy the decrypted `2026-11-03.sql.gz` to the server and restore it into a throwaway PostgreSQL 16, not
+into the live database. Delete the decrypted file from both machines afterwards:
 
 ```bash
 docker run -d --name restore-check -e POSTGRES_PASSWORD=restore-check postgres:16-alpine
@@ -247,7 +269,8 @@ hides the normal query results of the restore; errors are still shown.
 
 ### 12.5 Restore after a disaster
 
-Only when the live data is lost or broken. This replaces the whole database with the dump. Use the
+Only when the live data is lost or broken. This replaces the whole database with the dump. Decrypt the
+dump on your own computer first, as in 12.4, and copy the `.sql.gz` to the server. Use the
 `DB_USER` and `DB_NAME` values of your `.env` (here the defaults `postgres` and `tartus_db`):
 
 ```bash

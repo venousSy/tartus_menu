@@ -13,6 +13,7 @@ WORKDIR /app
 # Tools for the "backup" service, which runs this same image with another command (step 14):
 # - pg_dump 16 from the official PostgreSQL apt repository. Debian's own client is 17, and a version 17
 #   dump does not restore cleanly into the version 16 server.
+# - age from Debian's own (signed) repository: encrypts every dump for the owner's public key.
 # - supercronic, a cron made for containers (runs as a normal user, logs to stdout). The download is
 #   checked against the SHA-256 that GitHub shows for the release file.
 ARG SUPERCRONIC_VERSION=v0.2.51
@@ -27,7 +28,7 @@ RUN apt-get update \
     && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
         > /etc/apt/sources.list.d/pgdg.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends postgresql-client-16 \
+    && apt-get install -y --no-install-recommends postgresql-client-16 age \
     && case "$TARGETARCH" in \
         amd64) sum=cc232108374e8e2b537045f2d5eaa1229f619db314c3ba6a14d38b35dc0aa123 ;; \
         arm64) sum=4ae22576a78223d8ccdf5f3b3660a5cbb5288416bf0ca96afc4a36d195932b94 ;; \

@@ -84,6 +84,8 @@ services:
       R2_BACKUP_ACCESS_KEY_ID: ${R2_BACKUP_ACCESS_KEY_ID:?set R2_BACKUP_ACCESS_KEY_ID in .env}
       R2_BACKUP_SECRET_ACCESS_KEY: ${R2_BACKUP_SECRET_ACCESS_KEY:?set R2_BACKUP_SECRET_ACCESS_KEY in .env}
       R2_BACKUP_ENDPOINT_URL: ${R2_BACKUP_ENDPOINT_URL:-}
+      # Public key only: the dumps are encrypted for it, and the private key never comes to the server.
+      BACKUP_AGE_PUBLIC_KEY: ${BACKUP_AGE_PUBLIC_KEY:?set BACKUP_AGE_PUBLIC_KEY in .env}
 
   frontend:
     image: ghcr.io/venoussy/tartus-menu-frontend:${IMAGE_TAG:-latest}

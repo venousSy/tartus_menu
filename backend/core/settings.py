@@ -179,6 +179,8 @@ R2_BACKUP_ACCESS_KEY_ID = os.getenv('R2_BACKUP_ACCESS_KEY_ID', '')
 R2_BACKUP_SECRET_ACCESS_KEY = os.getenv('R2_BACKUP_SECRET_ACCESS_KEY', '')
 # The account's S3 API endpoint; the same as R2_ENDPOINT_URL unless set.
 R2_BACKUP_ENDPOINT_URL = os.getenv('R2_BACKUP_ENDPOINT_URL') or os.getenv('R2_ENDPOINT_URL', '')
+# age public key ("age1..."); every dump is encrypted for it. The private key stays off the server.
+BACKUP_AGE_PUBLIC_KEY = os.getenv('BACKUP_AGE_PUBLIC_KEY', '')
 
 
 # Default primary key field type
