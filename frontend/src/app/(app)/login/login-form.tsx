@@ -2,8 +2,13 @@
 
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { useActionState } from "react";
+import { useActionState, useSyncExternalStore } from "react";
 import { HOME } from "@/lib/roles";
+
+// /bff/auth/session-ended opens /login?ended=1. Read in the browser, so /login stays a static page;
+// the server render and the first browser render show no note.
+const noSubscription = () => () => {};
+const readEnded = () => new URLSearchParams(window.location.search).get("ended") === "1";
 
 // What went wrong, as a message key: the text is chosen when the form renders, so it follows a
 // language switch. `seconds` is the wait Django names in a 429 answer. `email` refills the field:
@@ -41,6 +46,7 @@ async function logIn(formData: FormData): Promise<{ role: string } | State> {
 export function LoginForm() {
   const t = useTranslations("Login");
   const router = useRouter();
+  const ended = useSyncExternalStore(noSubscription, readEnded, () => false);
   const [state, formAction, pending] = useActionState(
     async (_previous: State, formData: FormData): Promise<State> => {
       const result = await logIn(formData);
@@ -55,6 +61,9 @@ export function LoginForm() {
 
   return (
     <form action={formAction} className="mx-auto mt-12 flex max-w-sm flex-col gap-4 px-4">
+      {ended && !state.error && (
+        <p role="status" className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">{t("sessionEnded")}</p>
+      )}
       <label className="flex flex-col gap-1">
         <span className="text-sm font-semibold">{t("email")}</span>
         <input name="email" type="email" required autoComplete="username" dir="ltr" defaultValue={state.email}
