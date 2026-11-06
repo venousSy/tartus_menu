@@ -1,3 +1,7 @@
+# Every text file uses LF, in the repository and in every checkout, Windows included (core.autocrlf=true
+# would otherwise write CRLF). Git detects binary files (images, fonts) itself and leaves them unchanged.
+* text=auto eol=lf
+
 # Shell scripts run inside Linux containers: keep LF line endings even on Windows checkouts
 # (core.autocrlf=true would turn them into CRLF, and "sh" then fails on the "\r" characters).
 *.sh text eol=lf
