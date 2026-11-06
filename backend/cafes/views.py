@@ -14,6 +14,7 @@ from django.http import FileResponse
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import MultiPartParser
+from rest_framework.renderers import BaseRenderer, JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -89,10 +90,34 @@ class QRPreviewView(APIView):
         return Response(QRCodesSerializer(services.preview_qr_codes(request.user.cafe)).data)
 
 
+class PDFRenderer(BaseRenderer):
+    """
+    Lets a client ask for the PDF with `Accept: application/pdf`; without it DRF's content negotiation
+    answers 406. It never renders anything: the PDF is a FileResponse, which skips renderers, and
+    QRDownloadPDFView turns every error back to JSON.
+    """
+
+    media_type = 'application/pdf'
+    format = 'pdf'
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        raise NotImplementedError('QRDownloadPDFView answers errors with JSONRenderer.')
+
+
 class QRDownloadPDFView(APIView):
     """GET /api/v1/dashboard/qr/download-pdf/ (UC-OWNER-008): the print-ready PDF as a download."""
 
     permission_classes = [IsCafeOwner, IsActiveCafe]  # Global Convention 5 (A2)
+    # JSON first, so "*/*" and "application/json" are negotiated as before.
+    renderer_classes = [JSONRenderer, PDFRenderer]
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        if isinstance(response, Response) and isinstance(response.accepted_renderer, PDFRenderer):
+            # An error (401, 403, 400) asked for as PDF: answer it in JSON, like the rest of the API.
+            response.accepted_renderer = JSONRenderer()
+            response.accepted_media_type = JSONRenderer.media_type
+        return response
 
     def get(self, request):
         pdf = services.qr_pdf(request.user.cafe)

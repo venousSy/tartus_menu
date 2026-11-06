@@ -433,6 +433,16 @@ class QRCodeTests(CafeAPITestCase):
             [str(n), f'https://menu.domain.com/menu/tartus-coffee?table={n}'] for n in (1, 2, 3)
         ])
 
+    def test_a_client_may_ask_for_the_pdf_by_its_media_type(self):  # UC-OWNER-008; errors stay JSON
+        missing = self.client.get(self.pdf_url, HTTP_ACCEPT='application/pdf')  # no tables yet: 400
+        self.generate(1)
+        pdf = self.client.get(self.pdf_url, HTTP_ACCEPT='application/pdf')
+
+        self.assertEqual((missing.status_code, missing['Content-Type']), (400, 'application/json'))
+        self.assertEqual(json.loads(missing.content), {'detail': 'Please generate QR codes first.'})
+        self.assertEqual((pdf.status_code, pdf['Content-Type']), (200, 'application/pdf'))
+        self.assertTrue(b''.join(pdf.streaming_content).startswith(b'%PDF-'))
+
     def test_tables_of_another_cafe_are_never_touched_or_shown(self):  # tenant isolation
         other = Cafe.objects.create(
             owner=User.objects.create_user(email='other@cafe.com'), plan=self.basic, slug='other', is_active=True
