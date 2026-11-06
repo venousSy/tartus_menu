@@ -4,7 +4,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { type FormError, SERVER_ERROR, toFormError } from "@/lib/api-errors";
-import { djangoFetch } from "@/lib/server/django";
+import { djangoFetch, forwardedForHeader } from "@/lib/server/django";
 import { ACCESS_COOKIE, REFRESH_COOKIE } from "@/lib/server/session";
 
 // Calls of Django's authenticated endpoints for the dashboards (system_design.md §3.6), shared by
@@ -52,7 +52,7 @@ export async function apiFetch(path: string, { method, json, form }: ApiInit = {
       headers: {
         Authorization: `Bearer ${access}`,
         ...(json ? { "Content-Type": "application/json" } : {}),
-        ...(forwardedFor ? { "X-Forwarded-For": forwardedFor } : {}),
+        ...forwardedForHeader(forwardedFor),
       },
       body: json ? JSON.stringify(json) : form, // FormData: fetch sets the multipart Content-Type itself
     });

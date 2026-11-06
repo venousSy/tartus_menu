@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 
-import { djangoFetch } from "@/lib/server/django";
+import { djangoFetch, forwardedForHeader } from "@/lib/server/django";
 import { rejectCrossOrigin } from "@/lib/server/origin";
 import { ACCESS_COOKIE, clearTokens, REFRESH_COOKIE } from "@/lib/server/session";
 
@@ -35,7 +35,7 @@ async function revoke(access: string, refresh: string, forwardedFor: string | nu
       headers: {
         Authorization: `Bearer ${access}`,
         "Content-Type": "application/json",
-        ...(forwardedFor ? { "X-Forwarded-For": forwardedFor } : {}),
+        ...forwardedForHeader(forwardedFor),
       },
       body: JSON.stringify({ refresh }),
     });

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { djangoFetch } from "@/lib/server/django";
+import { djangoFetch, forwardedForHeader } from "@/lib/server/django";
 import type { TokenPair } from "@/lib/server/session";
 
 // How long a finished refresh stays remembered. A request that left the browser before the new
@@ -38,7 +38,7 @@ async function callRefresh(refreshToken: string, forwardedFor: string | null): P
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(forwardedFor ? { "X-Forwarded-For": forwardedFor } : {}),
+      ...forwardedForHeader(forwardedFor),
     },
     body: JSON.stringify({ refresh: refreshToken }),
   });
