@@ -1,4 +1,7 @@
+from urllib.parse import urlsplit
+
 from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
@@ -10,5 +13,10 @@ urlpatterns = [
     path('api/v1/dashboard/', include('cafes.urls')),
     path('api/v1/menu/', include('menu.public_urls')),
 ]
+
+if not settings.USE_S3:
+    # Development: uploaded images from backend/media/ (settings.MEDIA_URL). static() adds the route
+    # only when DEBUG is True, and needs the path part of the absolute MEDIA_URL.
+    urlpatterns += static(urlsplit(settings.MEDIA_URL).path, document_root=settings.MEDIA_ROOT)
 
 handler404 = 'core.views.json_not_found'  # Global Convention 2: JSON, not Django's HTML page

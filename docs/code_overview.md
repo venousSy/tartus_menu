@@ -505,7 +505,7 @@ Tells Django: "use OUR user class, not the built-in one". This must be decided B
 - Static files are your CSS/JS (here: the admin site). `STATIC_ROOT` is where `collectstatic` gathers them for Nginx.
 - Media files are user uploads (menu images). If `USE_S3` is `True`, Django saves them through `storages.backends.s3.S3Storage` to Cloudflare R2. R2 speaks the same protocol as Amazon S3, so `django-storages` and `boto3` work with it; only the endpoint URL differs. The region name is `auto` for R2.
 - With `USE_S3` on, `R2_CUSTOM_DOMAIN` is required: without it django-storages would return signed URLs that expire after an hour, and every saved `image_url` would break. Every upload gets a new random key, so the objects are cached for a year (`immutable`).
-- If `USE_S3` is off, files go to the local `backend/media/` folder (development only; `OBSERVATIONS.md` 43 explains why they do not show in the browser yet).
+- If `USE_S3` is off, files go to the local `backend/media/` folder (development only). `MEDIA_URL` is then absolute (`DJANGO_MEDIA_URL`, default `http://127.0.0.1:8000/media/`), because the pages come from Next.js on another port, and `core/urls.py` serves the folder while `DEBUG` is on.
 - The upload code: `core/images.py` checks the file with Pillow and converts it to WebP; `core/media_storage.py` saves it and deletes the old file only after the database commit.
 - A second, private R2 bucket (`R2_BACKUP_*`) holds the daily database dumps of `manage.py backup_database`.
 
