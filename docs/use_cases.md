@@ -200,6 +200,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 **Alternate Flows:**
 - **A1 — Already blacklisted token:** 400 Bad Request — token is already invalid.
 - **A2 — Missing token:** 400 Bad Request.
+- **A3 — Token of another user:** 400 Bad Request — {"detail": "Token is invalid or already blacklisted."}. A user may revoke only their own refresh token. The answer is the same as for an invalid token, so it reveals nothing about the other user's token, and that token stays valid.
 
 ---
 
