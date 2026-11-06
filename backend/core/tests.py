@@ -8,6 +8,8 @@ import io
 import os
 import runpy
 import shutil
+import subprocess
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,12 +23,17 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.settings import perform_import
 from rest_framework.views import APIView
 
+from core.management.commands import backup_database
+
 BACKUP_SETTINGS = {
     'R2_BACKUP_BUCKET_NAME': 'tartus-backups',
     'R2_BACKUP_ACCESS_KEY_ID': 'test-key-id',
     'R2_BACKUP_SECRET_ACCESS_KEY': 'test-secret',
     'R2_BACKUP_ENDPOINT_URL': 'https://account.r2.example',
+    'BACKUP_AGE_PUBLIC_KEY': 'age1testpublickey',
 }
+AGE_MARK = b'FAKE-AGE:'  # what the fake encrypt() puts before the bytes it "encrypts"
+REAL_ENCRYPT = backup_database.encrypt  # kept before BackupDatabaseTests.setUp replaces it with the fake
 FAKE_SQL = b'-- PostgreSQL database dump\nCREATE TABLE public.cafes (id bigint);\n'
 
 
@@ -125,11 +132,21 @@ class FakePgDump:
 
 @override_settings(**BACKUP_SETTINGS)
 class BackupDatabaseTests(TestCase):
-    """manage.py backup_database: pg_dump -> gzip -> backups/YYYY-MM-DD.sql.gz in the private bucket."""
+    """manage.py backup_database: pg_dump -> gzip -> age -> backups/YYYY-MM-DD.sql.gz.age in the private bucket."""
 
     def setUp(self):
         FakePgDump.calls = []
         self.uploaded = {}
+        self.encrypted_for = []
+        # The real age runs in test_a_real_age_round_trip. Here a fake marks the bytes, so the tests can
+        # check that exactly the encrypted file is uploaded (and it would also hit the fake Popen).
+        encrypt_patch = mock.patch(
+            'core.management.commands.backup_database.encrypt',
+            side_effect=lambda source, target, key: (self.encrypted_for.append(key),
+                                                     target.write(AGE_MARK + source.read())),
+        )
+        encrypt_patch.start()
+        self.addCleanup(encrypt_patch.stop)
         client_patch = mock.patch('core.management.commands.backup_database.boto3.client')
         self.client_factory = client_patch.start()
         self.addCleanup(client_patch.stop)
@@ -145,13 +162,15 @@ class BackupDatabaseTests(TestCase):
             call_command('backup_database', stdout=out)
         return out.getvalue()
 
-    def test_uploads_the_gzipped_dump_under_todays_key(self):
+    def test_uploads_the_encrypted_gzipped_dump_under_todays_key(self):
         output = self.run_backup()
 
-        key = f"backups/{datetime.now(timezone.utc):%Y-%m-%d}.sql.gz"
+        key = f"backups/{datetime.now(timezone.utc):%Y-%m-%d}.sql.gz.age"
         self.assertEqual((self.uploaded['bucket'], self.uploaded['key']), ('tartus-backups', key))
-        self.assertEqual(self.uploaded['extra'], {'ContentType': 'application/gzip'})
-        self.assertEqual(gzip.decompress(self.uploaded['body']), FAKE_SQL)
+        self.assertEqual(self.uploaded['extra'], {'ContentType': 'application/octet-stream'})
+        self.assertEqual(self.encrypted_for, ['age1testpublickey'])
+        self.assertTrue(self.uploaded['body'].startswith(AGE_MARK))  # never the plain gzip
+        self.assertEqual(gzip.decompress(self.uploaded['body'].removeprefix(AGE_MARK)), FAKE_SQL)
         self.assertIn(f"Uploaded {key} ({len(self.uploaded['body'])} bytes).", output)
         # The client uses the backup bucket's own token and endpoint, never the images bucket's.
         self.client_factory.assert_called_once_with(
@@ -188,6 +207,41 @@ class BackupDatabaseTests(TestCase):
 
         self.s3.upload_fileobj.assert_not_called()
 
+    def test_without_a_public_key_nothing_is_dumped_or_uploaded(self):  # never an unencrypted dump
+        with self.settings(BACKUP_AGE_PUBLIC_KEY=''):
+            with self.assertRaisesMessage(CommandError, 'Backup not configured, missing: BACKUP_AGE_PUBLIC_KEY.'):
+                self.run_backup()
+
+        self.assertEqual(FakePgDump.calls, [])
+        self.s3.upload_fileobj.assert_not_called()
+
+    def test_a_failed_encryption_is_reported_and_nothing_is_uploaded(self):
+        failing = CommandError('age failed (exit 1): malformed recipient')
+        with mock.patch('core.management.commands.backup_database.encrypt', side_effect=failing):
+            with self.assertRaisesMessage(CommandError, 'age failed (exit 1): malformed recipient'):
+                self.run_backup()
+
+        self.s3.upload_fileobj.assert_not_called()
+
+    @unittest.skipUnless(shutil.which('age') and shutil.which('age-keygen'), 'age is not installed here')
+    def test_a_real_age_round_trip(self):
+        # The real encrypt() with a throwaway key pair: only the private key gives the bytes back.
+        with tempfile.TemporaryDirectory() as folder:
+            identity = Path(folder) / 'key.txt'
+            keygen = subprocess.run(['age-keygen', '-o', str(identity)], capture_output=True, text=True, check=True)
+            public_key = keygen.stderr.split('Public key: ')[1].strip()
+            with tempfile.TemporaryFile() as source, tempfile.TemporaryFile() as target:
+                source.write(FAKE_SQL)
+                source.seek(0)
+                REAL_ENCRYPT(source, target, public_key)
+                target.seek(0)
+                encrypted = target.read()
+            decrypted = subprocess.run(['age', '--decrypt', '-i', str(identity)], input=encrypted,
+                                       capture_output=True, check=True).stdout
+
+        self.assertNotIn(b'CREATE TABLE', encrypted)
+        self.assertEqual(decrypted, FAKE_SQL)
+
     def test_a_failed_upload_is_reported(self):
         self.s3.upload_fileobj.side_effect = ClientError(
             {'Error': {'Code': 'NoSuchBucket', 'Message': 'The specified bucket does not exist'}}, 'PutObject')
@@ -200,6 +254,6 @@ class BackupDatabaseTests(TestCase):
         # Without the fake: the real pg_dump reads the test database (its tables come from the migrations).
         call_command('backup_database', stdout=io.StringIO())
 
-        sql = gzip.decompress(self.uploaded['body']).decode()
+        sql = gzip.decompress(self.uploaded['body'].removeprefix(AGE_MARK)).decode()
         self.assertIn('CREATE TABLE public.cafes', sql)
         self.assertNotIn('OWNER TO', sql)

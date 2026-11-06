@@ -450,7 +450,7 @@ All services run inside Docker Compose on a single VPS.
 
 | Job | Frequency | Purpose |
 |---|---|---|
-| `pg_dump` → Cloudflare R2 | Daily | Database backup (30-day retention) |
+| `pg_dump` → `age` → Cloudflare R2 | Daily | Database backup, encrypted for an offline key (30-day retention) |
 | `python manage.py flushexpiredtokens` | Daily | Removes expired rows from the JWT outstanding/blacklist tables, which grow with every login and refresh |
 
 ### Docker Services

@@ -507,7 +507,7 @@ Tells Django: "use OUR user class, not the built-in one". This must be decided B
 - With `USE_S3` on, `R2_CUSTOM_DOMAIN` is required: without it django-storages would return signed URLs that expire after an hour, and every saved `image_url` would break. Every upload gets a new random key, so the objects are cached for a year (`immutable`).
 - If `USE_S3` is off, files go to the local `backend/media/` folder (development only). `MEDIA_URL` is then absolute (`DJANGO_MEDIA_URL`, default `http://127.0.0.1:8000/media/`), because the pages come from Next.js on another port, and `core/urls.py` serves the folder while `DEBUG` is on.
 - The upload code: `core/images.py` checks the file with Pillow and converts it to WebP; `core/media_storage.py` saves it and deletes the old file only after the database commit.
-- A second, private R2 bucket (`R2_BACKUP_*`) holds the daily database dumps of `manage.py backup_database`.
+- A second, private R2 bucket (`R2_BACKUP_*`) holds the daily database dumps of `manage.py backup_database`, encrypted with `age` for `BACKUP_AGE_PUBLIC_KEY`. Only the private key, kept off the server, can read them.
 
 ### 5.11 `DEFAULT_AUTO_FIELD`
 
