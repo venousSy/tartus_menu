@@ -1,8 +1,8 @@
 # Code Overview - Learning Guide
 
-Project: Tartus Smart Digital Menu (backend only, so far)
-Snapshot: 2026-10-12, branch `feat/backend-auth-layer`
-Stack in this snapshot: Python 3.14.8, Django 6.1.2, Django REST Framework 3.18.3, djangorestframework-simplejwt 5.5.1, PostgreSQL.
+Project: Tartus Smart Digital Menu. This guide teaches the backend; section 4 shows where the frontend and the deployment live.
+Snapshot: 2026-11-06, branch `main` (first written 2026-10-12, when only the auth layer existed)
+Stack in this snapshot: Python 3.14.8, Django 6.1.2, Django REST Framework 3.18.3, djangorestframework-simplejwt 5.5.1, PostgreSQL 16, Next.js 16.
 
 > This file is a LEARNING GUIDE. It is NOT a source of truth.
 > The source of truth is `docs/use_cases.md`, `docs/system_design.md` and `docs/implementation_plan.md`.
@@ -45,37 +45,43 @@ There are three kinds of people ("actors"):
 
 ```
  Customer / Owner / Admin browser
+            |   HTTPS
+            v
+   Nginx  (TLS, rate limits, routes /api/ and the admin path to Django, the rest to Next.js)
             |
             v
-   Next.js frontend  (NOT built yet)
-            |   HTTP + JSON, prefix /api/v1/
+   Next.js frontend  (pages + BFF: keeps the JWTs in HttpOnly cookies)
+            |   HTTP + JSON, prefix /api/v1/  (server to server; the browser never calls Django)
             v
-   Django + DRF backend  (partly built)
+   Django + DRF backend
             |
             +---> PostgreSQL        (data)
-            +---> Cloudflare R2     (images; settings exist, upload code does not)
+            +---> Cloudflare R2     (uploaded images; a second, private bucket for database backups)
 ```
 
 The backend is a "modular monolith". Monolith means one program, deployed as one unit. Modular means the code is split into clear modules (Django "apps"): `users`, `cafes`, `menu`. This is simpler than microservices (many small programs) and fits a small team.
 
 ### 1.3 What is built and what is not (snapshot)
 
+The MVP build order of `implementation_plan.md` is complete.
+
 | Part | State |
 |---|---|
-| Django project `core` (settings, root urls) | Built |
+| Django project `core` (settings, root urls, shared helpers) | Built |
 | Models: `users.User`, `cafes.SubscriptionPlan/Cafe/CafeTable/BillingEvent`, `menu.Category/MenuItem` | Built |
-| Migrations for all models | Built (`0001_initial` in each app) |
-| Auth: login, refresh, logout, change-password views + serializers | Built |
-| Permissions: `IsSystemAdmin`, `IsCafeOwner`, `IsActiveCafe` | Built, not used by any view yet |
-| URL files for the apps (`users/urls.py` etc.) and the include in `core/urls.py` | NOT built. The auth endpoints cannot be called over HTTP yet. |
-| `services.py` (business rules: plan limits, transactions) | NOT built |
-| Login rate limit (throttle) and the cache it needs | NOT built (planned in the use case) |
-| Admin API, dashboard API, public menu API | NOT built |
-| Tests | NOT built |
-| Image upload, QR/PDF generation, revalidation call to Next.js | NOT built |
-| Frontend (Next.js), Docker, Nginx, CI/CD | NOT built |
+| Migrations | Built: `0001_initial` in each app, plus `cafes/0002` and `menu/0002` (the CHECK constraints) |
+| Auth: login (with a rate limit), refresh, logout, change-password | Built |
+| Permissions: `IsSystemAdmin`, `IsCafeOwner`, `IsActiveCafe` | Built and attached to the views |
+| URL files for the apps and their includes in `core/urls.py` | Built |
+| `services.py` in `cafes` and `menu` (plan limits, row locks, transactions) | Built |
+| Admin API, dashboard API, public menu API | Built |
+| Image upload (Pillow, R2), QR codes and the PDF, revalidation call to Next.js | Built |
+| Management commands `create_plans` and `backup_database` | Built |
+| Tests: backend API tests, frontend integration tests, Playwright end-to-end tests | Built |
+| Frontend (Next.js), Docker images, Compose, Nginx, GitHub Actions CI/CD | Built |
+| PostgreSQL row-level security | NOT built (planned after the MVP) |
 
-Today's quick health check (run on the snapshot date): `python manage.py check` reports no issues. `python manage.py makemigrations --check --dry-run` reports "No changes detected", so the models and the migration files agree. (PostgreSQL was not running, so Django skipped its check of the applied-migration history and printed a warning. That is normal here.)
+Quick health check: `python manage.py check` reports no issues, and `python manage.py makemigrations --check --dry-run` reports "No changes detected", so the models and the migration files agree. CI runs both on every pull request.
 
 ---
 
@@ -285,7 +291,7 @@ Classic Django is called MVT (Model, View, Template). This project builds an API
 | View | Receives a request, returns a response | `views.py` |
 | Serializer (DRF) | Validates input data and converts objects to JSON | `serializers.py` |
 | Permission (DRF) | Decides who may call a view | `permissions.py` |
-| URL router | Maps a URL path to a view | `urls.py` (not built yet) |
+| URL router | Maps a URL path to a view | `urls.py` |
 | Middleware | Code that wraps every request | `settings.MIDDLEWARE` |
 
 Note: the word "view" in Django means what many other frameworks call a "controller".
@@ -303,16 +309,16 @@ Note: the word "view" in Django means what many other frameworks call a "control
  Django middleware chain (settings.MIDDLEWARE), top to bottom
    |
    v
- URL router: core/urls.py -> app urls.py -> picks the view     (urls not wired yet)
+ URL router: core/urls.py -> app urls.py -> picks the view
    |
    v
  DRF APIView.dispatch(), in this order:
    1. Authentication  - who are you?   -> sets request.user      (JWTAuthentication)
    2. Permissions     - may you?       -> permission_classes
-   3. Throttling      - too many?      -> (planned for login)
+   3. Throttling      - too many?      -> throttle_classes        (only the login view)
    4. Handler method  - post() / get() ...
           serializer.is_valid()  -> check input
-          service function       -> business rules      (planned)
+          service function       -> business rules      (services.py)
           ORM calls              -> SQL -> PostgreSQL
    5. Response object -> JSON
    If any step raises an exception, DRF turns it into {"detail": "..."} with a status code.
@@ -345,7 +351,7 @@ Key ideas:
 - Each foreign key gives you two names: `item.category` (the object, may cost a query) and `item.category_id` (the raw number, free).
 - **N+1 problem**: loading 100 items and then reading `item.category.name` for each one runs 1 query for the list plus 100 queries for categories. Fix: `select_related('category')` (a SQL JOIN). You will see the code avoid it in `__str__` by using `self.cafe_id` instead of `self.cafe.slug`.
 
-The pattern the project rules require for every cafe-owned table (not built yet):
+The pattern the project rules require for every cafe-owned table (used in every service of `menu` and `cafes`):
 
 ```python
 Category.objects.filter(cafe=request.user.cafe)   # tenant filter; objects already hides soft-deleted rows
@@ -371,28 +377,47 @@ Rules: never edit a migration that was already applied; never hand-write one (pr
 
 ```
 tartus_menu/
-|-- AGENTS.md                 Rules for the AI assistant (one file per turn, layering, invariants)
+|-- AGENTS.md                 Rules for the AI assistant (one step per turn, layering, invariants)
+|-- OBSERVATIONS.md           Backlog of known problems, numbered
 |-- README.md                 Short project summary
+|-- compose.yaml              The production stack: db, backend, backup, frontend, nginx
+|-- .github/workflows/        CI/CD: tests, audits, images, end-to-end tests, deploy
+|-- deploy/                   Runbook (README.md) and the Nginx configuration
 |-- docs/                     Design documents (source of truth) + this guide
 |-- backend/
 |   |-- manage.py             Command-line entry point
 |   |-- requirements.txt      Python dependencies
-|   |-- core/                 Django PROJECT
+|   |-- Dockerfile            The backend image (Gunicorn); crontab for the daily backup
+|   |-- core/                 Django PROJECT plus code shared by the apps
 |   |   |-- settings.py       All configuration
-|   |   `-- urls.py           Root URL table (only /admin/ so far)
+|   |   |-- urls.py           Root URL table: the hidden admin path and the /api/v1/ includes
+|   |   |-- wsgi.py           Entry point for Gunicorn
+|   |   |-- views.py          The JSON 404 handler
+|   |   |-- images.py         Checks and converts uploads with Pillow (WebP)
+|   |   |-- media_storage.py  Saves and deletes images on R2 (or backend/media/)
+|   |   |-- revalidation.py   Asks Next.js to rebuild a public menu page after a write
+|   |   |-- serializer_fields.py  The bilingual {"ar", "en"} name and description fields
+|   |   `-- management/commands/backup_database.py
 |   |-- users/                APP: accounts and authentication
 |   |   |-- models.py         User + CustomUserManager
 |   |   |-- serializers.py    Login, logout, change-password input rules
 |   |   |-- views.py          The 4 auth endpoints (as classes)
-|   |   |-- permissions.py    Role and subscription checks
-|   |   `-- migrations/0001_initial.py
+|   |   |-- permissions.py    Role and subscription checks, used by every app
+|   |   |-- urls.py           /api/v1/auth/...
+|   |   `-- tests.py
 |   |-- cafes/                APP: the tenant (cafe), plans, tables, billing log
-|   |   |-- models.py
-|   |   `-- migrations/0001_initial.py
+|   |   |-- models.py, services.py, serializers.py, views.py
+|   |   |-- urls.py           Owner dashboard: settings, logo, QR codes
+|   |   |-- admin_urls.py     Super Admin API: /api/v1/admin/...
+|   |   |-- qr.py             QR images and the PDF (qrcode, reportlab)
+|   |   |-- management/commands/create_plans.py
+|   |   `-- tests.py
 |   `-- menu/                 APP: categories and items
-|       |-- models.py
-|       `-- migrations/0001_initial.py
-`-- (frontend/ not created yet)
+|       |-- models.py, services.py, serializers.py, views.py
+|       |-- urls.py           Owner dashboard: categories, items, images
+|       |-- public_urls.py    The public menu: /api/v1/menu/<slug>/
+|       `-- tests.py
+`-- frontend/                 Next.js app (see frontend/README.md)
 ```
 
 Dependency direction between apps: `menu` -> `cafes` -> `users`. This means `menu` models point to `cafes`, and `cafes` points to `users`. Nothing points the other way. This avoids circular imports.
@@ -444,6 +469,7 @@ DEBUG = os.getenv('DJANGO_DEBUG', 'False') == 'True'
 | `rest_framework_simplejwt.token_blacklist` | Adds database tables to remember issued and revoked refresh tokens |
 | `corsheaders` | CORS headers (see 5.10) |
 | `storages` | `django-storages`: save files to S3-compatible storage such as R2 |
+| `core` | Has no models; listed so Django finds its management command `backup_database` |
 | `users`, `cafes`, `menu` | Our apps |
 
 ### 5.5 `MIDDLEWARE`
@@ -459,7 +485,7 @@ Middleware is a list of small layers. Each request goes down the list; each resp
 
 - `ROOT_URLCONF = 'core.urls'` tells Django where the root URL table is.
 - `TEMPLATES` is only needed for the admin site's HTML.
-- `WSGI_APPLICATION = 'core.wsgi.application'` points to a file that does not exist yet (see section 11).
+- `WSGI_APPLICATION = 'core.wsgi.application'` points to `core/wsgi.py`, the entry point that Gunicorn loads in the Docker image.
 
 ### 5.7 `DATABASES`
 
@@ -478,8 +504,10 @@ Tells Django: "use OUR user class, not the built-in one". This must be decided B
 
 - Static files are your CSS/JS (here: the admin site). `STATIC_ROOT` is where `collectstatic` gathers them for Nginx.
 - Media files are user uploads (menu images). If `USE_S3` is `True`, Django saves them through `storages.backends.s3.S3Storage` to Cloudflare R2. R2 speaks the same protocol as Amazon S3, so `django-storages` and `boto3` work with it; only the endpoint URL differs. The region name is `auto` for R2.
-- If `USE_S3` is off, files go to the local `media/` folder.
-- Upload code is not written yet. Only the configuration exists.
+- With `USE_S3` on, `R2_CUSTOM_DOMAIN` is required: without it django-storages would return signed URLs that expire after an hour, and every saved `image_url` would break. Every upload gets a new random key, so the objects are cached for a year (`immutable`).
+- If `USE_S3` is off, files go to the local `backend/media/` folder (development only; `OBSERVATIONS.md` 43 explains why they do not show in the browser yet).
+- The upload code: `core/images.py` checks the file with Pillow and converts it to WebP; `core/media_storage.py` saves it and deletes the old file only after the database commit.
+- A second, private R2 bucket (`R2_BACKUP_*`) holds the daily database dumps of `manage.py backup_database`.
 
 ### 5.11 `DEFAULT_AUTO_FIELD`
 
@@ -493,7 +521,10 @@ Tells Django: "use OUR user class, not the built-in one". This must be decided B
 ```
 
 - Every view authenticates with a JWT by default.
-- Every view requires a logged-in user by default. This is the "deny by default" principle: a developer who forgets to set permissions gets a closed endpoint, not an open one. Public endpoints must opt out on purpose (`LoginView` does this with `AllowAny`).
+- Every view requires a logged-in user by default. This is the "deny by default" principle: a developer who forgets to set permissions gets a closed endpoint, not an open one. Public endpoints must opt out on purpose (`LoginView`, `RefreshTokenView` and `PublicMenuView` do this with `AllowAny`).
+- `DEFAULT_THROTTLE_RATES = {'login': LOGIN_THROTTLE_RATE}` (default `5/min`): the login view opts in with `throttle_scope = 'login'`. The counters live in `CACHES`, a `DatabaseCache` table (`createcachetable`), so all Gunicorn workers share them without Redis.
+- `NUM_PROXIES` (from `DJANGO_NUM_PROXIES`): how many proxies sit in front of Django. Production (Nginx) uses 1, so the throttle reads the real client IP from `X-Forwarded-For`; the default 0 ignores that header, so a client cannot fake its IP.
+- `DEFAULT_RENDERER_CLASSES`: only `JSONRenderer` when `DEBUG` is off. The Browsable API (an HTML page per endpoint) is a development tool.
 
 ### 5.13 `SIMPLE_JWT`
 
@@ -515,6 +546,18 @@ Only when `DEBUG` is off:
 
 - `SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')`: Nginx ends the HTTPS connection and talks plain HTTP to Django. Nginx adds the header `X-Forwarded-Proto: https`. This setting tells Django to trust that header, so Django knows the original request was secure. Danger: if the proxy does not overwrite this header, a client could fake it. The code comment says so.
 - `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`: cookies are sent only over HTTPS.
+- The HTTP-to-HTTPS redirect and HSTS are Nginx's job. `check --deploy` warns that Django sets neither, so these two warnings (`security.W004`, `security.W008`) are silenced, and CI fails on any other deploy warning.
+
+### 5.16 Other settings read from the environment
+
+| Setting | Why |
+|---|---|
+| `PUBLIC_MENU_BASE_URL` | The address printed in the QR codes. Required in production: a wrong printed QR code cannot be fixed later. |
+| `DJANGO_ADMIN_PATH` | The Django admin site's path. Must be a non-obvious word in production, never `admin`. |
+| `FRONTEND_REVALIDATE_URL`, `FRONTEND_REVALIDATE_SECRET` | Where Django asks Next.js to rebuild a menu page after a write (`core/revalidation.py`). |
+| `LOGGING` | Errors of our `core` modules and every 5xx (`django.request`) go to the console, where Docker collects them. |
+
+Every variable is listed in `backend/.env.example`.
 
 ---
 
@@ -674,7 +717,7 @@ Limits of this guard: `QuerySet.update()`, `bulk_create()` and `bulk_update()` d
 - A **validator** (like `MinValueValidator`) is Python code. It runs when `full_clean()` is called, and when a DRF `ModelSerializer` validates input. It does NOT run on a plain `.save()`, and not on raw SQL.
 - A **constraint** (like `UniqueConstraint`, or a `CheckConstraint`) lives in the database. It protects the data against any code path, including scripts and the admin.
 
-`system_design.md` section 2.2 mentions `CHECK` rules for `table_number` (1..200), `price >= 0` and `primary_color`. In the current models only `table_number` has a validator, and there are no database `CheckConstraint`s. See section 11.
+`system_design.md` section 2.2 asks for `CHECK` rules on `table_number` (1..200), `price >= 0` and `primary_color`. The models have all three as `CheckConstraint`s (`cafe_table_number_range`, `menu_item_price_not_negative`, `cafe_primary_color_format`), added by the `0002` migrations. The serializers check the same rules first, so the API answers 400 with a clear message; the constraints stop every other writer, such as the Django admin site or a script. `table_number` also keeps its validators.
 
 ---
 
@@ -694,6 +737,7 @@ class Migration(migrations.Migration):
 - `operations`: the schema steps. `CreateModel` becomes `CREATE TABLE`. Field arguments (like `max_length`, `choices`, `validators`) are copied into the file, so a change to them creates a new migration.
 - `users/0001` creates two extra join tables (`groups`, `user_permissions`) because of `PermissionsMixin`.
 - Python behavior that is not schema does not appear in the file: custom managers (`ActiveManager`), the `save()` guard, `__str__`. Field arguments and `Meta` options (`ordering`, `db_table`, `constraints`) DO appear.
+- Later migrations change an existing schema. `cafes/0002_...` and `menu/0002_...` contain only `AddConstraint` operations (the CHECK rules of 6.6). Their `dependencies` keep the order: `cafes/0002` runs after `cafes/0001`, and `menu/0002` after `cafes/0002`.
 
 Project rules for migrations: generate with `makemigrations`, never hand-write, review the content, and keep each migration as its own step.
 
@@ -739,7 +783,7 @@ The app `token_blacklist` adds two tables:
 - `OutstandingToken`: one row for every refresh token that was issued.
 - `BlacklistedToken`: one row for every revoked refresh token.
 
-**Rotation**: every refresh call returns a new access token AND a new refresh token, and the old refresh token is blacklisted. A refresh token works only once. If it is used again, the server answers 401. The frontend must therefore send one refresh call at a time ("single-flight"), otherwise a second parallel call fails and logs the user out (see `use_cases.md` UC-AUTH-002).
+**Rotation**: every refresh call returns a new access token AND a new refresh token, and the old refresh token is blacklisted. A refresh token works only once. If it is used again, the server answers 401. The frontend must therefore send one refresh call at a time ("single-flight"), otherwise a second parallel call fails and logs the user out (see `use_cases.md` UC-AUTH-002). The BFF does this in `frontend/src/lib/server/refresh.ts`: parallel requests with the same refresh token share one call to Django.
 
 ### 8.3 Login (UC-AUTH-001) step by step
 
@@ -749,16 +793,18 @@ Code: `users/views.py` `LoginView`, `users/serializers.py` `CustomTokenObtainPai
 class LoginView(TokenObtainPairView):
     permission_classes = [AllowAny]
     serializer_class = CustomTokenObtainPairSerializer
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'login'
 ```
 
-`LoginView` is almost empty because simplejwt's `TokenObtainPairView` already does the work. The view only picks the serializer and states that no login is needed to call it (`AllowAny` overrides the global `IsAuthenticated` default).
+`LoginView` is almost empty because simplejwt's `TokenObtainPairView` already does the work. The view picks the serializer, states that no login is needed to call it (`AllowAny` overrides the global `IsAuthenticated` default), and turns on the login rate limit (5.12). DRF checks the throttle before `post()` runs, so every attempt counts, successful or not; over the limit the client gets 429 (UC-AUTH-001 A4).
 
 What happens when the client sends `{"email": "...", "password": "..."}`:
 
 1. The view calls `serializer.is_valid(raise_exception=True)`.
 2. Our serializer's `validate()` runs. It first calls `super().validate(attrs)`, which does the heavy work:
    1. Django's `authenticate()` runs. It calls `get_by_natural_key` (our case-insensitive lookup), verifies the password hash, and checks `is_active`.
-   2. If anything fails: 401 `{"detail": "No active account found with the given credentials."}`. The message is the same for "no such user", "wrong password" and "inactive account", so an attacker cannot learn which emails exist (information hiding). Django also does a dummy password hash when the user does not exist, so response time does not reveal it either.
+   2. If anything fails: 401 `{"detail": "No active account found with the given credentials"}` (simplejwt's text, without a final period). The message is the same for "no such user", "wrong password" and "inactive account", so an attacker cannot learn which emails exist (information hiding). Django also does a dummy password hash when the user does not exist, so response time does not reveal it either.
    3. On success the serializer creates a refresh token with `get_token(user)`, then builds `{"refresh": ..., "access": ...}` from it.
 3. Our override of `get_token` adds the claim `role` to the token:
 
@@ -775,7 +821,7 @@ def get_token(cls, user):
 
 **Important design point.** The server never trusts the `role` inside the token for authorization. On every request, `JWTAuthentication` loads the user row from the database (and rejects inactive users). The permission classes read `request.user.role` from that row. So if an admin changes a user's role or deactivates the account, the change works immediately, even though the old token still says the old role. The claim is only a convenience for the frontend.
 
-Not built yet from the use case: the 429 login throttle (needs `ScopedRateThrottle` settings, a cache backend and `throttle_scope` on the view).
+Nginx adds a second login limit per IP in front of Django (`limit_req` in `deploy/nginx/default.conf.template`), so a flood stops before it reaches Gunicorn.
 
 ### 8.4 An authenticated request
 
@@ -798,7 +844,7 @@ Step by step:
 
 1. `LogoutSerializer` checks that `refresh` is present (missing: 400 from DRF automatically).
 2. `RefreshToken(text)` parses and verifies the token. It raises `TokenError` if the signature is wrong, the token is expired, or the token is already blacklisted. The code answers 400 `Token is invalid or already blacklisted.`
-3. Ownership check: the `user_id` claim of the token must equal the id of the logged-in user (`request.user`). Otherwise user A could revoke user B's token. In that case the SAME error response is returned, so the answer reveals nothing about the other user's token. The comparison is `token_user_id != str(...)` because simplejwt stores the claim as a string. This is true for the installed version 5.5.1 (checked in `tokens.py`); `requirements.txt` allows `>=5.3`, so a logout integration test should protect this assumption.
+3. Ownership check: the `user_id` claim of the token must equal the id of the logged-in user (`request.user`). Otherwise user A could revoke user B's token. In that case the SAME error response is returned, so the answer reveals nothing about the other user's token. The comparison is `token_user_id != str(...)` because simplejwt stores the claim as a string. This is true for the installed version 5.5.1 (checked in `tokens.py`); `requirements.txt` allows `>=5.3`, so `users/tests.py` (`test_another_users_token_is_rejected_and_stays_valid`) protects this assumption.
 4. `token.blacklist()` inserts the `BlacklistedToken` row. Race: if two logouts happen at once, the second may raise `TokenError`; that is caught too.
 5. Success: `205 Reset Content`. The body is empty; the status tells the client to reset its view.
 
@@ -866,7 +912,7 @@ Points to notice:
 - `IsCafeOwner` also requires that a cafe exists, so a view can safely use `request.user.cafe` afterwards.
 - Order matters. Use `permission_classes = [IsCafeOwner, IsActiveCafe]`. DRF checks the classes in order and stops at the first failure, so a non-owner receives the role message and not the misleading "subscription inactive" message. This matches Global Convention 5 in `use_cases.md`.
 - Authorization uses `role`, not `is_staff` (project invariant).
-- None of these classes is attached to a view yet.
+- Where they are used: the admin views use `[IsSystemAdmin]`; every owner dashboard view, reads included, uses `[IsCafeOwner, IsActiveCafe]` (`menu/views.py` names that list `OWNER_OF_ACTIVE_CAFE`). The one exception is `GET settings/`, which uses only `IsCafeOwner`, so an owner of an inactive cafe can still see why (Global Convention 5; `CafeSettingsView.get_permissions`).
 
 ---
 
@@ -887,15 +933,15 @@ Dependencies point downward only: a view may call a service, a service may use m
 
 Trade-off: for plain CRUD with no rules, a service is extra ceremony. The project rule: add layers where a rule exists, and add no abstraction without a second real use.
 
-### 9.2 What a future endpoint will look like (PLANNED, not built)
+### 9.2 One endpoint through every layer
 
-`POST /api/v1/dashboard/categories/`:
+`POST /api/v1/dashboard/categories/` (UC-OWNER-001), as built:
 
-1. URL -> `CategoryListCreateView`.
-2. Permissions: `[IsCafeOwner, IsActiveCafe]`.
-3. Serializer validates `name` (`ar` required, only keys `ar`/`en`).
-4. View calls `services.create_category(cafe=request.user.cafe, data=...)`. The cafe comes from the logged-in user, never from the request body.
-5. The service opens `transaction.atomic()`, locks the cafe row with `select_for_update()`, counts non-deleted categories, compares with `plan.max_categories` (a flag/limit, never the plan name), picks the next `sort_order`, creates the row.
+1. URL (`menu/urls.py`) -> `CategoryListCreateView`.
+2. Permissions: `OWNER_OF_ACTIVE_CAFE`, which is `[IsCafeOwner, IsActiveCafe]`.
+3. Serializer validates `name` with the shared `BilingualNameField` (`ar` required, only keys `ar`/`en`).
+4. View calls `services.create_category(request.user.cafe, **serializer.validated_data)`. The cafe comes from the logged-in user, never from the request body. The service takes `name` and `is_visible` as keyword-only arguments, so no other field can slip in.
+5. The service opens `transaction.atomic()`, locks the cafe row with `select_for_update(of=('self',))` (only the cafe row, not the plan row that every cafe on the plan shares), counts non-deleted categories, compares with `plan.max_categories` (a limit, never the plan name; 403 when it is reached), picks the next `sort_order` (highest + 100), creates the row, and schedules the menu revalidation for after the commit.
 6. View returns 201.
 
 Why the lock: two parallel requests could both read "4 of 5 categories used" and both insert, giving 6. `select_for_update()` makes the second request wait until the first commits (a race condition fixed by a row lock; see Global Convention 8).
@@ -938,7 +984,7 @@ Why 404 and not 403 for another cafe's data: 403 would confirm "this id exists b
 | Information hiding | same login error, 404 masking, same logout error | Do not leak facts through error messages |
 | Fail fast / fail safe | settings checks, `DEBUG` default | Crash early or choose the safe value |
 | Atomicity, ACID | `transaction.atomic()` | All steps or none |
-| Race condition, locking | `select_for_update` (planned) | Serialize competing writers |
+| Race condition, locking | `select_for_update` in the services | Serialize competing writers |
 | Normalization vs denormalization | `MenuItem.cafe` | Duplicate a fact on purpose for speed/safety, then guard it |
 | Constraints and indexes | `unique`, `UniqueConstraint` | The database enforces rules and speeds lookups |
 | Lazy evaluation | QuerySets | Build the query first, run it once |
@@ -954,19 +1000,14 @@ Why 404 and not 403 for another cafe's data: 403 would confirm "this id exists b
 
 ---
 
-## 11. Known gaps and open points (snapshot facts, nothing changed)
+## 11. Known gaps and open points (snapshot facts)
 
-These are facts found while reading the code. They are listed so you know them; they are not edits.
+The live list of known problems is `OBSERVATIONS.md` at the repository root. Two facts matter while reading this guide:
 
-1. `core/settings.py` sets `WSGI_APPLICATION = 'core.wsgi.application'`, but `core/wsgi.py` and `core/asgi.py` do not exist. Gunicorn (production server) could not start yet. `manage.py check` still passes.
-2. There is no `__init__.py` in `core/`, `users/`, `cafes/`, `menu/` (only in the `migrations/` folders). Python 3 accepts such folders as "namespace packages", and Django works with them today, but this is unusual.
-3. The app URL files are missing and `core/urls.py` only has `admin/`. The four auth views exist but cannot be reached over HTTP.
-4. `system_design.md` section 2.2 lists database CHECK rules (`table_number` 1..200, `price >= 0`, `primary_color` pattern). The models have a validator for `table_number` only; there are no `CheckConstraint`s.
-5. `requirements.txt` has `gunicorn>=21.2,<22.0` and `Pillow>=11.3,<13.0`, while `system_design.md` section 7 asks for `gunicorn>=23` and `Pillow>=12.3`.
-6. `.env.example` does not exist, though `settings.py` reads about fifteen environment variables.
-7. `backend/core/__pycache__/settings.cpython-314.pyc` is tracked by git (compiled Python files should not be committed).
-8. `docs/system_design.md` names the user table `users`; Django names it `users_user` because the model sets no `db_table`.
-9. Admin site: `admin/` is the default path. The design plans a hidden path from `DJANGO_ADMIN_PATH`.
+1. `docs/system_design.md` names the user table `users`; Django names it `users_user` because the model sets no `db_table`.
+2. No app has an `admin.py`, so the Django admin site shows no project models. Plans are created with `python manage.py create_plans` (`deploy/README.md` §6), and cafes through the Super Admin pages.
+
+The first version of this guide (2026-10-12) listed nine gaps. All of them except the table name are fixed: `core/wsgi.py` exists; every app folder has an `__init__.py`; the URL files are wired; the CHECK constraints exist (6.6); `requirements.txt` follows `system_design.md` §7; `backend/.env.example` lists every variable; no `.pyc` file is tracked; the admin site uses the hidden `DJANGO_ADMIN_PATH`.
 
 ---
 
