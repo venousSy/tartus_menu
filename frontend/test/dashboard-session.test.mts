@@ -110,15 +110,16 @@ test("a role that changed (settings answers 403) ends the session too", async ()
   assert.ok(sendsTo(html, "/bff/auth/session-ended"));
 });
 
-test("session-ended clears both cookies and opens /login; a link from another site clears nothing", async () => {
+test("session-ended clears both cookies and opens /login?ended=1; a link from another site clears nothing", async () => {
   const pair = both(issuePair());
   let { res } = await get("/bff/auth/session-ended", pair, { "Sec-Fetch-Site": "same-origin" });
   assert.equal(res.status, 303);
-  assert.equal(res.headers.get("location"), "/login");
+  assert.equal(res.headers.get("location"), "/login?ended=1", "the login form says that the session ended");
   assert.deepEqual(kept(res), { access: "", refresh: "" });
   for (const cookie of res.headers.getSetCookie()) assert.match(cookie, /Max-Age=0/);
   ({ res } = await get("/bff/auth/session-ended", pair, { "Sec-Fetch-Site": "cross-site" }));
   assert.equal(res.status, 303);
+  assert.equal(res.headers.get("location"), "/login", "no note for a link from another site");
   assert.deepEqual(res.headers.getSetCookie(), []);
 });
 

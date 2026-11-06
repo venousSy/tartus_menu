@@ -19,7 +19,8 @@
     "wrongCredentials": "Wrong email or password.",
     "missingFields": "Enter your email and password.",
     "throttled": "Too many attempts. Try again in {seconds, plural, one {# second} other {# seconds}}.",
-    "serverError": "The server could not be reached. Please try again."
+    "serverError": "The server could not be reached. Please try again.",
+    "sessionEnded": "Your session has ended. Please log in again."
   },
   "Session": {
     "logout": "Log out"
