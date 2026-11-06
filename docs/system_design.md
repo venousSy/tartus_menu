@@ -351,6 +351,20 @@ BFF means "Backend For Frontend": the Next.js server sits between the browser an
 - Nginx sets `X-Forwarded-For` with `$proxy_add_x_forwarded_for`. The BFF forwards the `X-Forwarded-For` header it received unchanged. Django reads the client IP with DRF `NUM_PROXIES` (env `DJANGO_NUM_PROXIES`, production value `1`), so login throttling sees the real customer IP on both paths (browser → Nginx → Django, and browser → Nginx → Next.js → Django).
 - The Django API itself does not change: it still returns the tokens in the JSON body.
 
+Frontend paths. None of them starts with `/api/`, because Nginx sends `/api/` to Django.
+
+| Path | Who | What |
+|---|---|---|
+| `/menu/{slug}` | Customer | The public menu (§3.4), cached; `?table=N` is read in the browser only |
+| `/` | Anyone | Redirects to `/login` |
+| `/login` | Super Admin, Cafe Owner | One login page for both roles; a visitor who is already logged in goes to their home path |
+| `/dashboard/*` | Cafe Owner | The owner dashboard (§3.3) |
+| `/admin/*` | Super Admin | The Super Admin pages (§3.2) |
+| `/bff/auth/login`, `/bff/auth/logout`, `/bff/auth/change-password` | Browser of a logged-in user | BFF routes for UC-AUTH-001, 003 and 004; they set or clear the cookies |
+| `/bff/auth/session-ended` | Browser | Clears the cookies and opens `/login` when Django no longer accepts the session |
+| `/bff/dashboard/qr-pdf` | Cafe Owner | Streams the QR codes PDF (UC-OWNER-008) |
+| `/internal/revalidate` | Django only | §3.5 |
+
 ---
 
 ## 4. User Flows
@@ -425,7 +439,7 @@ All services run inside Docker Compose on a single VPS.
 ### Nginx Rules
 
 - Every proxied location sets `X-Forwarded-For $proxy_add_x_forwarded_for` and `X-Forwarded-Proto`.
-- `limit_req` (per client IP) on `/api/v1/auth/login/`, the BFF login route and the Django admin login page.
+- `limit_req` (per client IP) on `/api/v1/auth/login/`, the BFF login route `/bff/auth/login` (§3.6) and the Django admin login page.
 - A separate, generous `limit_req` zone (per client IP) on the `/menu/` pages (§3.4 public menu note). Many customers of one cafe may share one IP behind its Wi-Fi.
 - `client_max_body_size 3m` (the API limits uploads to 2 MB; larger bodies are rejected before Django).
 - `add_header X-Robots-Tag "noindex, nofollow"` on `/menu/`.
