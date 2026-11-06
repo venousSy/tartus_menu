@@ -874,7 +874,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 
 **Alternate Flows:**
 - **A1 — Slug not found:** 404 Not Found — frontend shows a generic "Menu not found" page.
-- **A2 — Cafe is inactive:** 200 OK with is_active: false — frontend shows "This cafe's menu is temporarily unavailable." screen (UC-GUEST-002).
+- **A2 — Cafe is inactive:** 200 OK with is_active: false — frontend shows the inactive cafe screen of UC-GUEST-002 (its text is defined there).
 - **A3 — No categories yet:** Returns empty categories: [] — frontend shows "Menu coming soon" message.
 
 ---
