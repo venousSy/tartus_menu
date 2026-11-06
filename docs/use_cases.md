@@ -491,7 +491,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 3. Returns 204 No Content.
 
 **Alternate Flows:**
-- **A1 — Plan limit exceeded (Basic):** 403 Forbidden — {"detail": "Your Basic plan allows a maximum of 5 categories. Upgrade to Pro for unlimited."}.
+- **A1 — Plan limit exceeded (Basic):** 403 Forbidden — {"detail": "Your Basic plan allows a maximum of 5 categories. Upgrade to Pro for unlimited."}. With a limit of 1 the text says "1 category".
 - **A2 — Category belongs to another cafe:** 404 Not Found (ownership masking — attacker sees no difference from "not found").
 - **A3 — Cafe inactive:** 403 Forbidden — {"detail": "Your subscription is inactive. Please contact support."}.
 - **A4 — Invalid name:** 400 Bad Request with field-level errors under name (Global Convention 6).
@@ -528,7 +528,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 2. Returns 204 No Content.
 
 **Alternate Flows:**
-- **A1 — Plan item limit exceeded (Basic):** 403 Forbidden.
+- **A1 — Plan item limit exceeded (Basic):** 403 Forbidden — {"detail": "Your Basic plan allows a maximum of 20 items. Upgrade to Pro for unlimited."} ("1 item" with a limit of 1).
 - **A2 — Category not found or belongs to another cafe:** 404 Not Found.
 - **A3 — Price is negative:** 400 Bad Request.
 - **A4 — Invalid name or description:** 400 Bad Request with field-level errors (Global Convention 6).

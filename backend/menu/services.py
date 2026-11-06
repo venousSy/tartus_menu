@@ -52,8 +52,8 @@ def create_category(cafe, *, name, is_visible=True):
         # Decide by the plan's limit, never by its name. NULL means unlimited.
         if plan.max_categories is not None and categories.count() >= plan.max_categories:
             raise PermissionDenied(
-                f'Your {plan.get_name_display()} plan allows a maximum of '
-                f'{plan.max_categories} categories. Upgrade to Pro for unlimited.'
+                f'Your {plan.get_name_display()} plan allows a maximum of {plan.max_categories} '
+                f'{"category" if plan.max_categories == 1 else "categories"}. Upgrade to Pro for unlimited.'
             )
 
         highest = categories.aggregate(highest=Max('sort_order'))['highest'] or 0
@@ -182,8 +182,8 @@ def create_item(cafe, *, category_id, name, price, description=None, is_featured
         # Decide by the plan's limit, never by its name. NULL means unlimited.
         if plan.max_items is not None and items.count() >= plan.max_items:
             raise PermissionDenied(
-                f'Your {plan.get_name_display()} plan allows a maximum of '
-                f'{plan.max_items} items. Upgrade to Pro for unlimited.'
+                f'Your {plan.get_name_display()} plan allows a maximum of {plan.max_items} '
+                f'{"item" if plan.max_items == 1 else "items"}. Upgrade to Pro for unlimited.'
             )
 
         # Items are ordered inside their category, so the gap continues after that category's last item.
