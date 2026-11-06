@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { createTranslator } from "next-intl";
-import { useEffect, useSyncExternalStore, type CSSProperties } from "react";
+import { useEffect, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { readableTextColor } from "@/lib/color";
 import { dirOf, formatPrice, pickText, type Lang } from "@/lib/i18n";
 import type { PublicMenu, PublicMenuItem } from "@/lib/server/public-menu";
@@ -72,6 +72,7 @@ export function MenuView({ menu, messages, manifestHref }: {
   const lang = useSyncExternalStore(subscribe, readLang, () => "ar" as const);
   const table = useSyncExternalStore(noSubscription, readTable, () => null);
   const offline = useSyncExternalStore(subscribeOnline, readOffline, () => false);
+  const [unreachable, setUnreachable] = useState(false);
   const t =createTranslator({ locale: lang, messages: { Menu: messages[lang] }, namespace: "Menu" });
   const { cafe, categories } = menu;
 
@@ -88,6 +89,19 @@ export function MenuView({ menu, messages, manifestHref }: {
     link.href = manifestHref;
     document.head.append(link);
     return () => link.remove();
+  }, [manifestHref]);
+
+  // navigator.onLine stays true on Wi-Fi without internet, and the worker then shows the kept copy
+  // without a word. One small HEAD request tells: any answer means the server is reachable, a
+  // network error shows the offline note. The worker lets HEAD requests through to the network.
+  useEffect(() => {
+    const probe = () => {
+      fetch(manifestHref, { method: "HEAD", cache: "no-store" })
+        .then(() => setUnreachable(false), () => setUnreachable(true));
+    };
+    probe();
+    window.addEventListener("online", probe);
+    return () => window.removeEventListener("online", probe);
   }, [manifestHref]);
 
   // The offline copy of the menu (public/sw.js). The scope /menu/ keeps the worker away from the
@@ -137,7 +151,7 @@ export function MenuView({ menu, messages, manifestHref }: {
         </div>
       </header>
 
-      {offline && (
+      {(offline || unreachable) && (
         <p role="status" className="bg-amber-100 px-4 py-2 text-center text-sm font-semibold text-amber-900">
           {t("offline")}
         </p>
