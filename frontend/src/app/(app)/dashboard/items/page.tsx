@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
-import { type Lang, pickText, toLang } from "@/lib/i18n";
-import { type Category, getCategories, getItems, getSettings } from "@/lib/server/owner-api";
+import { pickText, toLang } from "@/lib/i18n";
+import { getCategories, getItems, getSettings } from "@/lib/server/owner-api";
+import { CategoryScreen } from "./category-screen";
 import { CreateItemForm } from "./create-item-form";
 import { ItemList } from "./item-list";
 
@@ -63,44 +64,27 @@ export default async function ItemsPage({ searchParams }: PageProps<"/dashboard/
           </p>
         )}
       </div>
-      <CategoryTabs categories={categories} current={current} lang={lang} label={t("categoriesLabel")} />
-      {shown.length === 0 ? (
-        <p className="text-stone-600">{t("empty")}</p>
-      ) : (
-        <ItemList key={`list-${current.id}`} items={shown} categories={categories} allowsImages={allowsImages} />
-      )}
-      {max !== null && count >= max ? (
-        // The same text Django answers when the limit is reached (A1), shown before the owner tries.
-        <p className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">
-          {tErrors("planLimitItems", { plan: tHome("planName", { name: settings.plan.name }), max })}
-        </p>
-      ) : (
-        <CreateItemForm key={`form-${current.id}`} categoryId={current.id} />
-      )}
+      {/* One link per category; each opens the same screen for that category, the open one is marked. */}
+      <CategoryScreen label={t("categoriesLabel")} tabs={categories.map((category) => ({
+        id: category.id,
+        name: pickText(category.name, lang),
+        href: `/dashboard/items?category=${category.id}`,
+        current: category.id === current.id,
+      }))}>
+        {shown.length === 0 ? (
+          <p className="text-stone-600">{t("empty")}</p>
+        ) : (
+          <ItemList key={`list-${current.id}`} items={shown} categories={categories} allowsImages={allowsImages} />
+        )}
+        {max !== null && count >= max ? (
+          // The same text Django answers when the limit is reached (A1), shown before the owner tries.
+          <p className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">
+            {tErrors("planLimitItems", { plan: tHome("planName", { name: settings.plan.name }), max })}
+          </p>
+        ) : (
+          <CreateItemForm key={`form-${current.id}`} categoryId={current.id} />
+        )}
+      </CategoryScreen>
     </section>
-  );
-}
-
-// One link per category. Each opens the same screen for that category; the open one is marked.
-function CategoryTabs({ categories, current, lang, label }: {
-  categories: Category[];
-  current: Category;
-  lang: Lang;
-  label: string;
-}) {
-  return (
-    <nav aria-label={label}>
-      <ul className="flex gap-2 overflow-x-auto pb-1">
-        {categories.map((category) => (
-          <li key={category.id} className="shrink-0">
-            <Link href={`/dashboard/items?category=${category.id}`}
-              aria-current={category.id === current.id ? "true" : undefined}
-              className="flex min-h-11 items-center rounded-full border border-stone-300 bg-white px-4 text-sm font-semibold aria-[current=true]:border-primary aria-[current=true]:bg-primary aria-[current=true]:text-on-primary">
-              {pickText(category.name, lang)}
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </nav>
   );
 }
