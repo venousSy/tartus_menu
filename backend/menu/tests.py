@@ -153,6 +153,21 @@ class CreateCategoryTests(CategoryAPITestCase):
         )
         self.assertEqual(Category.objects.filter(cafe=self.cafe).count(), 5)  # no 6th category was saved
 
+    def test_a_limit_of_one_uses_the_singular(self):  # A1, and UC-OWNER-002 A1 for items
+        SubscriptionPlan.objects.filter(pk=self.cafe.plan_id).update(max_categories=1, max_items=1)
+        category = Category.objects.create(cafe=self.cafe, name={'ar': 'Only', 'en': ''})
+        MenuItem.objects.create(cafe=self.cafe, category=category, name={'ar': 'Tea'}, price=Decimal('1.00'))
+
+        refused_category = self.client.post(self.list_url, {'name': {'ar': 'Second'}}, format='json')
+        refused_item = self.client.post(
+            self.item_list_url, {'category_id': category.pk, 'name': {'ar': 'Cake'}, 'price': '2.00'}, format='json'
+        )
+
+        self.assertEqual(refused_category.data['detail'],
+                         'Your Basic plan allows a maximum of 1 category. Upgrade to Pro for unlimited.')
+        self.assertEqual(refused_item.data['detail'],
+                         'Your Basic plan allows a maximum of 1 item. Upgrade to Pro for unlimited.')
+
     def test_deleted_and_foreign_categories_do_not_count_toward_the_limit(self):  # Global Convention 3
         # 4 live + 1 deleted here, plus self.foreign in the other cafe. Correct count: 4.
         # A count that missed the deleted or the cafe filter would reach the limit of 5 and answer 403.

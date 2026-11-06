@@ -25,8 +25,8 @@ export const SERVER_ERROR: FormError = { form: { key: "serverError" }, fields: {
 // Django's texts as patterns. The listed names receive the numbers or words the text contains.
 const KNOWN: [RegExp, ApiErrorKey, string[]?][] = [
   [/^Your subscription is inactive\. Please contact support\.$/, "subscriptionInactive"],
-  [/^Your (.+) plan allows a maximum of (\d+) categories\./, "planLimitCategories", ["plan", "max"]],
-  [/^Your (.+) plan allows a maximum of (\d+) items\./, "planLimitItems", ["plan", "max"]],
+  [/^Your (.+) plan allows a maximum of (\d+) categor(?:y|ies)\./, "planLimitCategories", ["plan", "max"]],
+  [/^Your (.+) plan allows a maximum of (\d+) items?\./, "planLimitItems", ["plan", "max"]],
   [/^Item images require a Pro plan\.$/, "imagesNeedPro"],
   [/^Custom colors require a Pro plan\.$/, "colorsNeedPro"],
   [/^Custom logos require a Pro plan\.$/, "logosNeedPro"],
