@@ -1,0 +1,22 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "backend/venv/Scripts/python.exe",
+      "runtimeArgs": ["backend/manage.py", "runserver", "127.0.0.1:8000", "--noreload"],
+      "port": 8000
+    },
+    {
+      "name": "frontend",
+      "url": "http://localhost:3000",
+      "port": 3000
+    },
+    {
+      "name": "frontend-prod",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["frontend/node_modules/next/dist/bin/next", "start", "frontend", "-p", "3001"],
+      "port": 3001
+    }
+  ]
+}
