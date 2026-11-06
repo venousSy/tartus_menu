@@ -94,12 +94,12 @@ export function MenuView({ menu, messages, manifestHref }: {
   // dashboards. A browser without service workers simply shows the menu online only.
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
-    const firstVisit = !navigator.serviceWorker.controller; // this page loaded without the worker
     navigator.serviceWorker
       .register("/sw.js", { scope: "/menu/" })
       .then(() => navigator.serviceWorker.ready)
       .then((registration) => {
-        if (!firstVisit) return; // later visits pass through the worker, which keeps them itself
+        // Every visit: the worker keeps this menu with exactly these files and drops files no kept
+        // menu uses. On the first visit it also fetches the page, which loaded before the worker.
         const files = performance
           .getEntriesByType("resource")
           .map((entry) => entry.name)

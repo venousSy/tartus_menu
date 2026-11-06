@@ -6,11 +6,14 @@
  * - /_next/static files: cache first. Their names contain a hash of their content, so a file with
  *   the same name never changes.
  * - Everything else (R2 images, the manifest, POSTs) goes to the network as usual.
+ * - After each visit the page reports the files it loaded. The worker remembers them per menu and
+ *   deletes every file that no kept menu uses, so the cache does not grow with each deploy.
  * Change VERSION when these caching rules change: the caches of the old version are then deleted.
  */
-const VERSION = "v1";
+const VERSION = "v2";
 const PAGES = `menu-pages-${VERSION}`;
 const FILES = `menu-files-${VERSION}`;
+const USES = `menu-uses-${VERSION}`; // per kept menu: the JSON list of the files it needs
 
 self.addEventListener("install", () => {
   self.skipWaiting(); // a new version takes over at once, without waiting for menu tabs to close
@@ -20,7 +23,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
       for (const name of await caches.keys()) {
-        if (name.startsWith("menu-") && name !== PAGES && name !== FILES) {
+        if (name.startsWith("menu-") && ![PAGES, FILES, USES].includes(name)) {
           await caches.delete(name);
         }
       }
@@ -75,8 +78,9 @@ async function cacheFirst(event) {
   return response;
 }
 
-// On the first visit, the page and its files loaded before this worker existed. MenuView then
-// sends their addresses, so even that first visit can be opened offline later.
+// After every visit MenuView sends the page address and the /_next/static files it loaded. On the
+// first visit the page and its files loaded before this worker existed, so they are fetched here,
+// and even that first visit can be opened offline later.
 self.addEventListener("message", (event) => {
   if (event.data?.type === "keep") {
     event.waitUntil(keep(event.data.page, event.data.files));
@@ -88,16 +92,44 @@ async function keep(page, files) {
   if (pageUrl.origin !== self.location.origin || !pageUrl.pathname.startsWith("/menu/")) {
     return;
   }
-  const response = await fetch(pageKey(pageUrl));
-  if (response.ok) {
-    await (await caches.open(PAGES)).put(pageKey(pageUrl), response);
+  const pages = await caches.open(PAGES);
+  if (!(await pages.match(pageKey(pageUrl)))) {
+    const response = await fetch(pageKey(pageUrl));
+    if (response.ok) {
+      await pages.put(pageKey(pageUrl), response);
+    }
   }
+  const used = (Array.isArray(files) ? files : [])
+    .map((file) => new URL(file))
+    .filter((url) => url.origin === self.location.origin && url.pathname.startsWith("/_next/static/"))
+    .map((url) => url.href);
   const fileCache = await caches.open(FILES);
-  for (const file of Array.isArray(files) ? files : []) {
-    const url = new URL(file);
-    if (url.origin === self.location.origin && url.pathname.startsWith("/_next/static/")
-      && !(await fileCache.match(url.href))) {
-      await fileCache.add(url.href);
+  for (const href of used) {
+    if (!(await fileCache.match(href))) {
+      await fileCache.add(href);
+    }
+  }
+  await (await caches.open(USES)).put(pageKey(pageUrl), Response.json(used));
+  await prune(pages, fileCache);
+}
+
+// Deletes the files that no kept menu needs, for example those of an earlier deploy. A menu kept
+// before its list was recorded is unknown, so nothing is deleted until every kept menu has a list.
+async function prune(pages, fileCache) {
+  const uses = await caches.open(USES);
+  const needed = new Set();
+  for (const request of await pages.keys()) {
+    const list = await uses.match(request.url);
+    if (!list) {
+      return;
+    }
+    for (const href of await list.json()) {
+      needed.add(href);
+    }
+  }
+  for (const request of await fileCache.keys()) {
+    if (!needed.has(request.url)) {
+      await fileCache.delete(request);
     }
   }
 }
