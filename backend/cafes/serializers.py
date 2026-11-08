@@ -61,7 +61,8 @@ class LogoUploadSerializer(serializers.Serializer):
     """
 
     # FileField, not ImageField: the service checks the content (core.images) with the use case's messages.
-    image = serializers.FileField()
+    # Not required here: the service checks the plan (403, A1) before it asks for the file.
+    image = serializers.FileField(required=False)
 
 
 class QRGenerateSerializer(serializers.Serializer):

@@ -75,7 +75,8 @@ class ImageUploadSerializer(serializers.Serializer):
 
     # FileField, not ImageField: DRF's ImageField checks the file with Pillow and answers with its own
     # message. The service checks the content (core.images) with the use case's messages instead.
-    image = serializers.FileField()
+    # Not required here: the service checks the plan (403, A1) before it asks for the file.
+    image = serializers.FileField(required=False)
 
 
 class PublicMenuItemSerializer(serializers.Serializer):
@@ -134,3 +135,10 @@ class ItemListQuerySerializer(serializers.Serializer):
     """Query string of GET /items/: an optional ?category=<id> (UC-OWNER-013 A2: not an integer -> 400)."""
 
     category = serializers.IntegerField(required=False)
+
+    def validate(self, attrs):
+        # DRF skips an empty optional value of a query string, so "?category=" would list every
+        # item. An empty value is not an integer either (A2).
+        if self.initial_data.get('category') == '':
+            raise serializers.ValidationError({'category': [self.fields['category'].error_messages['invalid']]})
+        return attrs

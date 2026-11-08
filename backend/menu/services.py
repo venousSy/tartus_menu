@@ -75,20 +75,22 @@ def update_category(cafe, category_id, *, name=None, is_visible=None):
     UC-OWNER-001 (edit). PATCH semantics: a field left as None is not changed.
     Raises NotFound (404) for a missing, deleted or foreign category (A2).
     """
-    category = _get_category(cafe, category_id)
+    with transaction.atomic():
+        # Locked like in delete_category: a parallel delete finishes first (then 404) or waits.
+        category = _get_category(cafe, category_id, lock=True)
 
-    changed = []
-    if name is not None:
-        category.name = name
-        changed.append('name')
-    if is_visible is not None:
-        category.is_visible = is_visible
-        changed.append('is_visible')
+        changed = []
+        if name is not None:
+            category.name = name
+            changed.append('name')
+        if is_visible is not None:
+            category.is_visible = is_visible
+            changed.append('is_visible')
 
-    if changed:
-        # With update_fields, auto_now (updated_at) is saved only when it is listed.
-        category.save(update_fields=[*changed, 'updated_at'])
-        schedule_menu_revalidation(cafe.slug)
+        if changed:
+            # With update_fields, auto_now (updated_at) is saved only when it is listed.
+            category.save(update_fields=[*changed, 'updated_at'])
+            schedule_menu_revalidation(cafe.slug)
     return category
 
 
@@ -216,13 +218,16 @@ def update_item(cafe, item_id, *, category_id=None, name=None, description=None,
     Raises NotFound (404) for a missing, deleted or foreign item or new category (A2).
     """
     with transaction.atomic():
-        item = _get_item(cafe, item_id)
+        if category_id is not None:
+            # Global Convention 8: the new position is assigned under the cafe row lock. Taken
+            # before the item lock, in the same order as reorder_items (cafe, then items).
+            locked_cafe = Cafe.objects.select_for_update().get(pk=cafe.pk)
+        # Locked, so a parallel delete either finishes first (then 404 here) or waits for this save.
+        item = _get_item(cafe, item_id, lock=True)
         changed = []
 
         if category_id is not None and category_id != item.category_id:
-            # Global Convention 8: the new position is assigned under the cafe row lock, and the
-            # new category row is locked as in create_item, so it cannot be deleted under the item.
-            locked_cafe = Cafe.objects.select_for_update().get(pk=cafe.pk)
+            # The new category row is locked as in create_item, so it cannot be deleted under the item.
             category = _get_category(locked_cafe, category_id, lock=True)
             siblings = MenuItem.objects.filter(category=category)
             highest = siblings.aggregate(highest=Max('sort_order'))['highest'] or 0
@@ -246,10 +251,11 @@ def update_item(cafe, item_id, *, category_id=None, name=None, description=None,
 
 def delete_item(cafe, item_id):
     """UC-OWNER-002 (delete): soft delete. Raises NotFound (404) for a missing, deleted or foreign item."""
-    item = _get_item(cafe, item_id)
-    item.deleted_at = timezone.now()
-    item.save(update_fields=['deleted_at', 'updated_at'])
-    schedule_menu_revalidation(cafe.slug)
+    with transaction.atomic():
+        item = _get_item(cafe, item_id, lock=True)  # waits for a parallel edit of the same item
+        item.deleted_at = timezone.now()
+        item.save(update_fields=['deleted_at', 'updated_at'])
+        schedule_menu_revalidation(cafe.slug)
 
 
 def reorder_items(cafe, *, ordered_ids):
@@ -294,11 +300,12 @@ def set_item_availability(cafe, item_id, *, is_available):
     UC-OWNER-005: change only is_available. Raises NotFound (404) for a missing, deleted
     or foreign item (A1). Sending the current value writes nothing and rebuilds nothing.
     """
-    item = _get_item(cafe, item_id)
-    if item.is_available != is_available:
-        item.is_available = is_available
-        item.save(update_fields=['is_available', 'updated_at'])
-        schedule_menu_revalidation(cafe.slug)
+    with transaction.atomic():
+        item = _get_item(cafe, item_id, lock=True)  # a parallel delete finishes first, then 404
+        if item.is_available != is_available:
+            item.is_available = is_available
+            item.save(update_fields=['is_available', 'updated_at'])
+            schedule_menu_revalidation(cafe.slug)
     return item
 
 

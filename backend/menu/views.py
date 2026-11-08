@@ -141,7 +141,7 @@ class ItemImageView(APIView):
     def post(self, request, pk):
         serializer = ImageUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        item = services.upload_item_image(request.user.cafe, pk, image_file=serializer.validated_data['image'])
+        item = services.upload_item_image(request.user.cafe, pk, image_file=serializer.validated_data.get('image'))
         return Response(MenuItemSerializer(item).data)
 
 

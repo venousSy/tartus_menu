@@ -65,7 +65,7 @@ class CafeLogoView(APIView):
     def post(self, request):
         serializer = LogoUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        cafe = services.upload_logo(request.user.cafe, image_file=serializer.validated_data['image'])
+        cafe = services.upload_logo(request.user.cafe, image_file=serializer.validated_data.get('image'))
         return Response(CafeSettingsSerializer(cafe).data)
 
 
