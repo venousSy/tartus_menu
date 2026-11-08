@@ -261,6 +261,24 @@ test("proxy: a rejected refresh token ends the session", async () => {
   assertRedirect(res, "/login");
 });
 
+test("proxy: a route behind it sees the ended session, not an outage", async () => {
+  const { refresh } = issuePair();
+  fake.refresh.delete(refresh); // blacklisted, for example by a password change on another device
+  const body = { old_password: "a", new_password: "b" };
+  const res = await post("/bff/auth/change-password", { body, cookie: `refresh=${refresh}` });
+  assertSignedOut(res, 401); // the form then goes to /login, instead of showing "server unreachable"
+  assert.deepEqual(fake.calls, ["/auth/refresh/"]);
+});
+
+test("change-password: while Django is down the BFF answers 503 and keeps the session", async () => {
+  const { refresh } = issuePair();
+  fake.down = true;
+  const body = { old_password: "a", new_password: "b" };
+  const res = await post("/bff/auth/change-password", { body, cookie: `refresh=${refresh}` });
+  assert.equal(res.status, 503); // not 401: the form would end a session that is still valid
+  assert.deepEqual(kept(res), {});
+});
+
 test("proxy: while Django is down nobody is signed out; the refresh token still tells the role", async () => {
   const { refresh } = issuePair();
   fake.down = true;

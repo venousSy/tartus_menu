@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 
 import { djangoFetch, forwardedForHeader, passThrough } from "@/lib/server/django";
 import { rejectCrossOrigin } from "@/lib/server/origin";
-import { ACCESS_COOKIE, clearTokens } from "@/lib/server/session";
+import { ACCESS_COOKIE, clearTokens, REFRESH_COOKIE } from "@/lib/server/session";
 
 /**
  * POST /bff/auth/change-password: UC-AUTH-004 through the BFF (system_design.md §3.6). The browser
@@ -18,6 +18,11 @@ export async function POST(request: Request) {
   const cookieStore = await cookies();
   const access = cookieStore.get(ACCESS_COOKIE)?.value;
   if (!access) {
+    // proxy.ts removes both cookies when the session is over. A refresh cookie without an access
+    // cookie means Django could not be reached for the refresh: an outage logs nobody out.
+    if (cookieStore.has(REFRESH_COOKIE)) {
+      return Response.json({ detail: "The server could not be reached." }, { status: 503 });
+    }
     // UC-AUTH-004 A5 with DRF's own message, so the page gets one answer for "not logged in".
     return Response.json({ detail: "Authentication credentials were not provided." }, { status: 401 });
   }
