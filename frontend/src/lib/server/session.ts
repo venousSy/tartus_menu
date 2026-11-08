@@ -41,18 +41,23 @@ export function roleOf(token: string): Role | null {
   return role === "SYSTEM_ADMIN" || role === "CAFE_OWNER" ? role : null;
 }
 
-function expiresAt(token: string, earlyMs = 0): Date | undefined {
+/**
+ * Seconds until the token expires, measured on this server's clock (the clock Django signs with).
+ * A relative Max-Age, unlike an absolute Expires date, does not depend on the browser's clock:
+ * a phone set an hour wrong would otherwise drop the cookies too early or keep them too long.
+ */
+function secondsLeft(token: string, earlyMs = 0): number | undefined {
   const { exp } = readClaims(token);
-  return typeof exp === "number" ? new Date(exp * 1000 - earlyMs) : undefined;
+  return typeof exp === "number" ? Math.max(0, Math.floor((exp * 1000 - earlyMs - Date.now()) / 1000)) : undefined;
 }
 
 /** Saves a new pair from Django (login or refresh). Each cookie expires together with its token. */
 export function saveTokens(store: CookieStore, tokens: TokenPair) {
   store.set(ACCESS_COOKIE, tokens.access, {
     ...COOKIE_OPTIONS,
-    expires: expiresAt(tokens.access, ACCESS_EARLY_EXPIRY_MS),
+    maxAge: secondsLeft(tokens.access, ACCESS_EARLY_EXPIRY_MS),
   });
-  store.set(REFRESH_COOKIE, tokens.refresh, { ...COOKIE_OPTIONS, expires: expiresAt(tokens.refresh) });
+  store.set(REFRESH_COOKIE, tokens.refresh, { ...COOKIE_OPTIONS, maxAge: secondsLeft(tokens.refresh) });
 }
 
 /** Ends the browser session: both cookies are replaced by empty ones that expire at once. */
