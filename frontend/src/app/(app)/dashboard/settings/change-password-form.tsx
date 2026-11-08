@@ -34,7 +34,11 @@ async function changePassword(formData: FormData): Promise<PasswordState> {
     return { error: null };
   }
   // A1-A4: Django's field messages (old_password, new_password); anything else is a server error.
-  return { error: response.status === 400 ? toFormError(await response.json().catch(() => null)) : SERVER_ERROR };
+  return {
+    error: response.status === 400
+      ? toFormError(await response.json().catch(() => null), response.headers.get("x-error-code"))
+      : SERVER_ERROR,
+  };
 }
 
 /**

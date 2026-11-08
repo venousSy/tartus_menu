@@ -25,11 +25,11 @@
 | CI/CD | GitHub Actions → SSH → restart containers |
 | DB Backups | Daily `pg_dump` → Cloudflare R2 |
 | API versioning | `/api/v1/` |
-| API errors | Standard DRF format |
+| API errors | Standard DRF format; a whole-request error (`{"detail": "..."}`) also names its machine-readable code in the `X-Error-Code` header (for example `images_need_pro`), which the frontend translates by |
 | Public menu caching | Next.js ISR + on-demand revalidation called by Django after commit (§3.5); 5-minute time-based fallback |
 | Frontend auth | BFF: Next.js server routes keep the JWT pair in HttpOnly cookies; single-flight refresh (§3.6) |
 | Rate limiting | Nginx `limit_req` on login paths + DRF `ScopedRateThrottle` (scope `login`, 5/min per client IP) stored in Django `DatabaseCache` (no Redis) |
-| Image uploads | Validated by content with Pillow, resized, metadata removed, stored as WebP under random keys (`cafes/<cafe_id>/...`), served from the R2 custom domain |
+| Image uploads | Validated by content with Pillow, resized, metadata removed, stored as WebP under random keys (`cafes/<cafe_id>/...`), served from the R2 custom domain; item images also get a 192 px thumbnail for the menu lists |
 | Django admin site | Non-obvious path from env `DJANGO_ADMIN_PATH`, routed by Nginx |
 | Inactive cafe | Every dashboard endpoint except GET settings answers 403 |
 | Plan downgrade | Stored images, logo and color are kept and hidden from customers until the plan allows them again |

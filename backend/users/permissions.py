@@ -49,6 +49,7 @@ class IsActiveCafe(BasePermission):
     not a misleading "subscription inactive" message.
     """
     message = "Your subscription is inactive. Please contact support."
+    code = "subscription_inactive"  # DRF passes it on to PermissionDenied (X-Error-Code header)
 
     def has_permission(self, request, view):
         # getattr default covers anonymous users and users without a cafe

@@ -35,9 +35,10 @@ async function logIn(formData: FormData): Promise<{ role: string } | State> {
   if (response.status === 401) return { error: "wrongCredentials" }; // A1, A2: wrong or inactive account
   if (response.status === 400) return { error: "missingFields" }; // A3
   if (response.status === 429) {
-    // A4: "Request was throttled. Expected available in N seconds."
-    const { detail = "" } = await response.json().catch(() => ({}));
-    return { error: "throttled", seconds: Number(/(\d+) second/.exec(detail)?.[1] ?? 60) };
+    // A4: DRF's throttle names the wait in its Retry-After header (seconds), which the BFF passes on.
+    // Nginx's own 429 (its outer login limit) has none: one minute, its rate window.
+    const wait = Number(response.headers.get("retry-after"));
+    return { error: "throttled", seconds: Number.isInteger(wait) && wait > 0 ? wait : 60 };
   }
   return { error: "serverError" };
 }

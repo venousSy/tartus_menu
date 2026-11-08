@@ -1,6 +1,7 @@
 // Turns Django's error answers into messages the dashboards can show in Arabic or English. Django
-// answers in English (use_cases.md, DRF's standard field messages); known texts get a key of the
-// "ApiErrors" messages, others are shown as they are. Plain functions: Server Actions build these
+// answers in English (use_cases.md, DRF's standard field messages); a whole-request error also names
+// its code in the X-Error-Code header. Known codes and texts get a key of the "ApiErrors" messages,
+// others are shown as they are. Plain functions: Server Actions build these
 // values on the server, and client forms render them.
 
 /** The keys of the "ApiErrors" namespace in src/messages/*.json. */
@@ -67,17 +68,40 @@ const KNOWN: [RegExp, ApiErrorKey, string[]?][] = [
   [/^Cannot downgrade to (.+): cafe has (\d+) items \(max (\d+)\)\.$/, "downgradeItems", ["plan", "count", "max"]],
 ];
 
-/** One of Django's texts as a message. Numbers stay numbers, so plural rules can use them. */
-export function toApiMessage(text: string): ApiMessage {
+// Django's X-Error-Code header (backend core/exceptions.py) for a whole-request error. The code
+// decides the message, so a reworded English text keeps its translation; the text pattern of that
+// key only supplies the numbers and words a message shows ({max}, {plan}).
+const CODES: Record<string, ApiErrorKey> = {
+  subscription_inactive: "subscriptionInactive", plan_limit_categories: "planLimitCategories",
+  plan_limit_items: "planLimitItems", images_need_pro: "imagesNeedPro", colors_need_pro: "colorsNeedPro",
+  logos_need_pro: "logosNeedPro", image_type: "imageType", image_too_large: "imageTooLarge",
+  image_dimensions: "imageDimensions", image_upload_failed: "imageUploadFailed", qr_first: "qrFirst",
+  not_found: "notFound", already_active: "alreadyActive", already_inactive: "alreadyInactive",
+  downgrade_categories: "downgradeCategories", downgrade_items: "downgradeItems",
+};
+
+function valuesOf(match: RegExpExecArray, names: string[]) {
+  return Object.fromEntries(
+    names.map((name, i) => [name, /^\d+$/.test(match[i + 1]) ? Number(match[i + 1]) : match[i + 1]]),
+  );
+}
+
+/**
+ * One of Django's texts as a message. Numbers stay numbers, so plural rules can use them.
+ * `code` is Django's X-Error-Code, when the text is the request's "detail".
+ */
+export function toApiMessage(text: string, code?: string | null): ApiMessage {
+  const coded = code ? CODES[code] : undefined;
+  if (coded) {
+    const names = KNOWN.find(([, key]) => key === coded)?.[2] ?? [];
+    if (names.length === 0) return { key: coded };
+    // A message with numbers needs them: without a match, Django's own text is safer than a gap.
+    const match = KNOWN.filter(([, key]) => key === coded).map(([pattern]) => pattern.exec(text)).find(Boolean);
+    return match ? { key: coded, values: valuesOf(match, names) } : { text };
+  }
   for (const [pattern, key, names = []] of KNOWN) {
     const match = pattern.exec(text);
-    if (match) {
-      if (names.length === 0) return { key };
-      const values = Object.fromEntries(
-        names.map((name, i) => [name, /^\d+$/.test(match[i + 1]) ? Number(match[i + 1]) : match[i + 1]]),
-      );
-      return { key, values };
-    }
+    if (match) return names.length === 0 ? { key } : { key, values: valuesOf(match, names) };
   }
   return { text };
 }
@@ -86,13 +110,14 @@ export function toApiMessage(text: string): ApiMessage {
  * Django's error body as a FormError. DRF answers {"detail": "..."} for the whole request, or field
  * errors such as {"name": {"ar": ["..."]}, "price": ["..."]}; nested fields become paths like "name.ar".
  * A body without any message (for example an HTML error page) becomes SERVER_ERROR.
+ * `code` is the answer's X-Error-Code header; it belongs to "detail".
  */
-export function toFormError(body: unknown): FormError {
+export function toFormError(body: unknown, code?: string | null): FormError {
   const error: FormError = { form: null, fields: {} };
   const visit = (value: unknown, path: string): void => {
     if (typeof value === "string") {
       if (path === "" || path === "detail" || path === "non_field_errors") {
-        error.form ??= toApiMessage(value);
+        error.form ??= toApiMessage(value, path === "detail" ? code : null);
       } else {
         (error.fields[path] ??= []).push(toApiMessage(value));
       }
