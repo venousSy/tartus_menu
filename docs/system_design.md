@@ -115,6 +115,7 @@ menu_items
 ├── description   JSONB        -- {"ar":"...", "en":"..."}
 ├── price         NUMERIC(10,2) -- new SYP; CHECK price >= 0
 ├── image_url     TEXT         -- R2 custom-domain URL; '' = no image (hidden from customers while plan.allows_images is false)
+├── thumbnail_url TEXT         -- the same image, longest side 192 px, for the small list pictures; '' = none (APIs then return image_url)
 ├── is_available  BOOLEAN      DEFAULT true
 ├── is_featured   BOOLEAN      DEFAULT false
 ├── is_new        BOOLEAN      DEFAULT false
@@ -300,6 +301,7 @@ billing_events
           "description": { "ar": "قهوة مركزة", "en": "Concentrated coffee" },
           "price": "50.00",
           "image_url": "https://media.domain.com/cafes/1/items/<uuid4>.webp",
+          "thumbnail_url": "https://media.domain.com/cafes/1/items/<uuid4>.webp",
           "is_available": true,
           "is_featured": true,
           "is_new": false,
@@ -313,7 +315,7 @@ billing_events
 
 > When `is_active` is `false`, the API still returns 200 with `is_active: false` so the frontend can display the "Temporarily Unavailable" screen.
 
-> Plan-gated values are hidden in this response (use_cases.md Global Convention 7): `image_url` is `""` while the plan has `allows_images = false`; `logo_url` and `primary_color` are `""` while it has `allows_branding = false`. `price` is a string with two decimals in new SYP (Global Convention 10).
+> Plan-gated values are hidden in this response (use_cases.md Global Convention 7): `image_url` and `thumbnail_url` are `""` while the plan has `allows_images = false`; `logo_url` and `primary_color` are `""` while it has `allows_branding = false`. `price` is a string with two decimals in new SYP (Global Convention 10).
 
 > This endpoint is called by the Next.js server (ISR), not by the customer's browser. It is therefore not rate limited per client IP in DRF; Nginx rate-limits the `/menu/` pages instead.
 

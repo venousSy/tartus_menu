@@ -349,8 +349,8 @@ class ItemAPITestCase(CategoryAPITestCase):
         """Tea as the API returns it (UC-OWNER-013 shape), with `changes` applied."""
         data = {
             'id': self.tea.pk, 'category_id': self.drinks.pk, 'name': {'ar': 'Tea', 'en': ''},
-            'description': {'ar': '', 'en': ''}, 'price': '5.00', 'image_url': '', 'is_available': True,
-            'is_featured': False, 'is_new': False, 'sort_order': 100,
+            'description': {'ar': '', 'en': ''}, 'price': '5.00', 'image_url': '', 'thumbnail_url': '',
+            'is_available': True, 'is_featured': False, 'is_new': False, 'sort_order': 100,
         }
         return {**data, **changes}
 
@@ -409,8 +409,8 @@ class CreateItemTests(ItemAPITestCase):
         # After Tea (100) in Drinks; the price is a string with two decimals (Global Convention 10).
         self.assertEqual(response.data, {
             'id': coffee.pk, 'category_id': self.drinks.pk, 'name': {'ar': 'Coffee', 'en': ''},
-            'description': {'ar': '', 'en': ''}, 'price': '12.50', 'image_url': '', 'is_available': True,
-            'is_featured': False, 'is_new': True, 'sort_order': 200,
+            'description': {'ar': '', 'en': ''}, 'price': '12.50', 'image_url': '', 'thumbnail_url': '',
+            'is_available': True, 'is_featured': False, 'is_new': True, 'sort_order': 200,
         })
 
     def test_read_only_fields_in_the_body_are_ignored(self):  # Architectural Note
@@ -640,27 +640,33 @@ class ItemImageTests(ItemAPITestCase):
         response = self.upload(self.tea.pk, image_file(exif=exif.tobytes()))
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        url = response.data['image_url']
-        self.assertRegex(url, rf'^/media/cafes/{self.cafe.pk}/items/[0-9a-f-]{{36}}\.webp$')  # random key
-        self.assertEqual(response.data, self.tea_data(image_url=url))
+        url, thumbnail_url = response.data['image_url'], response.data['thumbnail_url']
+        for stored_url in (url, thumbnail_url):
+            self.assertRegex(stored_url, rf'^/media/cafes/{self.cafe.pk}/items/[0-9a-f-]{{36}}\.webp$')  # random key
+        self.assertNotEqual(url, thumbnail_url)
+        self.assertEqual(response.data, self.tea_data(image_url=url, thumbnail_url=thumbnail_url))
         self.tea.refresh_from_db()
-        self.assertEqual(self.tea.image_url, url)
-        with default_storage.open(self.stored_key(url)) as stored, Image.open(stored) as image:
-            self.assertEqual((image.format, image.size), ('WEBP', (1200, 600)))  # longest side 1200 px
-            self.assertNotIn('exif', image.info)  # metadata, with the GPS location, removed
+        self.assertEqual((self.tea.image_url, self.tea.thumbnail_url), (url, thumbnail_url))
+        # The full image (longest side 1200 px) and the small copy for the menu lists (192 px).
+        for stored_url, size in ((url, (1200, 600)), (thumbnail_url, (192, 96))):
+            with default_storage.open(self.stored_key(stored_url)) as stored, Image.open(stored) as image:
+                self.assertEqual((image.format, image.size), ('WEBP', size))
+                self.assertNotIn('exif', image.info)  # metadata, with the GPS location, removed
 
     def test_new_upload_deletes_the_old_image_after_the_commit(self):  # Postconditions, step 7
         with self.captureOnCommitCallbacks(execute=True):
-            old_url = self.upload(self.tea.pk, image_file()).data['image_url']
+            old = self.upload(self.tea.pk, image_file()).data
 
         with self.captureOnCommitCallbacks() as callbacks:
-            new_url = self.upload(self.tea.pk, image_file()).data['image_url']
+            new = self.upload(self.tea.pk, image_file()).data
 
-        self.assertTrue(default_storage.exists(self.stored_key(old_url)))  # kept until the commit
+        old_keys = [self.stored_key(old[name]) for name in ('image_url', 'thumbnail_url')]
+        new_keys = [self.stored_key(new[name]) for name in ('image_url', 'thumbnail_url')]
+        self.assertTrue(all(default_storage.exists(key) for key in old_keys))  # kept until the commit
         for callback in callbacks:  # what Django runs once the request's transaction commits
             callback()
-        self.assertFalse(default_storage.exists(self.stored_key(old_url)))
-        self.assertTrue(default_storage.exists(self.stored_key(new_url)))
+        self.assertFalse(any(default_storage.exists(key) for key in old_keys))  # the image and its thumbnail
+        self.assertTrue(all(default_storage.exists(key) for key in new_keys))
 
     def test_basic_plan_returns_403(self):  # A1
         Cafe.objects.filter(pk=self.cafe.pk).update(plan=self.other_cafe.plan)  # Basic: allows_images false
@@ -910,8 +916,9 @@ class PublicMenuTests(APITestCase):
     def item_data(self, item, **changes):
         data = {
             'id': item.pk, 'name': {'ar': item.name['ar'], 'en': ''}, 'description': {'ar': '', 'en': ''},
-            'price': str(item.price), 'image_url': item.image_url, 'is_available': True,
-            'is_featured': item.is_featured, 'is_new': False, 'sort_order': item.sort_order,
+            # Tea has no thumbnail (uploaded before thumbnails existed): the full image stands in.
+            'price': str(item.price), 'image_url': item.image_url, 'thumbnail_url': item.thumbnail_url or item.image_url,
+            'is_available': True, 'is_featured': item.is_featured, 'is_new': False, 'sort_order': item.sort_order,
         }
         return {**data, **changes}
 
@@ -941,7 +948,8 @@ class PublicMenuTests(APITestCase):
         response = self.client.get(self.url)
 
         self.assertEqual((response.data['cafe']['primary_color'], response.data['cafe']['logo_url']), ('', ''))
-        self.assertEqual(response.data['categories'][1]['items'], [self.item_data(self.tea, image_url='')])
+        self.assertEqual(response.data['categories'][1]['items'],
+                         [self.item_data(self.tea, image_url='', thumbnail_url='')])
 
     def test_inactive_cafe_returns_200_without_categories(self):  # A2, UC-GUEST-002
         Cafe.objects.filter(pk=self.cafe.pk).update(is_active=False)

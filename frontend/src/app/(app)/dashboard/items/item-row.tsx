@@ -50,8 +50,8 @@ export function ItemRow({ item, categories, movable, allowsImages }: {
     <SortableRow id={item.id} name={name} movable={movable} roleDescription={t("dragRole")}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          {item.image_url && (
-            <Image src={item.image_url} alt="" width={64} height={64} unoptimized
+          {item.thumbnail_url && (
+            <Image src={item.thumbnail_url} alt="" width={64} height={64} unoptimized
               className={`size-16 shrink-0 rounded-lg bg-stone-100 object-cover ${imageHidden ? "opacity-50 grayscale" : ""}`} />
           )}
           <div className="flex flex-col gap-1">

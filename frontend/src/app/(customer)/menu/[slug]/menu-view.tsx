@@ -197,8 +197,8 @@ function MenuItemCard({ item, lang, t }: { item: PublicMenuItem; lang: Lang; t: 
   const description = pickText(item.description, lang);
   return (
     <li className="flex gap-3 rounded-xl bg-white p-3 shadow-sm">
-      {item.image_url && (
-        <Image src={item.image_url} alt="" width={96} height={96} unoptimized
+      {item.thumbnail_url && (
+        <Image src={item.thumbnail_url} alt="" width={96} height={96} unoptimized
           className="size-24 shrink-0 rounded-lg bg-stone-100 object-cover" />
       )}
       <div className="min-w-0 flex-1">

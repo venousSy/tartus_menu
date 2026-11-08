@@ -96,7 +96,7 @@ The fields name (cafes, categories, menu items) and description (menu items) are
 **7. Plan features after a plan change**
 
 - A plan change never deletes stored feature data. Item images (image_url), the logo (logo_url) and the primary color (primary_color) stay in the database and on R2.
-- The public menu (UC-GUEST-001) shows them only while the current plan allows them: image_url is returned as "" when plan.allows_images is false; logo_url and primary_color are returned as "" when plan.allows_branding is false (the frontend then uses the default theme).
+- The public menu (UC-GUEST-001) shows them only while the current plan allows them: image_url and thumbnail_url are returned as "" when plan.allows_images is false; logo_url and primary_color are returned as "" when plan.allows_branding is false (the frontend then uses the default theme).
 - Dashboard responses (UC-OWNER-013, UC-OWNER-014) return the stored values together with the plan flags, so the UI can explain that they are hidden on the current plan.
 - Upgrading again makes the stored values visible again. Nothing has to be uploaded again.
 - An empty string "" means "none" for image_url, logo_url and primary_color. These fields never use NULL.
@@ -619,7 +619,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 | **Actor** | Cafe Owner (Pro plan only) |
 | **Trigger** | Owner selects and uploads an image file |
 | **Preconditions** | Cafe is active; cafe.plan.allows_images is true; item exists, is not soft-deleted and belongs to this cafe |
-| **Postconditions (Success)** | A processed WebP image is stored on Cloudflare R2; item.image_url is updated; the old image is removed from R2 |
+| **Postconditions (Success)** | A processed WebP image and a small copy (longest side 192 px, for the 96 px menu pictures) are stored on Cloudflare R2; item.image_url and item.thumbnail_url are updated; the old files are removed from R2 |
 | **API** | POST /api/v1/dashboard/items/{id}/image/ |
 | **Architectural Note** | Service Layer checks that cafe.plan.allows_images is true before upload. The file is validated by its content, not by the client's Content-Type header or file name: Pillow opens it with a format allowlist (JPEG, PNG, WebP). The file must be 2 MB or smaller and at most 25 megapixels (width x height); the pixel limit protects against decompression bombs (small files that expand to huge images in memory). The image is then processed: resized so the longest side is at most 1200 px (never enlarged), all metadata removed (EXIF, including the GPS location), and saved as WebP. It is stored on R2 under a new random key cafes/<cafe_id>/items/<uuid4>.webp with Cache-Control: public, max-age=31536000, immutable, and served from the R2 custom domain. Uses django-storages + boto3. The old image is deleted from R2 after the database commit (transaction.on_commit); if that delete fails, the error is logged and the request still succeeds. |
 
@@ -629,7 +629,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 3. Service validates the file: size, format detected by Pillow, pixel count.
 4. Service resizes the image, removes its metadata and converts it to WebP.
 5. Service uploads it to R2 under a new random key and gets back its public URL.
-6. Service updates item.image_url and returns the updated item.
+6. Service updates item.image_url and item.thumbnail_url and returns the updated item. thumbnail_url is returned as image_url for an image stored before thumbnails existed.
 7. After the commit, the old image (if any) is deleted from R2.
 
 **Alternate Flows:**
@@ -815,7 +815,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 
 **Main Flow:**
 1. Owner requests the list (optionally with ?category=<id>).
-2. System returns [ { id, category_id, name: {ar, en}, description: {ar, en}, price, image_url, is_available, is_featured, is_new, sort_order } ]. Without the filter: sorted by the category's sort_order ascending, then the item's sort_order ascending. With the filter: only that category's items, sorted by sort_order ascending.
+2. System returns [ { id, category_id, name: {ar, en}, description: {ar, en}, price, image_url, thumbnail_url, is_available, is_featured, is_new, sort_order } ]. Without the filter: sorted by the category's sort_order ascending, then the item's sort_order ascending. With the filter: only that category's items, sorted by sort_order ascending.
 
 **Alternate Flows:**
 - **A1 — No items:** 200 OK with [].

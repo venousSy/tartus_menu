@@ -57,7 +57,10 @@ class MenuItem(models.Model):
     description = models.JSONField(default=dict, blank=True)  # {"ar": "...", "en": "..."}
     price = models.DecimalField(max_digits=10, decimal_places=2)  # SYP (hardcoded currency)
     image_url = models.URLField(max_length=2000, blank=True, default='')
-    
+    # The same image at most 192 px wide, for the small pictures of the menu lists. "" for an item
+    # without image, and for images uploaded before thumbnails existed: readers fall back to image_url.
+    thumbnail_url = models.URLField(max_length=2000, blank=True, default='')
+
     is_available = models.BooleanField(default=True)
     is_featured = models.BooleanField(default=False)
     is_new = models.BooleanField(default=False)
