@@ -149,7 +149,8 @@ class PublicMenuView(APIView):
     """GET /api/v1/menu/{slug}/ (UC-GUEST-001, UC-GUEST-002): the customer menu, no login."""
 
     # Public: no token is read (a stray Authorization header cannot cause a 401) and no role is checked.
-    # No DRF throttle either: the caller is the Next.js server, so Nginx rate-limits /menu/ instead.
+    # No DRF throttle either: the caller is the Next.js server, so Nginx rate-limits /menu/ and
+    # direct calls of /api/v1/menu/ instead (deploy/nginx/default.conf.template).
     authentication_classes = []
     permission_classes = [AllowAny]
 

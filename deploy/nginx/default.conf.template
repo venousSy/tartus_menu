@@ -72,6 +72,13 @@ server {
         proxy_pass $backend;
     }
 
+    # The public menu API is open to the internet too, and Django does not throttle it. Next.js calls
+    # Django on the Docker network, not through here, so only direct callers share this budget.
+    location /api/v1/menu/ {
+        limit_req zone=menu burst=100 nodelay;
+        proxy_pass $backend;
+    }
+
     # Django admin site at its non-obvious path.
     location /${DJANGO_ADMIN_PATH}/ {
         proxy_pass $backend;
