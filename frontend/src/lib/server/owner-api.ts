@@ -86,8 +86,9 @@ export function getQrCodes(): Promise<QrCodes> {
 
 /**
  * Django's answer to the PDF download (UC-OWNER-008), as it is, for a route handler to pass on; null
- * when Django cannot be reached. djangoFetch asks for JSON: DRF would answer 406 to "application/pdf"
- * (observation 16), and the PDF still comes back, because the view returns the file itself.
+ * when Django cannot be reached. djangoFetch asks for JSON, which the view accepts like
+ * "application/pdf" (its PDFRenderer); the PDF comes back either way, because the view returns the
+ * file itself, and an error comes back as JSON.
  */
 export function getQrPdf(): Promise<Response | null> {
   return apiFetch("/dashboard/qr/download-pdf/");

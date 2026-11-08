@@ -2,7 +2,7 @@ import "server-only";
 
 import { refresh } from "next/cache";
 import type { FormError } from "@/lib/api-errors";
-import { type ApiInit, apiWrite } from "@/lib/server/api";
+import { type ApiInit, apiWrite, type WriteResult } from "@/lib/server/api";
 
 // What the dashboard's Server Actions share. An action only carries the owner's form to Django
 // (api.ts); Django checks every rule. After a successful write, refresh() renders the page
@@ -45,10 +45,17 @@ export function pathOf(base: string, formData: FormData): string | null {
   return isId(id) ? `${base}${id}/` : null;
 }
 
-/** One write, then the fresh page. Returns Django's error, or null when the write succeeded. */
-export async function writeThenRefresh(path: string | null, init: ApiInit): Promise<FormError | null> {
+/**
+ * One write, then the fresh page. Returns Django's error, or null when the write succeeded.
+ * `write` is apiWrite for the owner; the admin's actions pass adminWrite, so a 403 ends the session.
+ */
+export async function writeThenRefresh(
+  path: string | null,
+  init: ApiInit,
+  write: (path: string, init: ApiInit) => Promise<WriteResult<unknown>> = apiWrite,
+): Promise<FormError | null> {
   if (!path) return NOT_FOUND;
-  const result = await apiWrite(path, init);
+  const result = await write(path, init);
   if (!result.ok) return result.error;
   refresh(); // works here because only Server Actions call this function
   return null;

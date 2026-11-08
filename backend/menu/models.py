@@ -34,7 +34,8 @@ class Category(models.Model):
         ordering = ['sort_order', 'id']
 
     def __str__(self):
-        return self.name.get('en', self.name.get('ar', f'Category {self.id}'))
+        # "or", not get()'s default: a missing English name is stored as "".
+        return self.name.get('en') or self.name.get('ar') or f'Category {self.id}'
 
 
 class MenuItem(models.Model):
@@ -86,4 +87,4 @@ class MenuItem(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return self.name.get('en', self.name.get('ar', f'MenuItem {self.id}'))
+        return self.name.get('en') or self.name.get('ar') or f'MenuItem {self.id}'

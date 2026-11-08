@@ -22,7 +22,8 @@ class IsSystemAdmin(BasePermission):
 class IsCafeOwner(BasePermission):
     """
     Allows access to authenticated users with role == CAFE_OWNER who own a cafe.
-    Used for general dashboard read endpoints (e.g., viewing cafe settings).
+    Used on every owner dashboard endpoint; alone on the few that also work for an inactive cafe
+    (for example the cafe settings, UC-OWNER-014).
     Requiring the cafe here means views can always rely on request.user.cafe.
     """
     message = "You do not have permission to perform this action."
@@ -40,7 +41,7 @@ class IsCafeOwner(BasePermission):
 class IsActiveCafe(BasePermission):
     """
     Ensures the requesting user's cafe subscription is active (is_active = True).
-    Used for dashboard mutation/write endpoints per UC-OWNER-001.
+    Used for the dashboard endpoints that need an active subscription, reads and writes (Global Convention 5).
     Returns 403 with specific message if the subscription is inactive.
 
     Always list it AFTER IsCafeOwner: permission_classes = [IsCafeOwner, IsActiveCafe].

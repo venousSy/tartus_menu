@@ -65,8 +65,8 @@ class Cafe(models.Model):
         ]
 
     def __str__(self):
-        # Fallback to english, then arabic, then slug
-        return self.name.get('en', self.name.get('ar', self.slug))
+        # English, then Arabic, then the slug. "or", not get()'s default: a missing English name is "".
+        return self.name.get('en') or self.name.get('ar') or self.slug
 
 
 class CafeTable(models.Model):
