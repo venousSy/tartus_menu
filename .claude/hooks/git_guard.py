@@ -76,8 +76,27 @@ def parse_git(words):
     return repo_dir, words[i], words[i + 1 :]
 
 
+# Branches switched to by earlier statements of the same command line, per repo_dir. The hook runs
+# before the whole line, so "git switch main; git commit" must be judged on main, not on the branch
+# that is checked out now.
+SWITCHED = {}
+
+
+def switch_target(subcommand, args):
+    """The branch a "git switch" or "git checkout" statement moves to, or None when it moves nowhere."""
+    if subcommand not in ("switch", "checkout") or "--" in args:
+        return None  # "git checkout -- file" restores a file; it does not change the branch
+    for i, arg in enumerate(args):
+        if arg in ("-c", "-C", "-b", "-B", "--create", "--force-create") and i + 1 < len(args):
+            return args[i + 1]
+    positional = [arg for arg in args if not arg.startswith("-")]
+    return positional[0] if positional else None
+
+
 def current_branch(repo_dir):
     """Return the checked-out branch name, or None if git cannot tell."""
+    if repo_dir in SWITCHED:
+        return SWITCHED[repo_dir]
     command = ["git"]
     if repo_dir:
         command += ["-C", repo_dir]
@@ -149,6 +168,9 @@ def check_add(args, repo_dir):
     if any(arg in BULK_ADD_ARGS for arg in args) or has_short_flag(args, "A") or has_short_flag(args, "u"):
         return "stage files by name, not with '.', -A or -u."
     for arg in args:
+        # A folder stages every untracked file in it too, such as a local file with a password.
+        if not arg.startswith("-") and os.path.isdir(os.path.join(repo_dir or ".", arg)):
+            return f"'{arg}' is a folder. Stage files by name."
         path = arg.replace("\\", "/")
         name = path.rstrip("/").split("/")[-1]
         if name == ".env" or (name.startswith(".env.") and not name.endswith(".example")):
@@ -185,6 +207,9 @@ def main():
         if reason:
             print(f"Blocked by .claude/hooks/git_guard.py: git {subcommand}: {reason}", file=sys.stderr)
             return 2
+        target = switch_target(subcommand, args)
+        if target:
+            SWITCHED[repo_dir] = target
     return 0
 
 
