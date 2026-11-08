@@ -35,6 +35,7 @@ export type MenuItem = {
   description: BilingualText;
   price: string; // two decimals, as Django sends it: "50.00" (GC 10)
   image_url: string;
+  thumbnail_url: string; // at most 192 px, for the list's 64 px picture; image_url for older uploads
   is_available: boolean;
   is_featured: boolean;
   is_new: boolean;

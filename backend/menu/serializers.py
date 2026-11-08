@@ -43,10 +43,10 @@ class MenuItemSerializer(serializers.Serializer):
     Menu items for the owner dashboard (UC-OWNER-002 and UC-OWNER-013).
 
     Input (POST, PATCH): category_id, name, price, and the optional description, is_featured, is_new.
-    Read-only, ignored if sent: image_url (UC-OWNER-006), is_available (UC-OWNER-005) and
-    sort_order (UC-OWNER-004). The cafe always comes from request.user.cafe.
-    Output: { id, category_id, name, description, price, image_url, is_available, is_featured,
-    is_new, sort_order }. A plain Serializer for the same reason as CategorySerializer.
+    Read-only, ignored if sent: image_url and thumbnail_url (UC-OWNER-006), is_available
+    (UC-OWNER-005) and sort_order (UC-OWNER-004). The cafe always comes from request.user.cafe.
+    Output: { id, category_id, name, description, price, image_url, thumbnail_url, is_available,
+    is_featured, is_new, sort_order }. A plain Serializer for the same reason as CategorySerializer.
     """
 
     id = serializers.IntegerField(read_only=True)
@@ -56,11 +56,20 @@ class MenuItemSerializer(serializers.Serializer):
     # Global Convention 10: NUMERIC(10,2), 0 or greater, returned as a string such as "50.00".
     price = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0'))
     image_url = serializers.CharField(read_only=True)
+    thumbnail_url = serializers.SerializerMethodField()
     is_available = serializers.BooleanField(read_only=True)
     # Optional: when not sent, create uses False and edit keeps the current value.
     is_featured = serializers.BooleanField(required=False)
     is_new = serializers.BooleanField(required=False)
     sort_order = serializers.IntegerField(read_only=True)
+
+    def get_thumbnail_url(self, item):
+        return thumbnail_or_image(item)
+
+
+def thumbnail_or_image(item):
+    """The small copy of the item's image; the full image for one uploaded before thumbnails existed."""
+    return item.thumbnail_url or item.image_url
 
 
 class ItemAvailabilitySerializer(serializers.Serializer):
@@ -87,6 +96,7 @@ class PublicMenuItemSerializer(serializers.Serializer):
     description = BilingualDescriptionField()
     price = serializers.DecimalField(max_digits=10, decimal_places=2)  # "50.00" (Global Convention 10)
     image_url = serializers.SerializerMethodField()
+    thumbnail_url = serializers.SerializerMethodField()
     is_available = serializers.BooleanField()
     is_featured = serializers.BooleanField()
     is_new = serializers.BooleanField()
@@ -95,6 +105,9 @@ class PublicMenuItemSerializer(serializers.Serializer):
     def get_image_url(self, item):
         # Kept in the database, but shown only while the plan allows images.
         return item.image_url if self.context['plan'].allows_images else ''
+
+    def get_thumbnail_url(self, item):
+        return thumbnail_or_image(item) if self.context['plan'].allows_images else ''
 
 
 class PublicCategorySerializer(serializers.Serializer):

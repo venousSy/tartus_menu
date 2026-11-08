@@ -42,7 +42,7 @@ function menuWith(item: string, { is_active = true, primary_color = "" } = {}) {
     categories: [{
       id: 1, name: { ar: "Drinks", en: "Drinks" }, sort_order: 100,
       items: [{
-        id: 1, name: { ar: item, en: item }, description: { ar: "", en: "" }, price: "50.00", image_url: "",
+        id: 1, name: { ar: item, en: item }, description: { ar: "", en: "" }, price: "50.00", image_url: "", thumbnail_url: "",
         is_available: true, is_featured: false, is_new: false, sort_order: 100,
       }],
     }],

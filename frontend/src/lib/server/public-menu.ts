@@ -11,6 +11,7 @@ export type PublicMenuItem = {
   description: BilingualText;
   price: string;
   image_url: string;
+  thumbnail_url: string; // at most 192 px, for the 96 px picture; the full image_url for older uploads
   is_available: boolean;
   is_featured: boolean;
   is_new: boolean;

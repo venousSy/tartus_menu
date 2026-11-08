@@ -12,7 +12,7 @@ from django.utils import timezone
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from cafes.models import Cafe
-from core.images import ITEM_IMAGE_MAX_SIDE, process_image
+from core.images import ITEM_IMAGE_MAX_SIDE, ITEM_THUMBNAIL_MAX_SIDE, process_image_sizes
 from core.media_storage import delete_image_on_commit, store_image
 from core.revalidation import schedule_menu_revalidation
 
@@ -321,17 +321,20 @@ def upload_item_image(cafe, item_id, *, image_file):
     if not cafe.plan.allows_images:  # the plan flag, never the plan name
         raise PermissionDenied('Item images require a Pro plan.')
     _get_item(cafe, item_id)  # 404 before the expensive work
-    data = process_image(image_file, max_side=ITEM_IMAGE_MAX_SIDE)
+    # The full image and a small copy for the menu lists, from one decode of the upload.
+    data, thumbnail = process_image_sizes(image_file, max_sides=(ITEM_IMAGE_MAX_SIDE, ITEM_THUMBNAIL_MAX_SIDE))
     new_url = store_image(data, f'cafes/{cafe.pk}/items')
+    new_thumbnail_url = store_image(thumbnail, f'cafes/{cafe.pk}/items')
 
     with transaction.atomic():
-        # Deleted in the meantime: 404, and the new file stays as a cheap orphan.
+        # Deleted in the meantime: 404, and the new files stay as cheap orphans.
         item = _get_item(cafe, item_id, lock=True)
-        old_url = item.image_url
-        item.image_url = new_url
-        item.save(update_fields=['image_url', 'updated_at'])
+        old_urls = (item.image_url, item.thumbnail_url)
+        item.image_url, item.thumbnail_url = new_url, new_thumbnail_url
+        item.save(update_fields=['image_url', 'thumbnail_url', 'updated_at'])
         # Only after the commit: on a rollback the item still shows the old image.
-        delete_image_on_commit(old_url)
+        for old_url in old_urls:
+            delete_image_on_commit(old_url)
         schedule_menu_revalidation(cafe.slug)
     return item
 

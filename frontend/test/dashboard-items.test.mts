@@ -20,7 +20,7 @@ const MB = 1024 * 1024;
 
 type Item = {
   id: number; category_id: number; name: { ar: string; en: string }; description: { ar: string; en: string };
-  price: string; image_url: string; is_available: boolean; is_featured: boolean; is_new: boolean; sort_order: number;
+  price: string; image_url: string; thumbnail_url: string; is_available: boolean; is_featured: boolean; is_new: boolean; sort_order: number;
 };
 const CATEGORIES = [
   { id: 1, name: { ar: "مشروبات", en: "Drinks" }, sort_order: 100, is_visible: true },
@@ -41,7 +41,7 @@ function seed(categoryId: number, ...names: string[]) {
     const last = Math.max(0, ...fake.items.filter((i) => i.category_id === categoryId).map((i) => i.sort_order));
     fake.items.push({
       id: fake.nextId++, category_id: categoryId, name: { ar, en: "" }, description: { ar: "", en: "" }, price: "10.00",
-      image_url: "", is_available: true, is_featured: false, is_new: false, sort_order: last + 100,
+      image_url: "", thumbnail_url: "", is_available: true, is_featured: false, is_new: false, sort_order: last + 100,
     });
   }
 }
@@ -90,17 +90,18 @@ const fakeDjango: FakeDjango = async (req, path, body, answer, raw) => {
   const match = /^\/dashboard\/items\/(\d+)\/(availability\/|image\/)?$/.exec(path);
   const item = fake.items.find((i) => i.id === Number(match?.[1]));
   if (match?.[2] === "image/") {
-    // UC-OWNER-006: multipart only; the "image" file; then the plan (A1), the item (A7), the size (A3) and the type (A2).
+    // UC-OWNER-006: multipart only; the plan (A1), the item (A7), the "image" file, the size (A3) and the type (A2).
     const form = await new Request("http://fake/", { method: "POST", headers: { "content-type": req.headers["content-type"]! }, body: new Uint8Array(raw) }).formData();
     const file = form.get("image");
     fake.uploads.push({ path, fields: [...form.keys()], size: file instanceof File ? file.size : -1 });
-    if (!(file instanceof File) || !file.name) return answer(400, { image: ["No file was submitted."] });
     if (fake.plan !== "pro") return answer(403, { detail: "Item images require a Pro plan." });
     if (!item) return answer(404, { detail: "Not found." });
+    if (!(file instanceof File) || !file.name) return answer(400, { image: ["No file was submitted."] });
     if (file.size > 2 * MB) return answer(400, { detail: "Image must be under 2MB." });
     const bytes = Buffer.from(await file.arrayBuffer());
     if (!bytes.subarray(1, 4).equals(Buffer.from("PNG"))) return answer(400, { detail: "Only JPEG, PNG, and WebP images are allowed." });
     item.image_url = `https://media.example.test/cafes/1/items/${item.id}-${fake.uploads.length}.webp`;
+    item.thumbnail_url = `https://media.example.test/cafes/1/items/${item.id}-${fake.uploads.length}-small.webp`;
     return answer(200, item);
   }
   if (!item) return answer(404, { detail: "Not found." });
@@ -247,6 +248,7 @@ test("an image goes to Django as the only field; Django's refusals come back as 
   assert.deepEqual(actionState(result.html), { error: null, saved: true });
   assert.deepEqual(fake.uploads[0], { path: "/dashboard/items/1/image/", fields: ["image"], size: png().length });
   assert.ok(result.html.includes(`src="${fake.items[0].image_url}"`), "the answer shows the new image");
+  assert.ok(result.html.includes(`src="${fake.items[0].thumbnail_url}"`), "the list row shows the small copy");
   const gif = Uint8Array.from(Buffer.from("R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==", "base64"));
   result = await upload(form, new File([gif], "a.gif", { type: "image/gif" }));
   assert.deepEqual(actionState(result.html), refused("imageType"));
@@ -271,6 +273,7 @@ test("Basic: no image upload; a stored image stays visible here, faded and marke
   fake.plan = "basic";
   seed(1, "قهوة", "شاي");
   fake.items[0].image_url = "https://media.example.test/cafes/1/items/old.webp";
+  fake.items[0].thumbnail_url = fake.items[0].image_url; // uploaded before thumbnails: Django sends the full image
   const html = await page();
   assert.equal(imageForm(html, 1), undefined);
   assert.equal(/type="file"/.test(html), false);

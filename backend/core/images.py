@@ -16,6 +16,9 @@ ALLOWED_FORMATS = ('JPEG', 'PNG', 'WEBP')
 WEBP_QUALITY = 80
 
 ITEM_IMAGE_MAX_SIDE = 1200
+# The customer menu shows item images at 96 CSS px, the dashboard list at 64: 192 px stays sharp on
+# 2x screens and weighs a few KB instead of the 1200 px file's hundred or more.
+ITEM_THUMBNAIL_MAX_SIDE = 192
 LOGO_MAX_SIDE = 512
 
 INVALID_TYPE_MESSAGE = 'Only JPEG, PNG, and WebP images are allowed.'
@@ -27,8 +30,13 @@ UNREADABLE_IMAGE_ERRORS = (OSError, SyntaxError, ValueError)
 
 
 def process_image(uploaded_file, *, max_side, keep_transparency=False):
+    """Validate an uploaded image and return it as WebP bytes (process_image_sizes with one size)."""
+    return process_image_sizes(uploaded_file, max_sides=(max_side,), keep_transparency=keep_transparency)[0]
+
+
+def process_image_sizes(uploaded_file, *, max_sides, keep_transparency=False):
     """
-    Validate an uploaded image and return it as WebP bytes.
+    Validate an uploaded image and return it as WebP bytes, one per entry of max_sides, from one decode.
 
     Checks, in the order of the use case: file size, format (by content, never by the
     client's Content-Type or file name), pixel count. Then applies the phone's rotation,
@@ -64,6 +72,10 @@ def process_image(uploaded_file, *, max_side, keep_transparency=False):
 
     if image.mode not in ('RGB', 'RGBA'):  # palette, grayscale or CMYK
         image = image.convert('RGBA' if image.has_transparency_data else 'RGB')
+    return [_encode(image.copy(), max_side, keep_transparency) for max_side in max_sides]
+
+
+def _encode(image, max_side, keep_transparency):
     image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)  # never enlarges
 
     if image.mode == 'RGBA' and not keep_transparency:
