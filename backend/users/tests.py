@@ -125,6 +125,22 @@ class RefreshTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
+    def test_refresh_token_of_a_deleted_owner_returns_401(self):  # UC-ADMIN-007 deletes the owner account
+        plan = SubscriptionPlan.objects.create(name=SubscriptionPlan.Name.BASIC)
+        cafe = Cafe.objects.create(owner=self.user, plan=plan, slug='test-cafe', name={'ar': 'Test Cafe'})
+        login = self.client.post(reverse('users:login'), {'email': EMAIL, 'password': PASSWORD}, format='json')
+        admin = User.objects.create_user(email='admin@platform.com', role=User.Role.SYSTEM_ADMIN)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {AccessToken.for_user(admin)}')
+        deleted = self.client.delete(reverse('admin_api:cafe', args=[cafe.pk]))
+        self.assertEqual(deleted.status_code, status.HTTP_204_NO_CONTENT)
+        self.client.credentials()  # the refresh endpoint is public: no token
+
+        response = self.client.post(self.url, {'refresh': login.data['refresh']}, format='json')
+
+        # 401, not 500: the frontend must end the session and show the login page, not an outage.
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(response.data, {'detail': 'No active account found for the given token.'})
+
 
 class LogoutTests(APITestCase):
     """UC-AUTH-003 - POST /api/v1/auth/logout/"""

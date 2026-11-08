@@ -1,7 +1,9 @@
+from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework.exceptions import AuthenticationFailed
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -22,6 +24,22 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         # Inject role into response body: { "access": "...", "refresh": "...", "role": "..." }
         data['role'] = self.user.role
         return data
+
+
+class RefreshTokenSerializer(TokenRefreshSerializer):
+    """
+    UC-AUTH-002. simplejwt looks up the token's user with .get() and does not catch DoesNotExist,
+    so a refresh token of a deleted account (UC-ADMIN-007 deletes the owner) would answer 500.
+    That token cannot be valid any more: answer 401, like an expired or blacklisted one (A1, A2).
+    """
+
+    def validate(self, attrs):
+        try:
+            return super().validate(attrs)
+        except get_user_model().DoesNotExist:
+            raise AuthenticationFailed(
+                self.error_messages['no_active_account'], 'no_active_account',
+            ) from None
 
 
 class LogoutSerializer(serializers.Serializer):

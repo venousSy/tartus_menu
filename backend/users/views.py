@@ -14,6 +14,7 @@ from .serializers import (
     ChangePasswordSerializer,
     CustomTokenObtainPairSerializer,
     LogoutSerializer,
+    RefreshTokenSerializer,
 )
 
 
@@ -37,6 +38,7 @@ class RefreshTokenView(TokenRefreshView):
     Configured in settings with ROTATE_REFRESH_TOKENS and BLACKLIST_AFTER_ROTATION.
     """
     permission_classes = [AllowAny]
+    serializer_class = RefreshTokenSerializer  # 401, not 500, for a deleted account
 
 
 class LogoutView(APIView):
