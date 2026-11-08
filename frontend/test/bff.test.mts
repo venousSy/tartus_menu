@@ -120,8 +120,12 @@ test("login: the pair goes into HttpOnly cookies, the browser gets only the role
   assert.deepEqual(await res.json(), { role: "CAFE_OWNER" });
   assert.deepEqual(Object.keys(kept(res)).sort(), ["access", "refresh"]);
   for (const cookie of res.headers.getSetCookie()) {
-    for (const flag of ["Path=/", "Expires=", "Secure", "HttpOnly", "SameSite=strict"]) assert.ok(cookie.includes(flag), cookie);
+    for (const flag of ["Path=/", "Max-Age=", "Secure", "HttpOnly", "SameSite=strict"]) assert.ok(cookie.includes(flag), cookie);
   }
+  // Max-Age, relative to now, so the browser's clock does not matter: 15 min minus 30 s, and 1 day.
+  const maxAge = (name: string) => Number(res.headers.getSetCookie().find((c) => c.startsWith(`${name}=`))?.match(/Max-Age=(\d+)/)?.[1]);
+  assert.ok(Math.abs(maxAge("access") - 870) <= 2, `access Max-Age ${maxAge("access")}`);
+  assert.ok(Math.abs(maxAge("refresh") - 86_400) <= 2, `refresh Max-Age ${maxAge("refresh")}`);
   assert.deepEqual(fake.forwardedFor, [XFF]); // forwarded unchanged, for the login throttle
 });
 

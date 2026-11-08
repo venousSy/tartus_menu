@@ -2,7 +2,9 @@
  * Service worker of the customer menu: the offline copy (step 9). MenuView registers it with the
  * scope /menu/, so it never controls the dashboards, /login or the BFF routes.
  * - Menu pages: network first. A customer who is online always gets the current menu; the last
- *   copy of each menu is kept, so it still opens without a connection.
+ *   copy of each menu is kept, so it still opens without a connection. A page streams with status
+ *   200 even when its rendering fails later, so a new copy waits in PENDING until the menu on it
+ *   reports that it rendered ("keep" below); only then does it replace the kept copy.
  * - /_next/static files: cache first. Their names contain a hash of their content, so a file with
  *   the same name never changes.
  * - Everything else (R2 images, the manifest, POSTs) goes to the network as usual.
@@ -14,6 +16,7 @@ const VERSION = "v2";
 const PAGES = `menu-pages-${VERSION}`;
 const FILES = `menu-files-${VERSION}`;
 const USES = `menu-uses-${VERSION}`; // per kept menu: the JSON list of the files it needs
+const PENDING = `menu-pending-${VERSION}`; // per menu: the copy of the last visit, not yet confirmed
 
 self.addEventListener("install", () => {
   self.skipWaiting(); // a new version takes over at once, without waiting for menu tabs to close
@@ -23,7 +26,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
       for (const name of await caches.keys()) {
-        if (name.startsWith("menu-") && ![PAGES, FILES, USES].includes(name)) {
+        if (name.startsWith("menu-") && ![PAGES, FILES, USES, PENDING].includes(name)) {
           await caches.delete(name);
         }
       }
@@ -47,13 +50,24 @@ self.addEventListener("fetch", (event) => {
 // One copy per menu, without ?table=N: the page reads the table number in the browser.
 const pageKey = (url) => url.origin + url.pathname;
 
+// Per menu: the save into PENDING that is still running. The page's "keep" message often arrives
+// before the streamed page has been copied completely, so keep() waits for it.
+const saving = new Map();
+
 async function networkFirst(event, url) {
+  // An unconfirmed copy of an earlier visit (an error page) must never be confirmed by this visit.
+  const key = pageKey(url);
+  const cleared = caches.open(PENDING).then((cache) => cache.delete(key));
+  saving.set(key, cleared);
+  event.waitUntil(cleared);
   try {
     const response = await fetch(event.request);
     if (response.ok) {
       // Saved in the background, so the page still streams to the customer while it is copied.
       const copy = response.clone();
-      event.waitUntil(caches.open(PAGES).then((cache) => cache.put(pageKey(url), copy)));
+      const saved = cleared.then(() => caches.open(PENDING)).then((cache) => cache.put(key, copy));
+      saving.set(key, saved.catch(() => {}));
+      event.waitUntil(saved);
     }
     return response;
   } catch (error) {
@@ -84,16 +98,33 @@ async function cacheFirst(event) {
 self.addEventListener("message", (event) => {
   if (event.data?.type === "keep") {
     event.waitUntil(keep(event.data.page, event.data.files));
+  } else if (event.data?.type === "forget") {
+    event.waitUntil(forget(event.data.page));
   }
 });
+
+// The menu is not found or unavailable now (notice.tsx): its old copy must not open offline.
+async function forget(page) {
+  const pageUrl = new URL(page);
+  for (const name of [PAGES, USES, PENDING]) {
+    await (await caches.open(name)).delete(pageKey(pageUrl));
+  }
+}
 
 async function keep(page, files) {
   const pageUrl = new URL(page);
   if (pageUrl.origin !== self.location.origin || !pageUrl.pathname.startsWith("/menu/")) {
     return;
   }
+  await saving.get(pageKey(pageUrl));
   const pages = await caches.open(PAGES);
-  if (!(await pages.match(pageKey(pageUrl)))) {
+  const pending = await caches.open(PENDING);
+  const confirmed = await pending.match(pageKey(pageUrl));
+  if (confirmed) {
+    // The menu rendered: this visit's copy replaces the kept one.
+    await pages.put(pageKey(pageUrl), confirmed);
+    await pending.delete(pageKey(pageUrl));
+  } else if (!(await pages.match(pageKey(pageUrl)))) {
     const response = await fetch(pageKey(pageUrl));
     if (response.ok) {
       await pages.put(pageKey(pageUrl), response);

@@ -1,6 +1,7 @@
 import type { BilingualText } from "@/lib/i18n";
 import ar from "@/messages/ar.json";
 import en from "@/messages/en.json";
+import { ForgetOfflineCopy } from "./forget-offline-copy";
 
 /**
  * A full-screen message in Arabic and English, for the screens that have no menu to switch
@@ -13,6 +14,7 @@ export function Notice({ title, messageKey }: { title?: BilingualText; messageKe
       {title?.en && <p lang="en" dir="auto" className="-mt-2 text-lg text-stone-600">{title.en}</p>}
       <p className="text-lg">{ar.Menu[messageKey]}</p>
       <p lang="en" dir="ltr" className="text-stone-600">{en.Menu[messageKey]}</p>
+      <ForgetOfflineCopy />
     </main>
   );
 }
