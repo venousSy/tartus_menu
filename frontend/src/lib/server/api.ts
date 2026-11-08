@@ -69,7 +69,7 @@ export async function apiFetch(path: string, { method, json, form }: ApiInit = {
 export async function apiGet<T>(path: string): Promise<T> {
   const response = await apiFetch(path);
   if (!response) throw new ApiError(503, SERVER_ERROR);
-  if (!response.ok) throw new ApiError(response.status, toFormError(await response.json().catch(() => null)));
+  if (!response.ok) throw new ApiError(response.status, await errorOf(response));
   return response.json();
 }
 
@@ -77,6 +77,11 @@ export async function apiGet<T>(path: string): Promise<T> {
 export async function apiWrite<T>(path: string, init: ApiInit): Promise<WriteResult<T>> {
   const response = await apiFetch(path, init);
   if (!response) return { ok: false, status: 503, error: SERVER_ERROR };
-  if (!response.ok) return { ok: false, status: response.status, error: toFormError(await response.json().catch(() => null)) };
+  if (!response.ok) return { ok: false, status: response.status, error: await errorOf(response) };
   return { ok: true, data: response.status === 204 ? (null as T) : await response.json() };
+}
+
+/** Django's refusal as a FormError: its body, and the code of its X-Error-Code header. */
+async function errorOf(response: Response): Promise<FormError> {
+  return toFormError(await response.json().catch(() => null), response.headers.get("x-error-code"));
 }

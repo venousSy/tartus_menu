@@ -38,7 +38,7 @@ def update_settings(cafe, *, name=None, primary_color=None):
     """
     cafe = get_settings(cafe)
     if primary_color is not None and not cafe.plan.allows_branding:
-        raise PermissionDenied('Custom colors require a Pro plan.')
+        raise PermissionDenied('Custom colors require a Pro plan.', code='colors_need_pro')
 
     changed = []
     if name is not None:
@@ -65,7 +65,7 @@ def upload_logo(cafe, *, image_file):
     then the cafe row is locked for the URL swap, so parallel uploads leave no file behind.
     """
     if not get_settings(cafe).plan.allows_branding:  # the plan flag, never the plan name
-        raise PermissionDenied('Custom logos require a Pro plan.')
+        raise PermissionDenied('Custom logos require a Pro plan.', code='logos_need_pro')
     # Logos keep transparency and are smaller than item images (longest side 512 px).
     data = process_image(image_file, max_side=LOGO_MAX_SIDE, keep_transparency=True)
     new_url = store_image(data, f'cafes/{cafe.pk}/logo')
@@ -134,7 +134,7 @@ def qr_pdf(cafe):
     """
     tables = active_tables(cafe)
     if not tables:
-        raise ValidationError({'detail': 'Please generate QR codes first.'})
+        raise ValidationError({'detail': 'Please generate QR codes first.'}, code='qr_first')
     return qr_codes_pdf(cafe, tables)
 
 
@@ -202,7 +202,7 @@ def _set_subscription(cafe_id, performed_by, notes, *, active):
         cafe = _lock_cafe(cafe_id)
         state = 'active' if active else 'inactive'
         if cafe.is_active == active:
-            raise ValidationError({'detail': f'Cafe is already {state}.'})  # A1
+            raise ValidationError({'detail': f'Cafe is already {state}.'}, code=f'already_{state}')  # A1
 
         now = timezone.now()
         cafe.is_active = active
@@ -275,7 +275,7 @@ def _check_plan_limits(cafe, plan):
         if limit is not None and count > limit:
             raise ValidationError({
                 'detail': f'Cannot downgrade to {plan.get_name_display()}: cafe has {count} {label} (max {limit}).'
-            })
+            }, code=f'downgrade_{label}')
 
 
 def delete_cafe(cafe_id):

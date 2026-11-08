@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { toApiMessage, toFormError } from "../src/lib/api-errors.ts";
 import { type FakeDjango, startApp } from "./harness.mts";
 
 const NEXT_PORT = 4100;
@@ -43,6 +44,11 @@ const fakeDjango: FakeDjango = async (req, path, body, answer) => {
   const notSignedIn = { detail: "Given token not valid for any token type" };
 
   if (fake.down) return answer(502, { detail: "Bad Gateway" });
+  if (path === "/auth/login/" && body.email === "throttled@test.local") {
+    // DRF's throttle (UC-AUTH-001 A4): the wait in Retry-After, the code in X-Error-Code.
+    return answer(429, { detail: "Request was throttled. Expected available in 42 seconds." },
+      { "Content-Type": "application/json", "Retry-After": "42", "X-Error-Code": "throttled" });
+  }
   if (path === "/auth/login/") {
     if (!body.email || !body.password) {
       return answer(400, { email: ["This field is required."], password: ["This field is required."] });
@@ -137,6 +143,24 @@ test("login: Django's 401 and 400 reach the browser unchanged, without cookies",
   const missing = await post("/bff/auth/login");
   assert.equal(missing.status, 400);
   assert.deepEqual(Object.keys(await missing.json()).sort(), ["email", "password"]);
+});
+
+test("login: a 429 keeps Django's Retry-After and X-Error-Code headers for the form", async () => {
+  const res = await post("/bff/auth/login", { body: { email: "throttled@test.local", password: "x" } });
+  assert.equal(res.status, 429);
+  assert.equal(res.headers.get("retry-after"), "42");
+  assert.equal(res.headers.get("x-error-code"), "throttled");
+});
+
+test("api-errors: Django's code decides the message, the text only gives its numbers", () => {
+  // A reworded text still gets its translation through the code.
+  assert.deepEqual(toApiMessage("Images need the Pro plan.", "images_need_pro"), { key: "imagesNeedPro" });
+  assert.deepEqual(toApiMessage("Images need the Pro plan."), { text: "Images need the Pro plan." });
+  const limit = "Your Basic plan allows a maximum of 5 categories. Upgrade to Pro for unlimited.";
+  assert.deepEqual(toApiMessage(limit, "plan_limit_categories"), { key: "planLimitCategories", values: { plan: "Basic", max: 5 } });
+  // A coded message that needs numbers but whose text no longer gives them: Django's own text.
+  assert.deepEqual(toApiMessage("Too many categories.", "plan_limit_categories"), { text: "Too many categories." });
+  assert.deepEqual(toFormError({ detail: "Gone." }, "not_found"), { form: { key: "notFound" }, fields: {} });
 });
 
 test("logout: both cookies are cleared and Django blacklists the refresh token", async () => {

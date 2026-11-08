@@ -90,6 +90,14 @@ def _encode(image, max_side, keep_transparency):
     return output.getvalue()
 
 
+# The X-Error-Code of each message (core/exceptions.py).
+_ERROR_CODES = {
+    INVALID_TYPE_MESSAGE: 'image_type',
+    TOO_LARGE_FILE_MESSAGE: 'image_too_large',
+    TOO_LARGE_DIMENSIONS_MESSAGE: 'image_dimensions',
+}
+
+
 def _bad_image(message):
     # A dict keeps DRF's {"detail": "..."} shape; a plain string would answer ["..."].
-    return ValidationError({'detail': message})
+    return ValidationError({'detail': message}, code=_ERROR_CODES[message])

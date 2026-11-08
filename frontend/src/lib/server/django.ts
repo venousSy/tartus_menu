@@ -24,10 +24,15 @@ export function forwardedForHeader(forwardedFor: string | null): Record<string, 
   return forwardedFor ? { "X-Forwarded-For": forwardedFor } : {};
 }
 
-/** Django's 4xx answer for the browser unchanged (status and body), so the form can show Django's messages. */
+/**
+ * Django's 4xx answer for the browser unchanged (status, body, and the headers a form reads), so the
+ * form can show Django's messages: X-Error-Code names the error, Retry-After the wait after a 429.
+ */
 export function passThrough(response: Response): Response {
-  return new Response(response.body, {
-    status: response.status,
-    headers: { "Content-Type": response.headers.get("content-type") ?? "application/json" },
-  });
+  const headers = new Headers({ "Content-Type": response.headers.get("content-type") ?? "application/json" });
+  for (const name of ["X-Error-Code", "Retry-After"]) {
+    const value = response.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  return new Response(response.body, { status: response.status, headers });
 }

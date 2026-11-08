@@ -53,7 +53,8 @@ def create_category(cafe, *, name, is_visible=True):
         if plan.max_categories is not None and categories.count() >= plan.max_categories:
             raise PermissionDenied(
                 f'Your {plan.get_name_display()} plan allows a maximum of {plan.max_categories} '
-                f'{"category" if plan.max_categories == 1 else "categories"}. Upgrade to Pro for unlimited.'
+                f'{"category" if plan.max_categories == 1 else "categories"}. Upgrade to Pro for unlimited.',
+                code='plan_limit_categories',
             )
 
         highest = categories.aggregate(highest=Max('sort_order'))['highest'] or 0
@@ -185,7 +186,8 @@ def create_item(cafe, *, category_id, name, price, description=None, is_featured
         if plan.max_items is not None and items.count() >= plan.max_items:
             raise PermissionDenied(
                 f'Your {plan.get_name_display()} plan allows a maximum of {plan.max_items} '
-                f'{"item" if plan.max_items == 1 else "items"}. Upgrade to Pro for unlimited.'
+                f'{"item" if plan.max_items == 1 else "items"}. Upgrade to Pro for unlimited.',
+                code='plan_limit_items',
             )
 
         # Items are ordered inside their category, so the gap continues after that category's last item.
@@ -319,7 +321,7 @@ def upload_item_image(cafe, item_id, *, image_file):
     one's URL as its old image and deletes it, so no stored file is left without an item.
     """
     if not cafe.plan.allows_images:  # the plan flag, never the plan name
-        raise PermissionDenied('Item images require a Pro plan.')
+        raise PermissionDenied('Item images require a Pro plan.', code='images_need_pro')
     _get_item(cafe, item_id)  # 404 before the expensive work
     # The full image and a small copy for the menu lists, from one decode of the upload.
     data, thumbnail = process_image_sizes(image_file, max_sides=(ITEM_IMAGE_MAX_SIDE, ITEM_THUMBNAIL_MAX_SIDE))

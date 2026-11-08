@@ -396,6 +396,35 @@ class ListItemsTests(ItemAPITestCase):
                 self.assertEqual(body, expected)
 
 
+class ErrorCodeHeaderTests(ItemAPITestCase):
+    """core/exceptions.py: a whole-request error names its code in X-Error-Code; the body stays {"detail"}."""
+
+    def test_detail_errors_carry_their_code(self):
+        Category.objects.bulk_create([Category(cafe=self.cafe, name={'ar': f'C{n}', 'en': ''}) for n in range(3)])
+        cases = [
+            ('not found', lambda: self.client.patch(self.item_url(self.foreign_item.pk), {}, format='json'), 'not_found'),
+            ('plan limit', lambda: self.client.post(self.list_url, {'name': {'ar': 'Sixth'}}, format='json'),
+             'plan_limit_categories'),
+            ('bad image', lambda: self.client.post(
+                self.item_image_url(self.tea.pk), {'image': SimpleUploadedFile('a.jpg', b'text')}, format='multipart'),
+             'images_need_pro'),  # Basic plan: the plan is checked before the file
+        ]
+        for label, call, code in cases:
+            with self.subTest(label):
+                response = call()
+                self.assertEqual(response['X-Error-Code'], code)
+                self.assertEqual(set(response.data), {'detail'})
+
+        Cafe.objects.filter(pk=self.cafe.pk).update(is_active=False)
+        self.assertEqual(self.client.get(self.item_list_url)['X-Error-Code'], 'subscription_inactive')
+
+    def test_field_errors_have_no_code_header(self):
+        response = self.client.post(self.item_list_url, {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertNotIn('X-Error-Code', response)
+
+
 class CreateItemTests(ItemAPITestCase):
     """UC-OWNER-002 (create) - POST /api/v1/dashboard/items/"""
 
@@ -678,6 +707,7 @@ class ItemImageTests(ItemAPITestCase):
         for answer in (response, without_file):
             self.assertEqual(answer.status_code, status.HTTP_403_FORBIDDEN)
             self.assertEqual(answer.data, {'detail': 'Item images require a Pro plan.'})
+            self.assertEqual(answer['X-Error-Code'], 'images_need_pro')  # what the frontend translates by
 
     def test_invalid_files_return_400(self):  # A2, A3, A5
         not_allowed = {'detail': 'Only JPEG, PNG, and WebP images are allowed.'}
