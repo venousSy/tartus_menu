@@ -237,9 +237,12 @@ class CafeLogoTests(CafeAPITestCase):
 
     def test_basic_plan_returns_403(self):  # A1
         response = self.upload(image_file())
+        # The plan is checked first: even a request without a file gets the 403.
+        without_file = self.client.post(self.upload_url, {}, format='multipart')
 
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(response.data, {'detail': 'Custom logos require a Pro plan.'})
+        for answer in (response, without_file):
+            self.assertEqual(answer.status_code, status.HTTP_403_FORBIDDEN)
+            self.assertEqual(answer.data, {'detail': 'Custom logos require a Pro plan.'})
         self.cafe.refresh_from_db()
         self.assertEqual(self.cafe.logo_url, '')
 

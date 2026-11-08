@@ -382,6 +382,7 @@ class ListItemsTests(ItemAPITestCase):
             (self.drinks.pk, status.HTTP_200_OK, [self.tea.pk, coffee.pk]),
             (self.food.pk, status.HTTP_200_OK, []),  # A1: a category without items
             ('abc', status.HTTP_400_BAD_REQUEST, {'category': ['A valid integer is required.']}),  # A2
+            ('', status.HTTP_400_BAD_REQUEST, {'category': ['A valid integer is required.']}),  # A2, not every item
             (self.foreign.pk, status.HTTP_404_NOT_FOUND, {'detail': 'Not found.'}),  # A3
         ]
         for category, status_code, expected in cases:
@@ -665,9 +666,12 @@ class ItemImageTests(ItemAPITestCase):
         Cafe.objects.filter(pk=self.cafe.pk).update(plan=self.other_cafe.plan)  # Basic: allows_images false
 
         response = self.upload(self.tea.pk, image_file())
+        # The plan is checked first (Main Flow step 2): even a request without a file gets the 403.
+        without_file = self.client.post(self.item_image_url(self.tea.pk), {}, format='multipart')
 
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(response.data, {'detail': 'Item images require a Pro plan.'})
+        for answer in (response, without_file):
+            self.assertEqual(answer.status_code, status.HTTP_403_FORBIDDEN)
+            self.assertEqual(answer.data, {'detail': 'Item images require a Pro plan.'})
 
     def test_invalid_files_return_400(self):  # A2, A3, A5
         not_allowed = {'detail': 'Only JPEG, PNG, and WebP images are allowed.'}

@@ -35,7 +35,11 @@ def process_image(uploaded_file, *, max_side, keep_transparency=False):
     resizes so the longest side is at most max_side (never enlarged), drops all metadata
     and encodes as WebP. Item images are flattened onto white; logos keep transparency.
     Raises ValidationError, which DRF answers with 400 {"detail": "..."}.
+    uploaded_file is None when the request had no "image" field: the serializers leave that check
+    to here, so the services check the plan first (403 before 400). Same body as DRF's own check.
     """
+    if uploaded_file is None:
+        raise ValidationError({'image': ['No file was submitted.']})
     if uploaded_file.size > MAX_UPLOAD_BYTES:
         raise _bad_image(TOO_LARGE_FILE_MESSAGE)
 
