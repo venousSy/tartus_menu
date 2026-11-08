@@ -44,10 +44,16 @@ export async function proxy(request: NextRequest) {
   let response: NextResponse;
   if (target) {
     response = NextResponse.redirect(new URL(target, request.url));
-  } else if (tokens) {
-    // The page or route behind the proxy reads the new pair from the request's Cookie header.
-    request.cookies.set(ACCESS_COOKIE, tokens.access);
-    request.cookies.set(REFRESH_COOKIE, tokens.refresh);
+  } else if (tokens !== undefined) {
+    // The page or route behind the proxy reads the cookies from the request's Cookie header: the new
+    // pair, or none when the session is over. With the old refresh cookie still there, apiFetch and
+    // the BFF routes would take the ended session for an outage of Django.
+    if (tokens) {
+      request.cookies.set(ACCESS_COOKIE, tokens.access);
+      request.cookies.set(REFRESH_COOKIE, tokens.refresh);
+    } else {
+      request.cookies.delete([ACCESS_COOKIE, REFRESH_COOKIE]);
+    }
     response = NextResponse.next({ request: { headers: new Headers(request.headers) } });
   } else {
     response = NextResponse.next();
