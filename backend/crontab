@@ -1,7 +1,7 @@
 # Daily jobs of the "backup" service (system_design.md §5, "Scheduled Jobs"), run by supercronic.
 # Times are UTC (the container's time zone). Fields: minute hour day-of-month month day-of-week command.
 
-# Database dump -> gzip -> private R2 backup bucket, as backups/YYYY-MM-DD.sql.gz.
+# Database dump -> gzip -> age encryption -> private R2 backup bucket, as backups/YYYY-MM-DD.sql.gz.age.
 0 2 * * * python manage.py backup_database
 
 # Remove expired rows from the JWT outstanding/blacklist tables.

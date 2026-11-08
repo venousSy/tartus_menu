@@ -1,5 +1,5 @@
 """
-Shared DRF serializer fields, used by more than one app (menu now, cafes later).
+Shared DRF serializer fields, used by more than one app (menu and cafes).
 """
 
 from rest_framework import serializers

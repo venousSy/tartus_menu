@@ -11,7 +11,8 @@ Rules for this file:
 
 ## Open
 
-(none on 2026-11-06)
+- **58.** (2026-11-08, code review) The customer menu shows item images at 96 px but downloads the stored 1200 px WebP (`menu-view.tsx`, `unoptimized`), so guests on mobile data load far more bytes than they see. `docs/best_practices_research.md` chose "resize once at upload and serve that file directly" to spare the VPS CPU. Options: store a small second size at upload (a schema and use-case change), or Cloudflare Image Transformations through a `next/image` loader. Needs a decision in the docs first.
+- **59.** (2026-11-08, code review) `frontend/src/lib/api-errors.ts` recognizes Django's errors by their English text (regular expressions), so a reworded message on the backend silently falls back to the English text; and a 429 does not pass `Retry-After` on, so the login form cannot say how long to wait. A sturdier design is a machine-readable `code` next to `detail` in Django's error bodies, but the docs fix the error format to `{"detail": "..."}`, so this needs a doc decision first.
 
 ## Closed without a code change
 
