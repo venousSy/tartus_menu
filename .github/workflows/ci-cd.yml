@@ -230,6 +230,10 @@ jobs:
           fi
           docker compose exec -T backend python manage.py migrate --noinput
           docker compose exec -T backend python manage.py createcachetable
+          # The deploy fails unless the whole chain answers from outside, through Nginx and TLS, within
+          # about a minute (system_design.md §3.7). DOMAIN comes from the server's .env.
+          domain=$(sed -n 's/^DOMAIN=//p' .env)
+          curl -fsS --retry 12 --retry-delay 5 --retry-all-errors -o /dev/null "https://$domain/health"
           # Remove images that no container uses and that are older than 7 days (older versions stay
           # available for a quick rollback during that week).
           docker image prune -af --filter "until=168h"

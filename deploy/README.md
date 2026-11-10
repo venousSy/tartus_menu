@@ -92,10 +92,14 @@ It asks for an email and a password, and gives the account the `SYSTEM_ADMIN` ro
 ```bash
 curl -I https://menu.domain.com/login
 curl -I -X POST https://menu.domain.com/internal/revalidate
+curl https://menu.domain.com/health
+docker compose ps
 ```
 
 The first answers `200` with a `Strict-Transport-Security` header, the second `404` (the revalidation
-endpoint is reachable only inside the Docker network).
+endpoint is reachable only inside the Docker network), the third `{"status":"ok"}` (Nginx, Next.js, Django
+and PostgreSQL all answer; system_design.md §3.7). `docker compose ps` shows `backend` and `frontend` as
+`healthy`.
 
 ## 9. Automatic certificate renewal
 
@@ -283,10 +287,23 @@ docker compose up -d
 
 Everything written after that dump's night is lost; uploaded images stay in the images bucket.
 
+## 13. Uptime monitoring (once)
+
+Learn about an outage before a cafe owner calls. Create a free account at an external monitor (for example
+UptimeRobot or Better Stack) and add two checks, each every 5 minutes, that alert you by email or Telegram:
+
+1. **HTTP check** on `https://menu.domain.com/health`: it must answer `200`. This covers Nginx, the
+   certificate, Next.js, Django and PostgreSQL in one request (system_design.md §3.7).
+2. **Keyword check** on one real menu, for example `https://menu.domain.com/menu/<slug>`: the page must
+   contain the cafe's name. This also covers the cached customer page.
+
+The monitor runs outside the VPS, so it still alerts when the whole server is down. When it alerts, start
+with `docker compose ps` and `docker compose logs --tail 50 backend frontend nginx`.
+
 ## Useful commands
 
 ```bash
-docker compose ps                  # state of every service
+docker compose ps                  # state of every service (backend and frontend show "healthy")
 docker compose logs -f backend     # follow Django's log (also: frontend, nginx, db)
 docker compose restart nginx       # after editing deploy/nginx/default.conf.template
 ```

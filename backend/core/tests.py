@@ -1,6 +1,7 @@
 """
 Tests for the project-wide pieces in core/: the JSON 404 handler (use_cases.md Global Convention 2), the
-JSON-only API in production, and the daily backup command (system_design.md §5, "Scheduled Jobs").
+health check (system_design.md §3.7), the JSON-only API in production, and the daily backup command
+(system_design.md §5, "Scheduled Jobs").
 """
 
 import gzip
@@ -19,6 +20,7 @@ from botocore.exceptions import ClientError
 from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db import OperationalError
 from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.settings import perform_import
 from rest_framework.views import APIView
@@ -53,6 +55,30 @@ class JsonNotFoundTests(SimpleTestCase):
                 self.assertEqual(response.status_code, 404)
                 self.assertEqual(response['Content-Type'], 'application/json')
                 self.assertEqual(response.json(), {'detail': 'Not found.'})
+
+
+class HealthTests(TestCase):
+    """GET /api/v1/health/ (system_design.md §3.7): what the uptime monitor and the Docker healthchecks read."""
+
+    url = '/api/v1/health/'
+
+    def test_healthy_answers_200_without_login(self):
+        # A stale or broken token must not matter: the check uses no authentication at all.
+        response = self.client.get(self.url, HTTP_AUTHORIZATION='Bearer not-a-token')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'status': 'ok'})
+
+    def test_database_down_answers_503_with_its_code(self):
+        with mock.patch('core.views.connection.cursor', side_effect=OperationalError('connection refused')):
+            response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {'detail': 'Database unavailable.'})
+        self.assertEqual(response['X-Error-Code'], 'db_unavailable')
+
+    def test_only_get_is_allowed(self):
+        self.assertEqual(self.client.post(self.url).status_code, 405)
 
 
 def rest_framework_setting(debug):

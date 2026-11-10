@@ -5,8 +5,11 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
+from core.views import HealthView
+
 urlpatterns = [
     path(f'{settings.DJANGO_ADMIN_PATH}/', admin.site.urls),  # hidden path from the environment
+    path('api/v1/health/', HealthView.as_view(), name='health'),  # system_design.md §3.7
     path('api/v1/auth/', include('users.urls')),
     path('api/v1/admin/', include('cafes.admin_urls')),
     path('api/v1/dashboard/', include('menu.urls')),
