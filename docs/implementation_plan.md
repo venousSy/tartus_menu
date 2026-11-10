@@ -31,7 +31,12 @@ All architectural decisions have been locked in. Below is a summary of every dec
 | Plan enforcement | Enforced in Service Layer (`services.py`) — uses capability flags (`allows_images`, `allows_branding`), returns `403` on violation; after a downgrade, stored images/logo/color are kept and hidden from customers |
 | Billing activation | Manual by Super Admin via admin dashboard |
 | Inactive cafe behavior | Customer sees "Temporarily Unavailable" page; owner dashboard answers 403 everywhere except GET settings |
-| Analytics | **Deferred — not in MVP** |
+| Analytics | Not in the MVP. Planned post-MVP (post_mvp_roadmap.md Phase 3): menu opens per day/hour and per table, no cookies or personal data; Basic sees a summary, Pro the detail (plan flag `allows_detailed_analytics`) |
+| Business time zone | `Asia/Damascus` for analytics days/hours and subscription dates; the database and Django `TIME_ZONE` stay UTC |
+| Monitoring (post-MVP) | Health URL `/health` + an external uptime check; error tracking with Sentry or GlitchTip (`sentry-sdk`, `@sentry/nextjs`; active only when a DSN is set) |
+| Password recovery (post-MVP) | A one-time reset link made by the Super Admin first; self-service email later |
+| Subscription expiry (post-MVP) | A paid-until date; a nightly job deactivates expired cafes; a warning 7 days before |
+| Approved dependencies (post-MVP) | `sentry-sdk`, `@sentry/nextjs`, psycopg 3 — each added in its own step |
 | Routing | Host `menu.domain.com`; customer page route `/menu/[cafe-slug]` |
 | Theming | Logo (Pro) + Primary Color (Pro) injected as CSS variable |
 | Caching | Next.js ISR + on-demand revalidation triggered by Django after commit; 5-minute time-based fallback (no Redis in MVP) |
@@ -68,23 +73,41 @@ Docker Compose service stack, Nginx routing rules, GitHub Actions CI/CD pipeline
 Comparison with similar systems, suggestions and the skills needed. Decisions taken from it are recorded in the documents above.
 → [best_practices_research.md](best_practices_research.md)
 
+### 5. Post-MVP Roadmap (proposal — NOT a source of truth)
+The features and improvements after the MVP, in phases, with the owner's decisions. Each phase changes the documents above in its own docs turns before any code.
+→ [post_mvp_roadmap.md](post_mvp_roadmap.md)
+
 ---
 
 ## Next Steps (In Order)
 
-1. **[ ] Review & approve this system design** — confirm all decisions above are correct before writing any code.
-2. **[ ] Set up project directory** — create `tartus_menu/backend` and `tartus_menu/frontend` scaffold.
-3. **[ ] Backend bootstrapping** — Django project setup, apps, models, migrations.
-4. **[ ] Auth layer** — JWT login, Super Admin and Cafe Owner permission classes, login rate limit.
-5. **[ ] Core API** — Categories, Items, Cafe Settings endpoints.
-6. **[ ] Cloudflare R2 integration** — `django-storages` + `boto3`; Pillow upload pipeline (WebP, random keys, custom domain).
-7. **[ ] QR Code + PDF generation** — `qrcode` + `reportlab`.
-8. **[ ] Frontend bootstrapping** — Next.js app, Route Groups, Tailwind, i18n, BFF auth routes.
-9. **[ ] Customer menu page** — ISR + on-demand revalidation endpoint, theming, PWA config, `noindex` meta.
-10. **[ ] Admin dashboard UI** — Categories, Items, QR, Settings screens.
-11. **[ ] Super Admin dashboard UI** — Cafe management screens.
-12. **[ ] Docker Compose** — All services, Nginx config (admin path, rate limits, `/internal/` block, body size), environment variables.
-13. **[ ] GitHub Actions CI/CD** — Workflow file, SSH secrets.
-14. **[ ] DB backup cron** — Docker service for daily `pg_dump` → R2, plus daily `flushexpiredtokens`.
-15. **[ ] End-to-end testing** — Full flow from login to QR scan.
-16. **[ ] Post-MVP: PostgreSQL RLS** — Second isolation layer (system_design.md §7.1).
+1. **[x] Review & approve this system design** — confirm all decisions above are correct before writing any code.
+2. **[x] Set up project directory** — create `tartus_menu/backend` and `tartus_menu/frontend` scaffold.
+3. **[x] Backend bootstrapping** — Django project setup, apps, models, migrations.
+4. **[x] Auth layer** — JWT login, Super Admin and Cafe Owner permission classes, login rate limit.
+5. **[x] Core API** — Categories, Items, Cafe Settings endpoints.
+6. **[x] Cloudflare R2 integration** — `django-storages` + `boto3`; Pillow upload pipeline (WebP, random keys, custom domain).
+7. **[x] QR Code + PDF generation** — `qrcode` + `reportlab`.
+8. **[x] Frontend bootstrapping** — Next.js app, Route Groups, Tailwind, i18n, BFF auth routes.
+9. **[x] Customer menu page** — ISR + on-demand revalidation endpoint, theming, PWA config, `noindex` meta.
+10. **[x] Admin dashboard UI** — Categories, Items, QR, Settings screens.
+11. **[x] Super Admin dashboard UI** — Cafe management screens.
+12. **[x] Docker Compose** — All services, Nginx config (admin path, rate limits, `/internal/` block, body size), environment variables.
+13. **[x] GitHub Actions CI/CD** — Workflow file, SSH secrets.
+14. **[x] DB backup cron** — Docker service for daily `pg_dump` → R2, plus daily `flushexpiredtokens`.
+15. **[x] End-to-end testing** — Full flow from login to QR scan.
+16. **[ ] Post-MVP: PostgreSQL RLS** — Second isolation layer (system_design.md §7.1). Done last, after step 27 (post_mvp_roadmap.md item K).
+
+Post-MVP steps (details in [post_mvp_roadmap.md](post_mvp_roadmap.md); each starts with its own docs turns):
+
+17. **[ ] Health URL and uptime monitoring** (roadmap C).
+18. **[ ] Stable QR links `/t/<qr_token>`** (roadmap A) — before any QR code is printed for a real cafe.
+19. **[ ] Error tracking** — Sentry or GlitchTip (roadmap D).
+20. **[ ] Password reset link made by the Super Admin** (roadmap E1).
+21. **[ ] Subscription expiry and warnings** (roadmap F).
+22. **[ ] Analytics** (roadmap B).
+23. **[ ] Item tags** (roadmap G).
+24. **[ ] Item variants (sizes with prices)** (roadmap H).
+25. **[ ] Password reset by email** (roadmap E2).
+26. **[ ] psycopg 3 and persistent connections** (roadmap I).
+27. **[ ] Images: remaining sizes, optional** (roadmap J).

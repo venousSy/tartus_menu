@@ -27,16 +27,17 @@
   a new plan flag needs a `--sync-flags` option (or a data migration).
 - Item thumbnails (192 px) already exist (PR #66); the 1200 px image is never shown to customers.
 
-## Phase 0 — Governance (no code)
+## Phase 0 — Governance (no code) — done 2026-11-09
 
-1. **AGENTS.md** (only on the user's explicit request): §5 — remove "analytics" from the out-of-scope list;
-   §4 — add an `analytics` app.
-2. **One question per turn to the user:** (a) a business time zone setting `BUSINESS_TIME_ZONE = "Asia/Damascus"`
-   (`TIME_ZONE` stays UTC); (b) approval of new dependencies (D: `sentry-sdk`, `@sentry/nextjs`; I: psycopg 3);
-   (c) an exception to "never hand-write a migration" for RLS `RunSQL` (K only); (d) the SMTP provider (E2).
-3. **implementation_plan.md:** decisions table (QR URL, Analytics, Billing expiry, Password recovery,
-   Monitoring), a link to this file, and build-order steps 17+ in the phase order below; RLS (step 16) moves
-   to the end.
+1. **AGENTS.md** (on the user's explicit request): §5 — remove "analytics" from the out-of-scope list;
+   §4 — add an `analytics` app. Done in PR #69.
+2. **Questions to the user**, answered 2026-11-09: (a) business time zone `Asia/Damascus`
+   (`BUSINESS_TIME_ZONE`; `TIME_ZONE` stays UTC); (b) new dependencies approved (D: `sentry-sdk`,
+   `@sentry/nextjs`; I: psycopg 3), each still added in its own step; (c) the exception to "never hand-write a
+   migration" for RLS `RunSQL` (K only) is decided later, in Phase 5; (d) the SMTP provider (E2) is asked in Phase 5.
+3. **implementation_plan.md:** decisions table (Analytics, Business time zone, Monitoring, Password recovery,
+   Subscription expiry, Approved dependencies), a link to this file, MVP steps 1–15 checked, and build-order
+   steps 17–27 in the phase order below; RLS (step 16) is done last. The "QR Code URL" row changes with item A.
 
 ## Phase 1 — Before the first real cafe
 
