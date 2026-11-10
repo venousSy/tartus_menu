@@ -12,7 +12,8 @@ export type ApiErrorKey =
   | "invalidInteger" | "minValue" | "maxValue" | "maxDigits" | "maxDecimals" | "maxWholeDigits" | "colorFormat"
   | "listChanged" | "wrongPassword" | "samePassword" | "passwordTooShort" | "passwordTooCommon"
   | "passwordNumeric" | "passwordTooSimilar" | "slugTaken" | "slugFormat" | "emailTaken" | "emailFormat"
-  | "unknownPlan" | "alreadyActive" | "alreadyInactive" | "downgradeCategories" | "downgradeItems";
+  | "unknownPlan" | "alreadyActive" | "alreadyInactive" | "downgradeCategories" | "downgradeItems"
+  | "resetLinkInvalid";
 
 /** A message to show: a known one by key, translated when the page renders, or Django's own text. */
 export type ApiMessage = { key: ApiErrorKey; values?: Record<string, string | number> } | { text: string };
@@ -56,6 +57,7 @@ const KNOWN: [RegExp, ApiErrorKey, string[]?][] = [
   [/^This password is too common\.$/, "passwordTooCommon"],
   [/^This password is entirely numeric\.$/, "passwordNumeric"],
   [/^The password is too similar to the .+\.$/, "passwordTooSimilar"], // the field name is English
+  [/^This reset link is invalid or has expired\.$/, "resetLinkInvalid"], // UC-AUTH-005 A1
   // UC-ADMIN-001 to 006: the admin serializers (DRF's SlugField, EmailField, SlugRelatedField) and services.
   [/^A cafe with this slug already exists\.$/, "slugTaken"],
   [/^Enter a valid .slug. consisting of letters, numbers, underscores or hyphens\.$/, "slugFormat"], // “slug” in curly quotes
@@ -78,6 +80,7 @@ const CODES: Record<string, ApiErrorKey> = {
   image_dimensions: "imageDimensions", image_upload_failed: "imageUploadFailed", qr_first: "qrFirst",
   not_found: "notFound", already_active: "alreadyActive", already_inactive: "alreadyInactive",
   downgrade_categories: "downgradeCategories", downgrade_items: "downgradeItems",
+  reset_link_invalid: "resetLinkInvalid",
 };
 
 function valuesOf(match: RegExpExecArray, names: string[]) {

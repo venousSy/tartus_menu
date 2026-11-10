@@ -1,13 +1,16 @@
 """
-API integration tests for the auth endpoints (use_cases.md UC-AUTH-001 to UC-AUTH-004).
+API integration tests for the auth endpoints (use_cases.md UC-AUTH-001 to UC-AUTH-005).
 Each test sends real HTTP requests through URL -> view -> serializer -> database.
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta
+from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.tokens import default_token_generator
 from django.core.cache import cache
 from django.urls import reverse
+from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework.throttling import ScopedRateThrottle
@@ -277,3 +280,154 @@ class ChangePasswordTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class PasswordResetTests(APITestCase):
+    """UC-AUTH-005 - POST /api/v1/auth/password-reset/confirm/, with links made by UC-ADMIN-010."""
+
+    url = reverse('users:password-reset-confirm')
+    new_password = 'An0ther-strong-pass!'
+    INVALID = {'detail': 'This reset link is invalid or has expired.'}
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(email=EMAIL, password=PASSWORD)
+        plan = SubscriptionPlan.objects.create(name=SubscriptionPlan.Name.BASIC)
+        # Inactive: auth endpoints never check the subscription (Global Convention 5).
+        cls.cafe = Cafe.objects.create(owner=cls.user, plan=plan, slug='tartus-coffee', name={'ar': 'Tartus Coffee'})
+        cls.admin = User.objects.create_user(email='admin@platform.com', role=User.Role.SYSTEM_ADMIN)
+
+    def setUp(self):
+        cache.clear()  # the throttle counters
+
+    def link(self):
+        """A fresh link from the admin endpoint, as the body the reset page sends: {uid, token}."""
+        response = self.client.post(
+            reverse('admin_api:cafe-password-reset-link', args=[self.cafe.pk]),
+            HTTP_AUTHORIZATION=f'Bearer {AccessToken.for_user(self.admin)}',
+        )
+        uid, token = response.data['url'].split('#')[1].split('.')
+        return {'uid': uid, 'token': token}
+
+    def confirm(self, link, password=None):
+        return self.client.post(self.url, {**link, 'new_password': password or self.new_password}, format='json')
+
+    def assert_invalid(self, response):
+        self.assertEqual((response.status_code, response.data), (status.HTTP_400_BAD_REQUEST, self.INVALID))
+        self.assertEqual(response['X-Error-Code'], 'reset_link_invalid')
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password(PASSWORD))  # unchanged
+
+    def test_the_link_sets_the_password_and_ends_every_session(self):  # Main flow
+        sessions = [RefreshToken.for_user(self.user), RefreshToken.for_user(self.user)]
+
+        response = self.confirm(self.link())
+
+        self.assertEqual((response.status_code, response.content), (status.HTTP_204_NO_CONTENT, b''))
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password(self.new_password))
+        for token in sessions:
+            refresh = self.client.post(reverse('users:refresh'), {'refresh': str(token)}, format='json')
+            self.assertEqual(refresh.status_code, status.HTTP_401_UNAUTHORIZED)
+        login = self.client.post(reverse('users:login'), {'email': EMAIL, 'password': self.new_password}, format='json')
+        self.assertEqual(login.status_code, status.HTTP_200_OK)  # not logged in by the reset itself
+
+    def test_a_link_works_once_and_ends_the_links_made_before(self):  # A1, UC-ADMIN-010 A3
+        first, second = self.link(), self.link()
+
+        self.assertEqual(self.confirm(second).status_code, status.HTTP_204_NO_CONTENT)
+
+        for link in (second, first):
+            response = self.confirm(link, 'Yet-an0ther-pass!')
+            self.assertEqual((response.status_code, response.data), (status.HTTP_400_BAD_REQUEST, self.INVALID))
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password(self.new_password))
+
+    def test_the_same_password_again_is_allowed_and_still_ends_the_link(self):  # step 4
+        link = self.link()
+
+        self.assertEqual(self.confirm(link, PASSWORD).status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(self.confirm(link, PASSWORD).status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_a_password_change_ends_the_link(self):  # A1 after UC-AUTH-004
+        link = self.link()
+        self.client.post(
+            reverse('users:change-password'), {'old_password': PASSWORD, 'new_password': 'Changed-pass-1!'},
+            format='json', HTTP_AUTHORIZATION=f'Bearer {AccessToken.for_user(self.user)}',
+        )
+
+        response = self.confirm(link)
+
+        self.assertEqual((response.status_code, response.data), (status.HTTP_400_BAD_REQUEST, self.INVALID))
+
+    def test_a_link_expires_after_24_hours(self):  # A1
+        link = self.link()
+        with mock.patch('django.contrib.auth.tokens.PasswordResetTokenGenerator._now',
+                        return_value=datetime.now() + timedelta(hours=23, minutes=59)):
+            still_valid = default_token_generator.check_token(self.user, link['token'])
+        with mock.patch('django.contrib.auth.tokens.PasswordResetTokenGenerator._now',
+                        return_value=datetime.now() + timedelta(hours=24, minutes=1)):
+            response = self.confirm(link)
+
+        self.assertTrue(still_valid)
+        self.assert_invalid(response)
+
+    def test_every_invalid_link_gets_the_same_answer(self):  # A1
+        link = self.link()
+        other = User.objects.create_user(email='other@cafe.com', password=PASSWORD)
+        cases = [
+            ('wrong token', {**link, 'token': link['token'][:-1] + ('a' if link['token'][-1] != 'a' else 'b')}),
+            ('token of another user', {**link, 'token': default_token_generator.make_token(other)}),
+            ('unknown user', {**link, 'uid': urlsafe_base64_encode(b'999999')}),
+            ('uid is not a number', {**link, 'uid': urlsafe_base64_encode(b'abc')}),
+            ('uid is not base64', {**link, 'uid': '!!!'}),
+            ('uid is too large', {**link, 'uid': urlsafe_base64_encode(b'9' * 30)}),
+        ]
+        for label, body in cases:
+            with self.subTest(label):
+                cache.clear()  # more cases than the throttle allows in a minute
+                self.assert_invalid(self.confirm(body))
+
+    def test_an_inactive_account_cannot_use_a_link(self):  # A1
+        link = self.link()
+        User.objects.filter(pk=self.user.pk).update(is_active=False)
+
+        self.assert_invalid(self.confirm(link))
+
+    def test_a_weak_password_returns_400_and_keeps_the_link(self):  # A2
+        link = self.link()
+
+        weak = self.confirm(link, '12345678')
+        similar = self.confirm(link, EMAIL)
+
+        self.assertEqual((weak.status_code, weak.data), (status.HTTP_400_BAD_REQUEST, {
+            'new_password': ['This password is too common.', 'This password is entirely numeric.'],
+        }))
+        self.assertEqual(similar.data, {'new_password': ['The password is too similar to the email address.']})
+        self.assertEqual(self.confirm(link).status_code, status.HTTP_204_NO_CONTENT)  # the link still works
+
+    def test_the_link_is_checked_before_the_password(self):  # A1 wins over A2
+        self.assert_invalid(self.confirm({'uid': 'MQ', 'token': 'wrong'}, '12345678'))
+
+    def test_missing_fields_return_400_with_field_errors(self):  # A4
+        response = self.client.post(self.url, {}, format='json')
+
+        required = ['This field is required.']
+        self.assertEqual((response.status_code, response.data),
+                         (status.HTTP_400_BAD_REQUEST, {'uid': required, 'token': required, 'new_password': required}))
+
+    def test_too_many_attempts_return_429(self):  # A3
+        limit, _ = ScopedRateThrottle().parse_rate(ScopedRateThrottle.THROTTLE_RATES['password_reset'])
+        for _attempt in range(limit):
+            self.assertEqual(self.confirm({'uid': 'MQ', 'token': 'wrong'}).status_code, status.HTTP_400_BAD_REQUEST)
+
+        response = self.confirm(self.link())  # even a valid link must wait
+
+        self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertTrue(response.data['detail'].startswith('Request was throttled. Expected available in'))
+
+    def test_a_stale_token_header_does_not_cause_a_401(self):
+        response = self.client.post(self.url, {**self.link(), 'new_password': self.new_password}, format='json',
+                                    HTTP_AUTHORIZATION='Bearer not-a-token')
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)

@@ -73,6 +73,17 @@ const fakeDjango: FakeDjango = async (req, path, body, answer) => {
     fake.refresh.clear();
     return answer(204);
   }
+  if (path === "/auth/password-reset/confirm/") {
+    // UC-AUTH-005: the link first (A1, with its code), then the password rules (A2).
+    if (body.uid !== "Nw" || body.token !== "good-token") {
+      return answer(400, { detail: "This reset link is invalid or has expired." },
+        { "Content-Type": "application/json", "X-Error-Code": "reset_link_invalid" });
+    }
+    if (body.new_password === "12345678") return answer(400, { new_password: ["This password is too common."] });
+    fake.password = body.new_password;
+    fake.refresh.clear();
+    return answer(204);
+  }
   if (path === "/dashboard/settings/") {
     return signedIn ? answer(200, SETTINGS) : answer(401, notSignedIn);
   }
@@ -199,6 +210,37 @@ test("change-password: success signs the browser out; Django blacklists every re
   const body = { old_password: fake.password, new_password: "new-password-1" };
   assertSignedOut(await post("/bff/auth/change-password", { body, cookie: session.cookie }), 204);
   assert.equal(fake.refresh.size, 0);
+});
+
+test("password-reset: no session is needed and none is started; Django gets the link, the password and the IP", async () => {
+  const res = await post("/bff/auth/password-reset", { body: { uid: "Nw", token: "good-token", new_password: "new-password-1" } });
+  assert.equal(res.status, 204);
+  assert.deepEqual(kept(res), {}); // the owner logs in afterwards
+  assert.deepEqual([fake.calls, fake.forwardedFor, fake.password], [["/auth/password-reset/confirm/"], [XFF], "new-password-1"]);
+});
+
+test("password-reset: Django's refusals reach the form with the error code; another site is refused", async () => {
+  const invalid = await post("/bff/auth/password-reset", { body: { uid: "Nw", token: "used", new_password: "new-password-1" } });
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.headers.get("x-error-code"), "reset_link_invalid");
+  assert.deepEqual(toFormError(await invalid.json(), "reset_link_invalid"), { form: { key: "resetLinkInvalid" }, fields: {} });
+  const weak = await post("/bff/auth/password-reset", { body: { uid: "Nw", token: "good-token", new_password: "12345678" } });
+  assert.deepEqual([weak.status, await weak.json()], [400, { new_password: ["This password is too common."] }]);
+  fake.calls = [];
+  const foreign = await post("/bff/auth/password-reset", { body: { uid: "Nw", token: "good-token", new_password: "x" }, origin: "https://evil.example" });
+  assert.equal(foreign.status, 403);
+  assert.deepEqual(fake.calls, []);
+  assert.equal(fake.password, "right-password");
+});
+
+test("reset page: open to everyone, never indexed, and it tells no other page where the visitor came from", async () => {
+  for (const cookie of ["", both(issuePair()), both(issuePair("SYSTEM_ADMIN"))]) {
+    const res = await fetch(`${SITE}/reset-password`, { redirect: "manual", headers: { Cookie: cookie } });
+    assert.equal(res.status, 200); // proxy.ts does not run here: a signed-in visitor is not sent home
+    assert.equal(res.headers.get("referrer-policy"), "no-referrer");
+    assert.match(await res.text(), /<meta name="robots" content="noindex, nofollow"/);
+  }
+  assert.deepEqual(fake.calls, []);
 });
 
 // src/proxy.ts: role routing and the single-flight refresh. Sessions come straight from the fake

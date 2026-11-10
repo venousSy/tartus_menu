@@ -7,6 +7,7 @@
 - [UC-AUTH-002] Refresh Token
 - [UC-AUTH-003] Logout
 - [UC-AUTH-004] Change Password
+- [UC-AUTH-005] Reset Password with Link
 
 ### Super Admin
 - [UC-ADMIN-001] Create Cafe
@@ -18,6 +19,7 @@
 - [UC-ADMIN-007] Delete Cafe
 - [UC-ADMIN-008] View Billing History
 - [UC-ADMIN-009] View Platform Stats
+- [UC-ADMIN-010] Generate Password Reset Link
 
 ### Cafe Owner
 - [UC-OWNER-001] Manage Categories
@@ -83,7 +85,7 @@ A table's QR code does not hold this URL. It holds the table's permanent short l
 - Every /api/v1/dashboard/ endpoint requires the owner's cafe to be active (cafe.is_active = true). The only exception is GET /api/v1/dashboard/settings/ (UC-OWNER-014), which answers 200 even when the cafe is inactive.
 - An inactive cafe gets 403 Forbidden — {"detail": "Your subscription is inactive. Please contact support."}.
 - The role check runs first, then the active check. A caller who is not a Cafe Owner gets the role error, never the subscription message.
-- Auth endpoints (/api/v1/auth/) never check the subscription. The owner of an inactive cafe can still log in, refresh, log out and change the password.
+- Auth endpoints (/api/v1/auth/) never check the subscription. The owner of an inactive cafe can still log in, refresh, log out, change the password and reset it with a link (UC-AUTH-005).
 
 **6. Bilingual text fields**
 
@@ -233,6 +235,36 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 - **A3 — new_password equals old_password:** 400 Bad Request — {"new_password": ["The new password must be different from the old password."]}.
 - **A4 — Missing fields:** 400 Bad Request with field-level errors.
 - **A5 — Unauthenticated:** 401 Unauthorized.
+
+---
+
+### UC-AUTH-005 — Reset Password with Link
+
+> **As a Cafe Owner who forgot the password, I want to set a new password with the one-time link the Super Admin sent me so that I can log in again.**
+
+| Field | Value |
+|---|---|
+| **Actor** | Cafe Owner (unauthenticated) |
+| **Trigger** | Owner opens the reset link (UC-ADMIN-010) and submits the new-password form |
+| **Preconditions** | The link is still valid: made less than 24 hours ago, and the password has not changed since it was made |
+| **Postconditions (Success)** | Password is changed; all outstanding refresh tokens of the user are blacklisted; the link (and every other link made before) stops working; the owner is NOT logged in and must log in with the new password |
+| **Postconditions (Failure)** | Password and sessions are unchanged |
+| **API** | POST /api/v1/auth/password-reset/confirm/ |
+| **Architectural Note** | No authentication. The link holds two values after the "#": uid (the user id, base64url) and token (Django's default_token_generator). The token is a signature over the user's password hash and a timestamp; nothing is stored in the database. Changing the password changes the hash, so the token dies: this is what makes the link one-time. Lifetime: PASSWORD_RESET_TIMEOUT = 86400 seconds (24 hours). Service Layer: users/services.py reset_password(uidb64, token, new_password) saves the password and blacklists the refresh tokens in one transaction (the same revocation as UC-AUTH-004). Rate limited with DRF ScopedRateThrottle (scope "password_reset", 5 requests per minute per client IP) and by Nginx, like the login. |
+
+**Main Flow:**
+1. Owner opens https://menu.domain.com/reset-password#[uid].[token]. The part after "#" stays in the browser: it is never sent to a server and never written to a log. The page reads it and removes it from the address bar.
+2. Owner types the new password. The frontend sends { uid, token, new_password }.
+3. System finds the user by uid and checks the token.
+4. System validates new_password with the configured password validators (AUTH_PASSWORD_VALIDATORS). It may equal the old password: the owner does not remember it.
+5. System saves the new password and blacklists every outstanding refresh token of the user.
+6. System returns 204 No Content. The frontend opens the login page.
+
+**Alternate Flows:**
+- **A1 — Invalid link:** 400 Bad Request — {"detail": "This reset link is invalid or has expired."} with the header X-Error-Code: reset_link_invalid. One answer for every reason, so it reveals nothing: a malformed or unknown uid, a wrong token, a link older than 24 hours, a link that was already used, a password changed after the link was made (UC-AUTH-004), an inactive account (is_active = false). The link is checked before the password.
+- **A2 — new_password fails validation:** 400 Bad Request — {"new_password": [<validator messages>]}. The link stays valid; the owner can try again.
+- **A3 — Too many attempts:** 429 Too Many Requests — {"detail": "Request was throttled. Expected available in N seconds."}. Every attempt counts, successful or not.
+- **A4 — Missing fields:** 400 Bad Request with field-level errors.
 
 ---
 
@@ -456,6 +488,32 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 **Main Flow:**
 1. Admin requests stats.
 2. System returns: { total_cafes, active_cafes, inactive_cafes, basic_plan_count, pro_plan_count }.
+
+---
+
+### UC-ADMIN-010 — Generate Password Reset Link
+
+> **As a Super Admin, I want to make a one-time password reset link for a cafe's owner so that an owner who forgot the password can set a new one without me knowing it.**
+
+| Field | Value |
+|---|---|
+| **Actor** | Super Admin |
+| **Trigger** | Admin clicks "Password reset link" on a cafe detail page |
+| **Preconditions** | Cafe exists |
+| **Postconditions (Success)** | A reset link for the cafe's owner is returned. Nothing is stored and nothing changes: the owner's current password and sessions keep working until the link is used (UC-AUTH-005) |
+| **API** | POST /api/v1/admin/cafes/{id}/password-reset-link/ |
+| **Architectural Note** | Service Layer: cafes/services.py password_reset_link(cafe_id) builds the link from PUBLIC_MENU_BASE_URL, the owner's uid and a token of Django's default_token_generator. No database write and no BillingEvent. The system sends no message: the admin copies the link and sends it to the owner (for example by WhatsApp). Whoever holds the link can set the password, so it must be treated like a password. It works the same for an active and an inactive cafe (Global Convention 5). |
+
+**Main Flow:**
+1. Admin requests a link for a cafe (no request body).
+2. System builds the link for the cafe's owner.
+3. System returns 200 OK — {"url": "https://menu.domain.com/reset-password#[uid].[token]", "expires_at": "<now + 24 hours, ISO 8601>"}.
+4. Admin copies the link and sends it to the owner.
+
+**Alternate Flows:**
+- **A1 — Cafe not found:** 404 Not Found.
+- **A2 — Non-admin caller:** 403 Forbidden.
+- **A3 — A link is requested again:** a new link is returned. Earlier links stay valid until they expire; the first one that is used ends all of them.
 
 
 ---
@@ -936,6 +994,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 | UC-AUTH-002 | Refresh Token | Any | POST /api/v1/auth/refresh/ |
 | UC-AUTH-003 | Logout | Any | POST /api/v1/auth/logout/ |
 | UC-AUTH-004 | Change Password | Any | POST /api/v1/auth/change-password/ |
+| UC-AUTH-005 | Reset Password with Link | Cafe Owner | POST /api/v1/auth/password-reset/confirm/ |
 | UC-ADMIN-001 | Create Cafe | Super Admin | POST /api/v1/admin/cafes/ |
 | UC-ADMIN-002 | List Cafes | Super Admin | GET /api/v1/admin/cafes/ |
 | UC-ADMIN-003 | View Cafe Details | Super Admin | GET /api/v1/admin/cafes/{id}/ |
@@ -945,6 +1004,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 | UC-ADMIN-007 | Delete Cafe | Super Admin | DELETE /api/v1/admin/cafes/{id}/ |
 | UC-ADMIN-008 | View Billing History | Super Admin | GET /api/v1/admin/cafes/{id}/billing/ |
 | UC-ADMIN-009 | View Platform Stats | Super Admin | GET /api/v1/admin/stats/ |
+| UC-ADMIN-010 | Generate Password Reset Link | Super Admin | POST /api/v1/admin/cafes/{id}/password-reset-link/ |
 | UC-OWNER-001 | Manage Categories | Cafe Owner | POST/PATCH/DELETE /api/v1/dashboard/categories/ |
 | UC-OWNER-002 | Manage Menu Items | Cafe Owner | POST/PATCH/DELETE /api/v1/dashboard/items/ |
 | UC-OWNER-003 | Reorder Categories | Cafe Owner | POST /api/v1/dashboard/categories/reorder/ |

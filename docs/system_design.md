@@ -159,6 +159,7 @@ billing_events
 | POST | `/api/v1/auth/refresh/` | Any | Exchange refresh token for a new access + refresh pair (old refresh is blacklisted) |
 | POST | `/api/v1/auth/logout/` | Any | Blacklist refresh token |
 | POST | `/api/v1/auth/change-password/` | Any | Change own password; blacklists all outstanding refresh tokens |
+| POST | `/api/v1/auth/password-reset/confirm/` | Cafe Owner (no login) | Set a new password with a one-time reset link (UC-AUTH-005); blacklists all outstanding refresh tokens |
 
 **Login Request:**
 ```json
@@ -172,6 +173,12 @@ billing_events
   "role": "CAFE_OWNER"
 }
 ```
+
+**Password Reset Confirm Request** (`uid` and `token` are the two parts of the reset link after the `#`, separated by a dot):
+```json
+{ "uid": "MTI", "token": "d2x4ab-0123456789abcdef0123456789abcdef", "new_password": "a-new-strong-pass" }
+```
+Answers `204 No Content`. An invalid, expired or used link: `400 {"detail": "This reset link is invalid or has expired."}` with `X-Error-Code: reset_link_invalid`. Throttle scope `password_reset` (5/min per client IP).
 
 ---
 
@@ -187,6 +194,7 @@ billing_events
 | POST | `/api/v1/admin/cafes/{id}/activate/` | Activate subscription |
 | POST | `/api/v1/admin/cafes/{id}/deactivate/` | Deactivate subscription |
 | GET | `/api/v1/admin/cafes/{id}/billing/` | Get billing history |
+| POST | `/api/v1/admin/cafes/{id}/password-reset-link/` | Make a one-time password reset link for the cafe's owner (UC-ADMIN-010) |
 | GET | `/api/v1/admin/stats/` | Platform summary stats |
 
 **Create Cafe Request:**
@@ -205,6 +213,14 @@ billing_events
 **Activate / Deactivate Request** (optional body; `notes` is at most 500 characters and is stored on the BillingEvent):
 ```json
 { "notes": "Paid 3 months in cash." }
+```
+
+**Password Reset Link Response** (no request body; nothing is stored, the link is valid for 24 hours and dies when the password changes):
+```json
+{
+  "url": "https://menu.domain.com/reset-password#MTI.d2x4ab-0123456789abcdef0123456789abcdef",
+  "expires_at": "2026-11-11T09:30:00Z"
+}
 ```
 
 ---
@@ -373,6 +389,8 @@ Frontend paths. None of them starts with `/api/`, because Nginx sends `/api/` to
 | `/dashboard/*` | Cafe Owner | The owner dashboard (§3.3) |
 | `/admin/*` | Super Admin | The Super Admin pages (§3.2) |
 | `/bff/auth/login`, `/bff/auth/logout`, `/bff/auth/change-password` | Browser of a logged-in user | BFF routes for UC-AUTH-001, 003 and 004; they set or clear the cookies |
+| `/reset-password` | Cafe Owner (no login) | The new-password form of UC-AUTH-005. It reads `uid` and `token` from the part of the link after `#` (which the browser never sends to a server), removes them from the address bar, and sends `Referrer-Policy: no-referrer`. Not part of the proxy matcher |
+| `/bff/auth/password-reset` | Browser (no login) | BFF route for UC-AUTH-005; passes the body to Django and sets no cookie |
 | `/bff/auth/session-ended` | Browser | Clears the cookies and opens `/login` when Django no longer accepts the session |
 | `/bff/dashboard/qr-pdf` | Cafe Owner | Streams the QR codes PDF (UC-OWNER-008) |
 | `/internal/revalidate` | Django only | §3.5 |
@@ -470,7 +488,7 @@ All services run inside Docker Compose on a single VPS.
 ### Nginx Rules
 
 - Every proxied location sets `X-Forwarded-For $proxy_add_x_forwarded_for` and `X-Forwarded-Proto`.
-- `limit_req` (per client IP) on `/api/v1/auth/login/`, the BFF login route `/bff/auth/login` (§3.6) and the Django admin login page.
+- `limit_req` (per client IP) on `/api/v1/auth/login/`, the BFF login route `/bff/auth/login` (§3.6), the password reset pair `/api/v1/auth/password-reset/confirm/` and `/bff/auth/password-reset` (same zone as the login) and the Django admin login page.
 - A separate, generous `limit_req` zone (per client IP) on the `/menu/` pages (§3.4 public menu note), the QR short links `/t/` and the public APIs `/api/v1/menu/` and `/api/v1/qr/`. Many customers of one cafe may share one IP behind its Wi-Fi.
 - `client_max_body_size 3m` (the API limits uploads to 2 MB; larger bodies are rejected before Django).
 - `add_header X-Robots-Tag "noindex, nofollow"` on `/menu/`.
@@ -553,6 +571,7 @@ After a downgrade, stored item images, logo and primary color are kept but hidde
 | Price scraping | `noindex, nofollow` meta tag + `X-Robots-Tag` header on all customer pages |
 | SQL injection | Django ORM parameterized queries |
 | Login brute force | Nginx `limit_req` + DRF `ScopedRateThrottle` (`login`, 5/min per client IP, `DatabaseCache`, `NUM_PROXIES`) |
+| Password reset link theft or reuse | Only a Super Admin can make a link (UC-ADMIN-010); the secret part sits after `#`, so it reaches no server log and no `Referer` header; valid 24 hours (`PASSWORD_RESET_TIMEOUT`); one-time, because the token is signed over the password hash; one answer for every invalid link; throttle `password_reset` (5/min per client IP) + Nginx `limit_req`; a reset blacklists every refresh token |
 | Race conditions on limits and ordering | Cafe row lock (`select_for_update`) inside the service transaction (use_cases.md Global Convention 8) |
 | Mass assignment | Serializers list writable fields explicitly; `cafe`, `sort_order`, `deleted_at`, `is_active`, `image_url` and `logo_url` are never writable through general update endpoints |
 | Django admin discovery | Admin site served at a non-obvious path (`DJANGO_ADMIN_PATH`), rate limited by Nginx |

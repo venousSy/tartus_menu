@@ -42,6 +42,12 @@ export type BillingEvent = {
   created_at: string;
 };
 
+/** POST /api/v1/admin/cafes/{id}/password-reset-link/ (UC-ADMIN-010). */
+export type PasswordResetLink = {
+  url: string; // <site>/reset-password#<uid>.<token>; whoever holds it can set the owner's password
+  expires_at: string; // ISO 8601, 24 hours after it was made
+};
+
 /** GET /api/v1/admin/stats/ (UC-ADMIN-009). */
 export type PlatformStats = {
   total_cafes: number;

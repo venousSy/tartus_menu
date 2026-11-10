@@ -130,6 +130,10 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
+# Lifetime of a password reset link (UC-ADMIN-010, UC-AUTH-005): 24 hours. The Super Admin sends the
+# link by hand (for example by WhatsApp), so it needs more than minutes; Django's default is 3 days.
+PASSWORD_RESET_TIMEOUT = 86400
+
 
 # Internationalization
 LANGUAGE_CODE = 'en-us'
@@ -198,6 +202,7 @@ REST_FRAMEWORK = {
     # Rates for ScopedRateThrottle. A view opts in with throttle_scope (UC-AUTH-001 uses "login").
     'DEFAULT_THROTTLE_RATES': {
         'login': os.getenv('LOGIN_THROTTLE_RATE', '5/min'),
+        'password_reset': '5/min',  # UC-AUTH-005: tries of a reset link, per client IP
     },
     # Number of trusted proxies in front of Django; throttling reads the client IP with it.
     # Production (Nginx): 1. Default 0 ignores X-Forwarded-For, so a client cannot fake its IP.
