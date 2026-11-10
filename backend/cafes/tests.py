@@ -348,7 +348,8 @@ class QRCodeTests(CafeAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['table_count'], 3)
         rows = CafeTable.objects.filter(cafe=self.cafe).order_by('table_number')
-        expected = [(row.pk, row.table_number, f'https://menu.domain.com/menu/tartus-coffee?table={row.table_number}',
+        # The code holds the table's permanent short link (GC 4), not the slug.
+        expected = [(row.pk, row.table_number, f'https://menu.domain.com/t/{row.qr_token}',
                      str(row.qr_token)) for row in rows]
         self.assertEqual([(t['id'], t['table_number'], t['url'], t['qr_token']) for t in response.data['tables']],
                          expected)
@@ -371,7 +372,7 @@ class QRCodeTests(CafeAPITestCase):
         self.assertEqual((smaller.data['table_count'], self.tokens(smaller)), (1, {1: tokens[1]}))
         self.assertEqual(CafeTable.objects.filter(cafe=self.cafe, is_active=False).count(), 2)  # not deleted
         self.assertEqual(pdf_page_texts(b''.join(self.client.get(self.pdf_url).streaming_content)),
-                         [['1', 'https://menu.domain.com/menu/tartus-coffee?table=1']])  # gone from the PDF
+                         [['1', f'https://menu.domain.com/t/{tokens[1]}']])  # tables 2 and 3 gone from the PDF
 
         self.assertEqual(self.tokens(self.generate(3)), tokens)  # switched on again with the same tokens
 
@@ -403,15 +404,14 @@ class QRCodeTests(CafeAPITestCase):
         self.assertEqual((response.status_code, response.data), (status.HTTP_200_OK, generated.data))
         self.assertEqual(list(CafeTable.objects.values_list('pk', 'is_active', 'updated_at')), before)
 
-    def test_urls_follow_the_current_slug(self):  # UC-OWNER-008 note: built on every request
-        self.generate(1)
+    def test_printed_links_do_not_change_with_the_slug(self):  # GC 4, UC-ADMIN-006: printed codes stay valid
+        url = self.generate(1).data['tables'][0]['url']
         Cafe.objects.filter(pk=self.cafe.pk).update(slug='sea-view')  # a Super Admin changed it (UC-ADMIN-006)
 
         preview = self.client.get(self.preview_url)
         pdf = b''.join(self.client.get(self.pdf_url).streaming_content)
 
-        url = 'https://menu.domain.com/menu/sea-view?table=1'
-        self.assertEqual(preview.data['tables'][0]['url'], url)
+        self.assertEqual(preview.data['tables'][0]['url'], url)  # the same short link as before the change
         self.assertEqual(pdf_page_texts(pdf), [['1', url]])
 
     def test_no_active_tables(self):  # UC-OWNER-011 A1, UC-OWNER-008 A1
@@ -423,7 +423,7 @@ class QRCodeTests(CafeAPITestCase):
                          (status.HTTP_400_BAD_REQUEST, {'detail': 'Please generate QR codes first.'}))
 
     def test_pdf_has_one_page_per_active_table_in_order(self):  # UC-OWNER-008 main flow
-        self.generate(3)
+        tokens = self.tokens(self.generate(3))
 
         response = self.client.get(self.pdf_url)
 
@@ -432,8 +432,8 @@ class QRCodeTests(CafeAPITestCase):
         self.assertEqual(response['Content-Disposition'], 'attachment; filename="qrcodes.pdf"')
         content = b''.join(response.streaming_content)
         self.assertTrue(content.startswith(b'%PDF-'))
-        self.assertEqual(pdf_page_texts(content), [  # the table number and the URL under each code
-            [str(n), f'https://menu.domain.com/menu/tartus-coffee?table={n}'] for n in (1, 2, 3)
+        self.assertEqual(pdf_page_texts(content), [  # the table number and the short link under each code
+            [str(n), f'https://menu.domain.com/t/{tokens[n]}'] for n in (1, 2, 3)
         ])
 
     def test_a_client_may_ask_for_the_pdf_by_its_media_type(self):  # UC-OWNER-008; errors stay JSON
@@ -479,6 +479,59 @@ class QRCodeTests(CafeAPITestCase):
 
                     self.assertEqual((response.status_code, response.data), (status_code, body))
         self.assertFalse(CafeTable.objects.exists())
+
+
+class QRTargetTests(CafeAPITestCase):
+    """GET /api/v1/qr/{token}/ (UC-GUEST-003): where the short link /t/<token> of a printed code leads."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.table = CafeTable.objects.create(cafe=cls.cafe, table_number=3)
+
+    def setUp(self):
+        self.client.credentials()  # a customer has no account
+
+    def target(self, token):
+        return self.client.get(reverse('public_qr:target', args=[token]))
+
+    def test_an_active_table_leads_to_its_menu_and_table(self):  # main flow
+        response = self.target(self.table.qr_token)
+
+        self.assertEqual((response.status_code, response.data),
+                         (status.HTTP_200_OK, {'slug': 'tartus-coffee', 'table_number': 3}))
+
+    def test_no_login_needed_and_a_stray_token_is_ignored(self):
+        self.client.credentials(HTTP_AUTHORIZATION='Bearer not-a-token')
+
+        self.assertEqual(self.target(self.table.qr_token).status_code, status.HTTP_200_OK)
+
+    def test_the_slug_is_read_now_so_old_prints_follow_a_slug_change(self):  # UC-ADMIN-006
+        Cafe.objects.filter(pk=self.cafe.pk).update(slug='sea-view')
+
+        self.assertEqual(self.target(self.table.qr_token).data, {'slug': 'sea-view', 'table_number': 3})
+
+    def test_an_inactive_table_leads_to_the_menu_without_a_table(self):  # A1
+        CafeTable.objects.filter(pk=self.table.pk).update(is_active=False)
+
+        self.assertEqual(self.target(self.table.qr_token).data, {'slug': 'tartus-coffee', 'table_number': None})
+
+    def test_an_inactive_cafe_still_answers(self):  # A2: its menu page shows UC-GUEST-002
+        Cafe.objects.filter(pk=self.cafe.pk).update(is_active=False)
+
+        self.assertEqual(self.target(self.table.qr_token).status_code, status.HTTP_200_OK)
+
+    def test_an_unknown_or_malformed_token_is_404(self):  # A3
+        unknown = self.target('00000000-0000-4000-8000-000000000000')
+        malformed = self.client.get('/api/v1/qr/not-a-token/')  # the uuid converter matches no route
+
+        self.assertEqual((unknown.status_code, unknown.data), (status.HTTP_404_NOT_FOUND, {'detail': 'Not found.'}))
+        self.assertEqual(unknown['X-Error-Code'], 'not_found')
+        self.assertEqual((malformed.status_code, malformed.json()), (status.HTTP_404_NOT_FOUND, {'detail': 'Not found.'}))
+
+    def test_only_get_is_allowed(self):
+        self.assertEqual(self.client.post(reverse('public_qr:target', args=[self.table.qr_token])).status_code,
+                         status.HTTP_405_METHOD_NOT_ALLOWED)
 
 
 class AdminAPITestCase(CafeAPITestCase):

@@ -38,6 +38,7 @@
 ### Customer (Guest)
 - [UC-GUEST-001] View Public Menu
 - [UC-GUEST-002] View Inactive Cafe Screen
+- [UC-GUEST-003] Open Menu from QR
 
 
 ---
@@ -74,6 +75,8 @@ The User model also defines the role CAFE_STAFF. CAFE_STAFF is OUT OF SCOPE for 
 **4. Public menu URL**
 
 https://menu.domain.com/menu/[cafe-slug]?table=N — the table parameter is display-only.
+
+A table's QR code does not hold this URL. It holds the table's permanent short link https://menu.domain.com/t/[qr_token], which redirects (302) to the menu URL of the cafe's current slug (UC-GUEST-003). So a printed code keeps working after a slug change (UC-ADMIN-006). The qr_token is not a secret: anyone who scans the code sees it.
 
 **5. Active cafe (subscription) rule**
 
@@ -373,7 +376,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 | **Preconditions** | Cafe exists |
 | **Postconditions (Success)** | Cafe record updated; if plan changed, a BillingEvent(action='plan_changed') is created |
 | **API** | PATCH /api/v1/admin/cafes/{id}/ |
-| **Architectural Note** | Service Layer checks if plan field changed and conditionally creates the BillingEvent. This keeps the audit trail clean. is_active cannot be changed through this endpoint; use UC-ADMIN-004 and UC-ADMIN-005 so that a BillingEvent is always recorded. Changing the slug invalidates every QR code already printed for the cafe (there is no redirect from the old slug in the MVP). logo_url cannot be changed through this endpoint: logos come only from the owner's upload (UC-OWNER-010), so every logo is a validated file on our R2 storage. A primary_color set by the Super Admin is stored even when the plan has allows_branding = false; it stays hidden from customers until the plan allows it (Global Convention 7). |
+| **Architectural Note** | Service Layer checks if plan field changed and conditionally creates the BillingEvent. This keeps the audit trail clean. is_active cannot be changed through this endpoint; use UC-ADMIN-004 and UC-ADMIN-005 so that a BillingEvent is always recorded. Changing the slug changes the menu URL; printed QR codes keep working, because they hold the table's short link /t/[qr_token], which follows the current slug (Global Convention 4, UC-GUEST-003). There is no redirect from the old menu URL itself. logo_url cannot be changed through this endpoint: logos come only from the owner's upload (UC-OWNER-010), so every logo is a validated file on our R2 storage. A primary_color set by the Super Admin is stored even when the plan has allows_branding = false; it stays hidden from customers until the plan allows it (Global Convention 7). |
 
 **Main Flow:**
 1. Admin sends partial update (any combination of: name, slug, primary_color, plan).
@@ -654,12 +657,12 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 | **Preconditions** | Owner is authenticated; cafe is active; cafe has a valid slug |
 | **Postconditions (Success)** | Active CafeTable rows exist for table numbers 1 through table_count and for no other number; the response lists them with table number, URL, QR token and QR image |
 | **API** | POST /api/v1/dashboard/qr/generate/ |
-| **Architectural Note** | Tables are persisted in the CafeTable model (fields: cafe, table_number, qr_token, is_active, created_at, updated_at; UNIQUE per cafe on table_number). Service Layer method TableService.sync_tables(cafe, table_count) runs in one DB transaction (atomic). It never deletes rows: tables above the requested count are deactivated (is_active = false), so their qr_token survives re-activation. table_count is NOT stored anywhere; it is always derived as the number of active CafeTable rows. QR URL format: https://menu.domain.com/menu/[cafe-slug]?table=N. The qr_token is stored and returned but is NOT part of the URL in the MVP; the table query parameter stays display-only (see UC-GUEST-001). qr_image_url is a base64 data URL produced with the qrcode library; nothing is stored on R2. sync_tables runs under the cafe row lock (Global Convention 8). QR codes use error correction level Q (still readable when part of the printed code is dirty or damaged) and a quiet zone (empty border) of 4 modules. |
+| **Architectural Note** | Tables are persisted in the CafeTable model (fields: cafe, table_number, qr_token, is_active, created_at, updated_at; UNIQUE per cafe on table_number). Service Layer method TableService.sync_tables(cafe, table_count) runs in one DB transaction (atomic). It never deletes rows: tables above the requested count are deactivated (is_active = false), so their qr_token survives re-activation. table_count is NOT stored anywhere; it is always derived as the number of active CafeTable rows. QR URL format: https://menu.domain.com/t/[qr_token], the table's permanent short link (Global Convention 4); it redirects to /menu/[cafe-slug]?table=N (UC-GUEST-003), and the table query parameter stays display-only (see UC-GUEST-001). qr_image_url is a base64 data URL produced with the qrcode library; nothing is stored on R2. sync_tables runs under the cafe row lock (Global Convention 8). QR codes use error correction level Q (still readable when part of the printed code is dirty or damaged) and a quiet zone (empty border) of 4 modules. |
 
 **Main Flow:**
 1. Owner sends { "table_count": 12 }.
 2. Service syncs the tables in one transaction: (a) creates an active CafeTable with a new qr_token for every number from 1 to table_count that has no row; (b) sets is_active = true on every existing inactive row in that range, keeping its qr_token; (c) sets is_active = false on every active row whose table_number is greater than table_count.
-3. Service builds, for each active table in ascending table_number order, url = https://menu.domain.com/menu/[cafe-slug]?table=N and qr_image_url.
+3. Service builds, for each active table in ascending table_number order, url = https://menu.domain.com/t/[qr_token] and qr_image_url.
 4. Returns 200 OK: { "table_count": 12, "tables": [ { "id", "table_number", "url", "qr_token", "qr_image_url" } ] }.
 
 **Alternate Flows:**
@@ -682,7 +685,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 | **Preconditions** | Cafe is active; the cafe has at least one active CafeTable (QR codes were generated with UC-OWNER-007) |
 | **Postconditions (Success)** | PDF file is returned as a download; one page per active table in ascending table_number order; each page contains one QR code and its table number |
 | **API** | GET /api/v1/dashboard/qr/download-pdf/ |
-| **Architectural Note** | Generated server-side using reportlab from the persisted active CafeTable rows; the table count is derived from them. Response content type: application/pdf. Not cached — URLs are built from the cafe's current slug on every request. Each QR code is drawn as vector shapes with reportlab's built-in QR widget (reportlab.graphics.barcode.qr), so it stays sharp at any print size. It encodes exactly the same URL as UC-OWNER-011, uses error correction level Q and a 4-module quiet zone, is printed at least 3 cm wide, and has the table number and the URL printed under it. |
+| **Architectural Note** | Generated server-side using reportlab from the persisted active CafeTable rows; the table count is derived from them. Response content type: application/pdf. Not cached. Each code holds the table's permanent short link (Global Convention 4), so the PDF stays valid after a slug change. Each QR code is drawn as vector shapes with reportlab's built-in QR widget (reportlab.graphics.barcode.qr), so it stays sharp at any print size. It encodes exactly the same URL as UC-OWNER-011, uses error correction level Q and a 4-module quiet zone, is printed at least 3 cm wide, and has the table number and the URL printed under it. |
 
 **Main Flow:**
 1. Owner requests the PDF.
@@ -859,7 +862,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 | Field | Value |
 |---|---|
 | **Actor** | Customer (unauthenticated) |
-| **Trigger** | Customer scans the QR code at a table (navigates to /menu/[slug]?table=N) |
+| **Trigger** | Customer scans the QR code at a table; its short link redirects to /menu/[slug]?table=N (UC-GUEST-003) |
 | **Preconditions** | Cafe exists and is_active = true |
 | **Postconditions (Success)** | Full menu rendered: cafe branding, all visible categories, all available items |
 | **API** | GET /api/v1/menu/{slug}/ |
@@ -899,6 +902,32 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 
 ---
 
+### UC-GUEST-003 — Open Menu from QR
+
+> **As a Customer, I want the QR code on my table to open the cafe's menu for my table, even if the cafe's web address changed after the code was printed.**
+
+| Field | Value |
+|---|---|
+| **Actor** | Customer (unauthenticated) |
+| **Trigger** | Customer scans a table's QR code, which holds https://menu.domain.com/t/[qr_token] (Global Convention 4) |
+| **Preconditions** | None |
+| **Postconditions** | The browser shows the menu of the table's cafe (UC-GUEST-001), or a clear message when the code belongs to no table |
+| **APIs** | GET /t/[qr_token] (Next.js, redirects) · GET /api/v1/qr/{qr_token}/ (Django, public) |
+| **Architectural Note** | Next.js asks Django where the token leads and answers 302 (never 301: the slug behind a code can change) with Cache-Control: no-store and a relative Location. Django reads the cafe's current slug on every call, so codes printed before a slug change follow it. Nothing is counted here; the menu page is the visit. A token that is not a UUID is answered by Next.js without asking Django. The qr_token is not a secret. Rate limited by Nginx like the menu. |
+
+**Main Flow:**
+1. Customer scans the code; the browser opens /t/[qr_token].
+2. Next.js calls GET /api/v1/qr/{qr_token}/; Django answers 200 OK — {"slug": "tartus-coffee", "table_number": 3}.
+3. Next.js redirects (302) to /menu/tartus-coffee?table=3, and UC-GUEST-001 continues.
+
+**Alternate Flows:**
+- **A1 — The table is inactive** (the owner lowered the table count, UC-OWNER-007 A4): Django answers {"slug": "...", "table_number": null}; the redirect goes to /menu/[slug] without a table number.
+- **A2 — The cafe is inactive:** Django still answers the slug; the menu page shows the UC-GUEST-002 screen.
+- **A3 — Unknown or malformed token:** Django answers 404 {"detail": "Not found."}; Next.js redirects to /qr-invalid, which shows "This QR code is not valid. Please ask staff for assistance." in Arabic and English (noindex).
+- **A4 — Django cannot be reached:** Next.js answers 503 with Retry-After: 60 instead of claiming the code is invalid.
+
+---
+
 ## Appendix: Use Case Index
 
 | ID | Name | Actor | API Endpoint |
@@ -932,3 +961,4 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 | UC-OWNER-014 | View Cafe Settings | Cafe Owner | GET /api/v1/dashboard/settings/ |
 | UC-GUEST-001 | View Public Menu | Customer | GET /api/v1/menu/{slug}/ |
 | UC-GUEST-002 | View Inactive Cafe Screen | Customer | GET /api/v1/menu/{slug}/ |
+| UC-GUEST-003 | Open Menu from QR | Customer | GET /api/v1/qr/{qr_token}/ (behind GET /t/[qr_token]) |

@@ -55,7 +55,12 @@
   optional `CRON_HEARTBEAT_URL` pinged by each nightly job.
 - **Tests:** `core/tests.py` — 200 healthy; 503 + header with a patched cursor.
 
-### A. Stable QR links `/t/<qr_token>` — size M (must ship before any QR is printed)
+### A. Stable QR links `/t/<qr_token>` — size M — done 2026-11-10 (PR #72)
+- **Built differently from the design below:** the redirect is a Next.js route `/t/[token]` that asks a new public
+  Django endpoint `GET /api/v1/qr/{token}/` (`{slug, table_number}`), instead of a Django redirect behind Nginx
+  `error_page`. Reasons: it also works in local development (the QR points to the Next.js port), the browser
+  keeps talking only to Next.js, and an unknown code redirects to the static `/qr-invalid` page without Nginx tricks.
+  A Django outage answers 503 (`Retry-After: 60`) instead of "not valid".
 - **Design:** Django answers `GET /t/<token>` with **302** (`Cache-Control: no-store`) to `/menu/<slug>?table=N`.
   It counts nothing (the analytics beacon is the only counter, so a scan is never counted twice).
   Inactive table → redirect without `table`; inactive cafe → redirect (page shows UC-GUEST-002);

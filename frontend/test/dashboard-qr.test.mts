@@ -40,7 +40,7 @@ const qrCodes = () => {
   return {
     table_count: active.length,
     tables: active.map((t) => ({
-      id: t.id, table_number: t.table_number, url: `https://menu.example.test/menu/test-cafe?table=${t.table_number}`,
+      id: t.id, table_number: t.table_number, url: `https://menu.example.test/t/${t.qr_token}`, // GC 4: the short link
       qr_token: t.qr_token, qr_image_url: "data:image/png;base64,iVBORw0KGgo=",
     })),
   };
@@ -100,7 +100,8 @@ test("generate sends the count as typed; the page shows every table's code and a
   assert.deepEqual(fake.bodies, [{ table_count: "3" }]);
   let html = await page();
   assert.deepEqual(qrImages(html), [1, 2, 3]);
-  assert.ok(shown(html, "3 طاولات") && shown(html, "طاولة 2") && shown(html, "https://menu.example.test/menu/test-cafe?table=2"));
+  const table2 = fake.tables.find((t) => t.table_number === 2)!;
+  assert.ok(shown(html, "3 طاولات") && shown(html, "طاولة 2") && shown(html, `https://menu.example.test/t/${table2.qr_token}`));
   assert.ok(/<span dir="ltr"[^>]*>https:\/\/menu\.example\.test/.test(html), "addresses read left to right");
   assert.ok(countInput(html).includes('value="3"'), "the input shows the current count");
   assert.ok(html.includes('href="/bff/dashboard/qr-pdf"') && shown(html, "تنزيل ملف PDF للطباعة"));

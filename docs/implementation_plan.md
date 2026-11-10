@@ -23,7 +23,7 @@ All architectural decisions have been locked in. Below is a summary of every dec
 | Item fields | name, description (both bilingual), price, image, is_available, is_featured, is_new |
 | Delete policy | Soft delete (categories, items) · Hard delete (cafes, billing_events) |
 | Reorder algorithm | Gapped Integer (100, 200, 300…) — minimizes DB writes |
-| QR Code URL | `/menu/[cafe-slug]?table=N` — the `table` parameter is display-only; tables themselves are persisted (see "Tables") |
+| QR Code URL | The code holds the table's permanent short link `/t/[qr_token]`, which redirects (302) to `/menu/[cafe-slug]?table=N`, so printed codes survive a slug change; the `table` parameter is display-only; tables themselves are persisted (see "Tables") |
 | QR PDF | Generated on Django backend using `reportlab` from the persisted active tables (vector QR widget, error correction level Q) |
 | Tables | Persisted `CafeTable` (`cafe_id`, `table_number`, `qr_token`, `is_active`); UNIQUE (`cafe_id`, `table_number`); table count derived from active rows; no `table_count` column |
 | Slug changes | Super Admin only |
@@ -101,7 +101,7 @@ The features and improvements after the MVP, in phases, with the owner's decisio
 Post-MVP steps (details in [post_mvp_roadmap.md](post_mvp_roadmap.md); each starts with its own docs turns):
 
 17. **[x] Health URL and uptime monitoring** (roadmap C) — system_design.md §3.7.
-18. **[ ] Stable QR links `/t/<qr_token>`** (roadmap A) — before any QR code is printed for a real cafe.
+18. **[x] Stable QR links `/t/<qr_token>`** (roadmap A) — use_cases.md UC-GUEST-003.
 19. **[ ] Error tracking** — Sentry or GlitchTip (roadmap D).
 20. **[ ] Password reset link made by the Super Admin** (roadmap E1).
 21. **[ ] Subscription expiry and warnings** (roadmap F).

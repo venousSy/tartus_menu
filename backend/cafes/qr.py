@@ -25,9 +25,13 @@ PDF_QR_SIZE = 8 * cm  # printed width of each code, quiet zone included (the use
 PDF_URL_FONT_SIZE = 10  # points; a long slug makes it smaller so the URL always fits the page
 
 
-def table_url(cafe, table_number):
-    """https://menu.domain.com/menu/<slug>?table=N. The table parameter is display-only (UC-GUEST-001)."""
-    return f'{settings.PUBLIC_MENU_BASE_URL}/menu/{cafe.slug}?table={table_number}'
+def short_url(table):
+    """
+    https://menu.domain.com/t/<qr_token>: what the QR code of a table holds (use_cases.md GC 4, UC-GUEST-003).
+    The token never changes, so a printed code keeps working after the cafe's slug changes: Next.js
+    asks resolve_qr_token() (services) and redirects to /menu/<current slug>?table=N.
+    """
+    return f'{settings.PUBLIC_MENU_BASE_URL}/t/{table.qr_token}'
 
 
 def qr_png_data_url(url):
@@ -46,7 +50,7 @@ def qr_codes_pdf(cafe, tables):
     """
     The print-ready PDF of UC-OWNER-008 as bytes: one A4 page per table, in the given order.
 
-    Each page has the QR code of table_url() drawn as vector shapes (sharp at any print size),
+    Each page has the QR code of short_url() drawn as vector shapes (sharp at any print size),
     with the table number and the URL under it. The number is printed without a word such as
     "Table": the built-in PDF fonts have no Arabic letters, and a number needs no translation.
     """
@@ -56,7 +60,7 @@ def qr_codes_pdf(cafe, tables):
     qr_bottom = page_height / 2 - 2 * cm  # the code a little above the middle, the text under it
 
     for table in tables:
-        url = table_url(cafe, table.table_number)
+        url = short_url(table)
         drawing = Drawing(PDF_QR_SIZE, PDF_QR_SIZE)
         drawing.add(QrCodeWidget(
             url, barLevel='Q', barBorder=QUIET_ZONE_MODULES, barWidth=PDF_QR_SIZE, barHeight=PDF_QR_SIZE

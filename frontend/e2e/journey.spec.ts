@@ -173,13 +173,17 @@ test.describe.serial("from a new cafe to a customer's QR scan", () => {
     const pdf = await readFile(await download.path());
     expect(pdf.subarray(0, 5).toString("latin1")).toBe("%PDF-");
 
+    // GC 4: the code holds the table's permanent short link, not the slug.
     menuUrl = await scanQr(owner, "QR code for table 2");
-    expect(menuUrl).toBe(`${BASE_URL}/menu/${CAFE.slug}?table=2`);
+    expect(menuUrl.startsWith(`${BASE_URL}/t/`)).toBe(true);
+    expect(menuUrl.slice(BASE_URL.length)).toMatch(/^\/t\/[0-9a-f-]{36}$/);
   });
 
   test("3. a customer scans table 2 and reads the menu", async () => {
-    // UC-GUEST-001: Arabic first, then the language switch; the unavailable item is not shown.
+    // UC-GUEST-003: the short link redirects to the menu of table 2.
     await customer.goto(menuUrl);
+    await expect(customer).toHaveURL(`${BASE_URL}/menu/${CAFE.slug}?table=2`);
+    // UC-GUEST-001: Arabic first, then the language switch; the unavailable item is not shown.
     await expect(customer.getByRole("heading", { level: 1 })).toHaveText(CAFE.ar);
     // The table number is read in the browser, so seeing it also means the page is ready for clicks.
     await expect(customer.getByText("طاولة 2")).toBeVisible();
