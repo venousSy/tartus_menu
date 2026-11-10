@@ -10,3 +10,4 @@ qrcode>=8.2,<9.0
 Pillow>=13.0,<14.0
 python-dotenv>=1.0,<2.0
 gunicorn>=23.0,<24.0
+sentry-sdk>=2.73,<3.0

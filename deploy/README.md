@@ -300,6 +300,20 @@ UptimeRobot or Better Stack) and add two checks, each every 5 minutes, that aler
 The monitor runs outside the VPS, so it still alerts when the whole server is down. When it alerts, start
 with `docker compose ps` and `docker compose logs --tail 50 backend frontend nginx`.
 
+## 14. Error tracking (optional, once)
+
+See the real error and its stack trace when a page or the API answers 500, without searching the logs
+(system_design.md §5 "Error Tracking"):
+
+1. Create a free account at Sentry (sentry.io) or GlitchTip (glitchtip.com), and one project of the platform
+   "Django" (the Next.js server sends to the same project).
+2. Copy the project's DSN (it looks like `https://<key>@<host>/<number>`) into `.env` as `SENTRY_DSN`, then run
+   `docker compose up -d`. Each report names the running image version (`IMAGE_TAG`) as its release.
+3. Set the project's alert to email you on a new issue.
+
+The reports contain no passwords, cookies, tokens, request bodies or visitor addresses. To stop sending,
+empty `SENTRY_DSN` and run `docker compose up -d` again.
+
 ## Useful commands
 
 ```bash
