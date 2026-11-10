@@ -15,6 +15,8 @@ export type CafeSettings = {
   primary_color: string; // stored value, even when the plan hides it from customers (GC 7)
   logo_url: string;
   is_active: boolean;
+  subscription_expires_on: string | null; // the last paid day, "YYYY-MM-DD"; null = no end date (GC 5)
+  days_left: number | null; // 0 on the last day; null when inactive or without an end date
   plan: {
     name: string; // the plan code: "basic" or "pro"
     max_categories: number | null; // null = unlimited

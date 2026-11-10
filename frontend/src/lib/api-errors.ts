@@ -13,7 +13,7 @@ export type ApiErrorKey =
   | "listChanged" | "wrongPassword" | "samePassword" | "passwordTooShort" | "passwordTooCommon"
   | "passwordNumeric" | "passwordTooSimilar" | "slugTaken" | "slugFormat" | "emailTaken" | "emailFormat"
   | "unknownPlan" | "alreadyActive" | "alreadyInactive" | "downgradeCategories" | "downgradeItems"
-  | "resetLinkInvalid";
+  | "resetLinkInvalid" | "dateFormat" | "datePast" | "dateTooFar" | "dateNotLater" | "renewInactive";
 
 /** A message to show: a known one by key, translated when the page renders, or Django's own text. */
 export type ApiMessage = { key: ApiErrorKey; values?: Record<string, string | number> } | { text: string };
@@ -66,6 +66,12 @@ const KNOWN: [RegExp, ApiErrorKey, string[]?][] = [
   [/^Object with name=.* does not exist\.$/, "unknownPlan"],
   [/^Cafe is already active\.$/, "alreadyActive"],
   [/^Cafe is already inactive\.$/, "alreadyInactive"],
+  // UC-ADMIN-004 A5-A7 and UC-ADMIN-011: the last paid day of a subscription.
+  [/^Date has wrong format\./, "dateFormat"],
+  [/^The date must be today or later\.$/, "datePast"],
+  [/^The date must be within 2 years from today\.$/, "dateTooFar"],
+  [/^The date must be later than the current end date\.$/, "dateNotLater"],
+  [/^Cafe is inactive\. Activate it instead\.$/, "renewInactive"],
   [/^Cannot downgrade to (.+): cafe has (\d+) categories \(max (\d+)\)\.$/, "downgradeCategories", ["plan", "count", "max"]],
   [/^Cannot downgrade to (.+): cafe has (\d+) items \(max (\d+)\)\.$/, "downgradeItems", ["plan", "count", "max"]],
 ];
@@ -80,7 +86,7 @@ const CODES: Record<string, ApiErrorKey> = {
   image_dimensions: "imageDimensions", image_upload_failed: "imageUploadFailed", qr_first: "qrFirst",
   not_found: "notFound", already_active: "alreadyActive", already_inactive: "alreadyInactive",
   downgrade_categories: "downgradeCategories", downgrade_items: "downgradeItems",
-  reset_link_invalid: "resetLinkInvalid",
+  reset_link_invalid: "resetLinkInvalid", renew_inactive: "renewInactive",
 };
 
 function valuesOf(match: RegExpExecArray, names: string[]) {

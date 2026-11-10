@@ -75,10 +75,13 @@ cafes
 ├── logo_url        TEXT         -- R2 custom-domain URL; '' = no logo
 ├── is_active       BOOLEAN      DEFAULT false
 ├── subscription_start_at  TIMESTAMPTZ NULL
-├── subscription_end_at    TIMESTAMPTZ NULL
+├── subscription_end_at    TIMESTAMPTZ NULL  -- the moment of the last deactivation (manual or automatic)
+├── subscription_expires_on  DATE NULL       -- last paid day, in the business time zone; NULL = no end date
 ├── created_at      TIMESTAMPTZ  DEFAULT now()
 └── updated_at      TIMESTAMPTZ  DEFAULT now()
 ```
+
+> `subscription_expires_on` is a calendar day, not a moment: the cafe is active through that whole day in `Asia/Damascus` (setting `BUSINESS_TIME_ZONE`; Django's `TIME_ZONE` and the database stay UTC). The nightly job deactivates cafes whose day has passed (use_cases.md Global Convention 5, UC-ADMIN-012).
 
 ```
 cafe_tables
@@ -131,9 +134,9 @@ menu_items
 billing_events
 ├── id          PK
 ├── cafe_id     FK → cafes.id
-├── action      VARCHAR(20)  -- 'activated' | 'deactivated' | 'plan_changed'
+├── action      VARCHAR(20)  -- 'activated' | 'deactivated' | 'plan_changed' | 'renewed' | 'expired'
 ├── notes       TEXT
-├── performed_by_id  FK → auth_user.id
+├── performed_by_id  FK → auth_user.id  -- NULL: written by the system ('expired'), or the admin account was deleted
 └── created_at  TIMESTAMPTZ  DEFAULT now()
 ```
 
@@ -193,6 +196,7 @@ Answers `204 No Content`. An invalid, expired or used link: `400 {"detail": "Thi
 | DELETE | `/api/v1/admin/cafes/{id}/` | Hard delete a cafe and its owner user |
 | POST | `/api/v1/admin/cafes/{id}/activate/` | Activate subscription |
 | POST | `/api/v1/admin/cafes/{id}/deactivate/` | Deactivate subscription |
+| POST | `/api/v1/admin/cafes/{id}/renew/` | Move the end date of an active subscription (UC-ADMIN-011) |
 | GET | `/api/v1/admin/cafes/{id}/billing/` | Get billing history |
 | POST | `/api/v1/admin/cafes/{id}/password-reset-link/` | Make a one-time password reset link for the cafe's owner (UC-ADMIN-010) |
 | GET | `/api/v1/admin/stats/` | Platform summary stats |
@@ -210,10 +214,17 @@ Answers `204 No Content`. An invalid, expired or used link: `400 {"detail": "Thi
 }
 ```
 
-**Activate / Deactivate Request** (optional body; `notes` is at most 500 characters and is stored on the BillingEvent):
+**Activate / Renew Request** (`expires_on` is required: the last paid day, today or later and at most 2 years ahead; `notes` is optional, at most 500 characters, stored on the BillingEvent):
 ```json
-{ "notes": "Paid 3 months in cash." }
+{ "expires_on": "2027-02-10", "notes": "Paid 3 months in cash." }
 ```
+
+**Deactivate Request** (optional body):
+```json
+{ "notes": "Did not pay for May." }
+```
+
+The cafe object of the admin API carries `subscription_expires_on` (`"2027-02-10"` or `null`) and `days_left` (a number, or `null` for an inactive cafe or one without an end date). `GET /api/v1/admin/stats/` also returns `expiring_soon_cafes`.
 
 **Password Reset Link Response** (no request body; nothing is stored, the link is valid for 24 hours and dies when the password changes):
 ```json
@@ -284,7 +295,7 @@ Answers `204 No Content`. An invalid, expired or used link: `400 {"detail": "Thi
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/v1/dashboard/settings/` | Get cafe profile + plan flags + is_active (answers 200 even when inactive) |
+| GET | `/api/v1/dashboard/settings/` | Get cafe profile + plan flags + is_active + subscription_expires_on and days_left (answers 200 even when inactive) |
 | PATCH | `/api/v1/dashboard/settings/` | Update name, primary_color (slug is Super Admin only) |
 | POST | `/api/v1/dashboard/settings/logo/` | Upload logo → R2 |
 
@@ -502,6 +513,7 @@ All services run inside Docker Compose on a single VPS.
 |---|---|---|
 | `pg_dump` → `age` → Cloudflare R2 | Daily | Database backup, encrypted for an offline key (30-day retention) |
 | `python manage.py flushexpiredtokens` | Daily | Removes expired rows from the JWT outstanding/blacklist tables, which grow with every login and refresh |
+| `python manage.py expire_subscriptions` | Daily, 21:10 UTC (00:10 in Damascus) | Deactivates the cafes whose paid time is over (UC-ADMIN-012) |
 
 ### Error Tracking
 

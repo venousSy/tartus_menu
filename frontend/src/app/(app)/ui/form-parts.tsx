@@ -91,6 +91,25 @@ export function TextField({ label, name, lang, defaultValue, required, maxLength
   );
 }
 
+/** A labelled date input ("YYYY-MM-DD", the browser's own date picker), with Django's messages for it below. */
+export function DateField({ label, name, defaultValue, min, messages = [] }: {
+  label: string; name: string; defaultValue: string; min?: string; messages?: ApiMessage[];
+}) {
+  const errorId = useId();
+  const invalid = messages.length > 0;
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="flex flex-col gap-1">
+        <span className="text-sm font-semibold">{label}</span>
+        <input type="date" name={name} required defaultValue={defaultValue} min={min}
+          aria-invalid={invalid || undefined} aria-describedby={invalid ? errorId : undefined}
+          className="min-h-11 rounded-lg border border-stone-300 bg-white px-3 aria-invalid:border-red-600" />
+      </label>
+      <FieldMessages id={errorId} messages={messages} />
+    </div>
+  );
+}
+
 /**
  * The Arabic and English inputs of a name (GC 6), sent as "name_ar" and "name_en", with Django's
  * errors for "name.ar" and "name.en". The values are always strings: React resets a form to them.

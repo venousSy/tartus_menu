@@ -47,3 +47,27 @@ export function formatDateTime(iso: string, lang: Lang): string {
   return new Intl.DateTimeFormat(`${lang}-u-nu-latn`, { dateStyle: "medium", timeStyle: "short", timeZone: TIME_ZONE })
     .format(new Date(iso));
 }
+
+/**
+ * A calendar day from the API ("2027-02-10", a subscription's last paid day, GC 5) as a date. A day
+ * has no time zone: it is read and shown as UTC, so no zone can move it to its neighbour.
+ */
+export function formatDate(isoDate: string, lang: Lang): string {
+  return new Intl.DateTimeFormat(`${lang}-u-nu-latn`, { dateStyle: "medium", timeZone: "UTC" })
+    .format(new Date(`${isoDate}T00:00:00Z`));
+}
+
+/** Today's date where the cafes are, as "YYYY-MM-DD" (the "en-CA" locale writes dates that way). */
+export function businessToday(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE }).format(new Date());
+}
+
+/** The day `months` months after "YYYY-MM-DD"; a day the target month lacks (31 → February) moves into the next month. */
+export function addMonths(isoDate: string, months: number): string {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  return date.toISOString().slice(0, 10);
+}
+
+/** Dashboards warn when a subscription has this many days or fewer left (GC 5). */
+export const EXPIRY_WARNING_DAYS = 7;

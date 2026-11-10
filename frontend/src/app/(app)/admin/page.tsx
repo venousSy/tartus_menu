@@ -14,13 +14,15 @@ export default async function AdminHomePage() {
   return (
     <section className="flex flex-col gap-6">
       <h2 className="text-2xl font-bold">{t("title")}</h2>
-      {/* The total takes a whole row, so the other four fill the grid: 2 x 2 on a phone, 4 across wider. */}
+      {/* The first and the last number take a whole row, so the other four fill the grid: 2 x 2 on a phone, 4 across wider. */}
       <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-stone-200 bg-stone-200 sm:grid-cols-4">
         <Stat label={t("total")} value={stats.total_cafes} wide />
         <Stat label={t("active")} value={stats.active_cafes} />
         <Stat label={t("inactive")} value={stats.inactive_cafes} />
         <Stat label={t("basic")} value={stats.basic_plan_count} />
         <Stat label={t("pro")} value={stats.pro_plan_count} />
+        {/* Active cafes with 7 paid days or fewer left: the ones to call about a renewal (GC 5). */}
+        <Stat label={t("expiringSoon")} value={stats.expiring_soon_cafes} wide />
       </dl>
       <Link href="/admin/cafes"
         className="flex min-h-11 items-center self-start rounded-lg bg-primary px-4 font-semibold text-on-primary">

@@ -2,7 +2,7 @@
 Owner dashboard: cafe settings (use_cases.md UC-OWNER-009, UC-OWNER-010 and UC-OWNER-014)
 and QR codes (UC-OWNER-007, UC-OWNER-008 and UC-OWNER-011).
 Public: where a printed QR code leads (UC-GUEST-003).
-Super Admin: cafe management (UC-ADMIN-001 to UC-ADMIN-009).
+Super Admin: cafe management (UC-ADMIN-001 to UC-ADMIN-011).
 
 Views stay thin: validate with the serializer, call one service function, return a response.
 In owner views the cafe always comes from request.user.cafe; IsCafeOwner guarantees that it exists.
@@ -37,6 +37,7 @@ from .serializers import (
     QRGenerateSerializer,
     QRTargetSerializer,
     SubscriptionChangeSerializer,
+    SubscriptionPeriodSerializer,
 )
 
 
@@ -186,14 +187,26 @@ class AdminCafeDetailView(APIView):
 
 
 class AdminCafeActivateView(APIView):
-    """POST /api/v1/admin/cafes/{id}/activate/ (UC-ADMIN-004): optional { notes }, answers the updated cafe."""
+    """POST /api/v1/admin/cafes/{id}/activate/ (UC-ADMIN-004): { expires_on, notes? }, answers the updated cafe."""
 
     permission_classes = [IsSystemAdmin]
 
     def post(self, request, pk):
-        serializer = SubscriptionChangeSerializer(data=request.data)
+        serializer = SubscriptionPeriodSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         cafe = services.activate_cafe(pk, performed_by=request.user, **serializer.validated_data)
+        return Response(AdminCafeSerializer(cafe).data)
+
+
+class AdminCafeRenewView(APIView):
+    """POST /api/v1/admin/cafes/{id}/renew/ (UC-ADMIN-011): { expires_on, notes? }, answers the updated cafe."""
+
+    permission_classes = [IsSystemAdmin]
+
+    def post(self, request, pk):
+        serializer = SubscriptionPeriodSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        cafe = services.renew_cafe(pk, performed_by=request.user, **serializer.validated_data)
         return Response(AdminCafeSerializer(cafe).data)
 
 

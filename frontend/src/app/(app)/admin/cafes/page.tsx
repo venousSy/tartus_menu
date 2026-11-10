@@ -5,6 +5,7 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { pickText, toLang } from "@/lib/i18n";
 import { CAFES_PER_PAGE, getCafes } from "@/lib/server/admin-api";
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from "../../ui/form-parts";
+import { ExpiryBadge } from "./expiry-badge";
 
 export async function generateMetadata(): Promise<Metadata> {
   return { title: (await getTranslations("AdminCafes"))("title") };
@@ -66,6 +67,7 @@ export default async function AdminCafesPage({ searchParams }: PageProps<"/admin
                     <span className={`rounded px-2 py-0.5 text-xs font-semibold ${cafe.is_active ? "bg-green-100 text-green-900" : "bg-amber-100 text-amber-900"}`}>
                       {cafe.is_active ? t("active") : t("inactive")}
                     </span>
+                    <ExpiryBadge daysLeft={cafe.days_left} soon={t("daysLeft", { days: Math.max(cafe.days_left ?? 0, 0) })} overdue={t("overdue")} />
                   </span>
                   {/* Addresses and emails read left to right inside Arabic text too. */}
                   <span className="flex flex-wrap gap-x-4 text-sm text-stone-600">

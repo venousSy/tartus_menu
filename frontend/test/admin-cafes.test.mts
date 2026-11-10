@@ -14,11 +14,17 @@ const DJANGO_PORT = 4181;
 const SITE = `http://localhost:${NEXT_PORT}`;
 const NEW_PAGE = `${SITE}/admin/cafes/new`;
 
-type Cafe = { id: number; name: { ar: string; en: string }; slug: string; plan: string; is_active: boolean; owner_email: string };
+type Cafe = {
+  id: number; name: { ar: string; en: string }; slug: string; plan: string; is_active: boolean; owner_email: string;
+  subscription_expires_on: string | null; days_left: number | null;
+};
+/** GC 5: cafe 44 has 3 paid days left, cafe 43 is overdue; the other active cafes have 20 days, inactive ones none. */
+const daysLeft = (n: number) => (n % 3 === 0 ? null : n === 44 ? 3 : n === 43 ? -1 : 20);
 type CreateBody = { slug: string; name: { ar: string; en: string }; plan: string; owner: { email: string; password: string } };
 const cafe = (n: number): Cafe => ({
   id: n, name: { ar: `مقهى ${n}`, en: `Cafe ${n}` }, slug: n % 10 === 0 ? `tartus-${n}` : `cafe-${n}`,
   plan: n % 2 ? "basic" : "pro", is_active: n % 3 !== 0, owner_email: `owner${n}@example.test`,
+  subscription_expires_on: n % 3 === 0 ? null : "2026-12-01", days_left: daysLeft(n),
 });
 /** `count` cafes, newest (highest id) first, as Django lists them. */
 const cafes = (count: number) => Array.from({ length: count }, (_, i) => cafe(count - i));
@@ -36,6 +42,7 @@ const fakeDjango: FakeDjango = (req, path, body, answer) => {
     return answer(200, {
       total_cafes: fake.cafes.length, active_cafes: count((c) => c.is_active), inactive_cafes: count((c) => !c.is_active),
       basic_plan_count: count((c) => c.plan === "basic"), pro_plan_count: count((c) => c.plan === "pro"),
+      expiring_soon_cafes: count((c) => c.days_left !== null && c.days_left <= 7),
     });
   }
   if (url.pathname === "/admin/cafes/" && req.method === "GET") {
@@ -61,7 +68,10 @@ const fakeDjango: FakeDjango = (req, path, body, answer) => {
     else if (data.owner.password.length < 8) owner.password = ["This password is too short. It must contain at least 8 characters."];
     if (Object.keys(owner).length) errors.owner = owner;
     if (Object.keys(errors).length) return answer(400, errors);
-    const created = { ...cafe(fake.cafes.length + 1), slug: data.slug, name: data.name, plan: data.plan, is_active: false, owner_email: data.owner.email };
+    const created = {
+      ...cafe(fake.cafes.length + 1), slug: data.slug, name: data.name, plan: data.plan, is_active: false, owner_email: data.owner.email,
+      subscription_expires_on: null, days_left: null,
+    };
     fake.cafes.unshift(created);
     return answer(201, created);
   }
@@ -84,9 +94,10 @@ const createForm = async () => formsOf(await page("/admin/cafes/new")).find((f) 
 const sendsTo = (html: string, path: string) => html.includes(path) && html.includes("NEXT_REDIRECT");
 const GOOD = { slug: "sea-cafe", name_ar: "مقهى البحر", name_en: "Sea Cafe", plan: "pro", owner_email: "new@example.test", owner_password: "a-long-pass-123" };
 
-test("home: the five numbers from Django, the menu with Home open, in Arabic and English", async () => {
+test("home: the six numbers from Django, the menu with Home open, in Arabic and English", async () => {
   const html = await page("/admin");
-  for (const [label, value] of [["كل المقاهي", 45], ["اشتراك مفعّل", 30], ["اشتراك موقوف", 15], ["خطة Basic", 23], ["خطة Pro", 22]] as const) {
+  for (const [label, value] of [["كل المقاهي", 45], ["اشتراك مفعّل", 30], ["اشتراك موقوف", 15], ["خطة Basic", 23], ["خطة Pro", 22],
+    ["اشتراكات تنتهي خلال 7 أيام", 2]] as const) {
     assert.ok(new RegExp(`<dt[^>]*>${label}</dt><dd[^>]*>${value}</dd>`).test(html), label);
   }
   assert.ok(/<a[^>]*aria-current="page"[^>]*href="\/admin"|<a[^>]*href="\/admin"[^>]*aria-current="page"/.test(html), "Home is open");
@@ -117,6 +128,8 @@ test("the list: pages of 20, newest first, with page links; each row names its c
   assert.deepEqual(links(html), ["/admin/cafes?page=2"]);
   assert.ok(shown(html, "مقهى 45") && /<bdi dir="ltr" class="font-mono">cafe-45<\/bdi>/.test(html) && shown(html, "owner45@example.test"));
   assert.ok(html.includes('href="/admin/cafes/new"'));
+  // GC 5: only a cafe with 7 paid days or fewer gets a badge; an overdue one a different text.
+  assert.deepEqual([html.split(">بقي 3 أيام<").length - 1, html.split(">تجاوز تاريخ الانتهاء<").length - 1, html.includes("بقي 20")], [1, 1, false]);
   html = await page("/admin/cafes?page=3");
   assert.deepEqual(rows(html), [5, 4, 3, 2, 1]);
   assert.deepEqual(links(html), ["/admin/cafes?page=2"]);

@@ -22,6 +22,8 @@ const SETTINGS = {
 const fake = {
   access: new Set<string>(), refresh: new Set<string>(), noLongerOwner: new Set<string>(), down: false,
   settingsReads: [] as { token: string; forwardedFor: unknown }[],
+  // The subscription fields of the settings (GC 5): no end date unless a test sets one.
+  subscription: { subscription_expires_on: null as string | null, days_left: null as number | null },
 };
 let serial = 0;
 function issuePair() {
@@ -45,7 +47,7 @@ const fakeDjango: FakeDjango = (req, path, body, answer) => {
     if (!fake.access.has(token)) return answer(401, { detail: "Given token not valid for any token type" });
     // The account is no longer a Cafe Owner, but its token still says so (getSettings in owner-api.ts).
     if (fake.noLongerOwner.has(token)) return answer(403, { detail: "You do not have permission to perform this action." });
-    return answer(200, SETTINGS);
+    return answer(200, { ...SETTINGS, ...fake.subscription });
   }
   answer(404, { detail: "Not found." });
 };
@@ -55,7 +57,7 @@ beforeEach(() => {
   fake.access.clear();
   fake.refresh.clear();
   fake.noLongerOwner.clear();
-  Object.assign(fake, { down: false, settingsReads: [] });
+  Object.assign(fake, { down: false, settingsReads: [], subscription: { subscription_expires_on: null, days_left: null } });
 });
 
 /** A page as the browser gets it. The whole body is read: a streamed page calls Django after its headers. */
@@ -84,6 +86,24 @@ test("home: the page reads its settings with the owner's access token and shows 
   assert.ok(shown(html, "Test Cafe AR") && shown(html, "تسجيل الخروج"), "cafe name and the logout button");
   assert.deepEqual(fake.settingsReads, [{ token: pair.access, forwardedFor: XFF }]); // one read: layout and page share it
   assert.deepEqual(kept(res), {}, "no cookie changes");
+});
+
+test("the last 7 paid days: every page warns the owner with the days left and the last day (GC 5)", async () => {
+  const cookie = both(issuePair());
+  const warning = async (subscription: typeof fake.subscription, lang = "ar") => {
+    fake.subscription = subscription;
+    return (await get("/dashboard", `${cookie}; lang=${lang}`)).html;
+  };
+  // Arabic writes the date as day/month/year with direction marks between: only its start is compared.
+  assert.ok((await warning({ subscription_expires_on: "2026-11-13", days_left: 3 })).includes("ينتهي اشتراكك بعد 3 أيام (آخر يوم مدفوع: 13"));
+  const en = await warning({ subscription_expires_on: "2026-11-13", days_left: 3 }, "en");
+  assert.ok(en.includes("Your subscription ends in 3 days (last paid day: Nov 13, 2026)."), "English");
+  assert.ok((await warning({ subscription_expires_on: "2026-11-10", days_left: 0 }, "en")).includes("Your subscription ends today"));
+  assert.ok((await warning({ subscription_expires_on: "2026-11-09", days_left: -1 }, "en")).includes("Your subscription ends today"), "overdue reads as today");
+  for (const quiet of [{ subscription_expires_on: "2026-11-18", days_left: 8 }, { subscription_expires_on: null, days_left: null }]) {
+    // The page data carries every message text, so the notice's own element is looked for.
+    assert.equal(/<p class="mb-6 [^"]*border-amber-300/.test(await warning(quiet, "en")), false, JSON.stringify(quiet));
+  }
 });
 
 test("home: after a refresh the page reads its settings with the new access token (observation 40)", async () => {
