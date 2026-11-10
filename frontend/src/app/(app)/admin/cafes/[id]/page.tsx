@@ -4,15 +4,16 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import type { ReactNode } from "react";
-import { formatDateTime, pickText, toLang } from "@/lib/i18n";
+import { addMonths, businessToday, formatDate, formatDateTime, pickText, toLang } from "@/lib/i18n";
 import { getBilling, getCafe } from "@/lib/server/admin-api";
 import { ApiError } from "@/lib/server/api";
 import { BRAND_COLOR } from "@/app/brand-mark";
 import { BilingualName } from "../../../ui/form-parts";
+import { ExpiryBadge } from "../expiry-badge";
 import { DeleteDialog } from "./delete-dialog";
 import { EditDialog } from "./edit-dialog";
 import { ResetLinkDialog } from "./reset-link-dialog";
-import { SubscriptionDialog } from "./subscription-dialog";
+import { RenewDialog, SubscriptionDialog } from "./subscription-dialog";
 
 export async function generateMetadata(): Promise<Metadata> {
   return { title: (await getTranslations("AdminCafe"))("title") };
@@ -39,6 +40,11 @@ export default async function AdminCafePage({ params }: PageProps<"/admin/cafes/
   const [[cafe, billing], t, locale] = await Promise.all([load((await params).id), getTranslations("AdminCafe"), getLocale()]);
   const lang = toLang(locale);
   const date = (iso: string | null) => (iso ? formatDateTime(iso, lang) : t("never"));
+  // What the date fields start from: an activation proposes one month from today, a renewal one month
+  // after the current last paid day (from today when that day has passed or there is none).
+  const today = businessToday();
+  const paidUntil = cafe.subscription_expires_on;
+  const dates = { today, proposed: addMonths(cafe.is_active && paidUntil && paidUntil > today ? paidUntil : today, 1) };
   return (
     <section className="flex flex-col gap-6">
       <Link href="/admin/cafes" className="self-start font-semibold text-primary underline">{t("back")}</Link>
@@ -49,7 +55,8 @@ export default async function AdminCafePage({ params }: PageProps<"/admin/cafes/
         </span>
       </div>
       <div className="flex flex-wrap gap-2">
-        <SubscriptionDialog id={cafe.id} active={cafe.is_active} />
+        <SubscriptionDialog id={cafe.id} active={cafe.is_active} dates={dates} />
+        {cafe.is_active && <RenewDialog id={cafe.id} dates={dates} />}
         <EditDialog cafe={cafe} defaultColor={BRAND_COLOR} />
         <ResetLinkDialog id={cafe.id} email={cafe.owner_email} />
         <DeleteDialog id={cafe.id} name={cafe.name} slug={cafe.slug} />
@@ -66,6 +73,14 @@ export default async function AdminCafePage({ params }: PageProps<"/admin/cafes/
         <Row label={t("owner")}><bdi dir="ltr">{cafe.owner_email}</bdi></Row>
         <Row label={t("subscriptionStart")}>{date(cafe.subscription_start_at)}</Row>
         <Row label={t("subscriptionEnd")}>{cafe.subscription_end_at ? date(cafe.subscription_end_at) : cafe.is_active ? t("running") : t("never")}</Row>
+        <Row label={t("paidUntil")}>
+          {paidUntil ? (
+            <span className="flex flex-wrap items-center gap-2">
+              {formatDate(paidUntil, lang)}
+              <ExpiryBadge daysLeft={cafe.days_left} soon={t("daysLeft", { days: Math.max(cafe.days_left ?? 0, 0) })} overdue={t("overdue")} />
+            </span>
+          ) : cafe.is_active ? t("noEndDate") : t("never")}
+        </Row>
         <Row label={t("color")}>
           {cafe.primary_color ? (
             <span className="flex items-center gap-2">
@@ -74,8 +89,7 @@ export default async function AdminCafePage({ params }: PageProps<"/admin/cafes/
             </span>
           ) : t("defaultColor")}
         </Row>
-        {/* The seventh row: wide, so two columns leave no empty cell. */}
-        <Row label={t("logo")} wide>
+        <Row label={t("logo")}>
           {cafe.logo_url
             ? <Image src={cafe.logo_url} alt={t("logoAlt", { name: pickText(cafe.name, lang) })} width={64} height={64} unoptimized className="size-16 rounded-lg bg-stone-100 object-contain" />
             : t("noLogo")}
@@ -98,7 +112,8 @@ export default async function AdminCafePage({ params }: PageProps<"/admin/cafes/
                 <span className="text-sm text-stone-600">
                   {event.performed_by_email
                     ? t.rich("by", { email: event.performed_by_email, mail: (chunks) => <bdi dir="ltr">{chunks}</bdi> })
-                    : t("byDeleted")}
+                    // No user: the nightly job wrote it (UC-ADMIN-012), or that admin's account was deleted.
+                    : event.action === "expired" ? t("bySystem") : t("byDeleted")}
                 </span>
               </li>
             ))}
@@ -109,9 +124,9 @@ export default async function AdminCafePage({ params }: PageProps<"/admin/cafes/
   );
 }
 
-function Row({ label, children, wide = false }: { label: string; children: ReactNode; wide?: boolean }) {
+function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className={`flex flex-col gap-1 bg-white px-4 py-3 ${wide ? "sm:col-span-2" : ""}`}>
+    <div className="flex flex-col gap-1 bg-white px-4 py-3">
       <dt className="text-sm text-stone-600">{label}</dt>
       <dd className="font-semibold">{children}</dd>
     </div>

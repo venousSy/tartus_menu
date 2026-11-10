@@ -1,11 +1,13 @@
 """
 Business rules for the cafe settings of the owner dashboard (use_cases.md UC-OWNER-009, UC-OWNER-010
 and UC-OWNER-014), its tables for the QR codes (UC-OWNER-007, UC-OWNER-008 and UC-OWNER-011),
-and the Super Admin's cafe management (UC-ADMIN-001 to UC-ADMIN-009).
+the Super Admin's cafe management (UC-ADMIN-001 to UC-ADMIN-011) and the nightly expiry (UC-ADMIN-012).
 
 Owner views pass the cafe from request.user.cafe, never from the request body or URL.
 Super Admin views pass the cafe id from the URL: the admin manages every cafe.
 """
+
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
@@ -13,6 +15,7 @@ from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
+from core.business_time import business_today
 from core.images import LOGO_MAX_SIDE, process_image
 from core.media_storage import delete_folder_on_commit, delete_image_on_commit, store_image
 from core.revalidation import schedule_menu_revalidation
@@ -199,40 +202,118 @@ def create_cafe(*, slug, name, plan, owner):
     return get_cafe(cafe.pk)
 
 
-def activate_cafe(cafe_id, *, performed_by, notes=''):
+def activate_cafe(cafe_id, *, performed_by, expires_on, notes=''):
     """
-    UC-ADMIN-004: is_active = true, subscription_start_at = now, subscription_end_at = null, and a
-    BillingEvent 'activated' with the admin's notes (for example payment details).
+    UC-ADMIN-004: is_active = true, subscription_start_at = now, subscription_end_at = null,
+    subscription_expires_on = the last paid day, and a BillingEvent 'activated' with the admin's
+    notes (for example payment details). Raises ValidationError (400) for a cafe that is already
+    active (A1) and for a date in the past or too far ahead (A6, A7).
     """
-    return _set_subscription(cafe_id, performed_by, notes, active=True)
-
-
-def deactivate_cafe(cafe_id, *, performed_by, notes=''):
-    """UC-ADMIN-005, the mirror of activate_cafe: is_active = false and subscription_end_at = now."""
-    return _set_subscription(cafe_id, performed_by, notes, active=False)
-
-
-def _set_subscription(cafe_id, performed_by, notes, *, active):
     with transaction.atomic():
         # Locked: a double click waits for the first commit and then gets A1, so only one BillingEvent is written.
         cafe = _lock_cafe(cafe_id)
-        state = 'active' if active else 'inactive'
-        if cafe.is_active == active:
-            raise ValidationError({'detail': f'Cafe is already {state}.'}, code=f'already_{state}')  # A1
+        if cafe.is_active:
+            raise ValidationError({'detail': 'Cafe is already active.'}, code='already_active')  # A1
+        _check_expires_on(expires_on)
 
-        now = timezone.now()
-        cafe.is_active = active
-        if active:
-            # Both dates describe the current period; earlier periods stay in the billing history.
-            cafe.subscription_start_at, cafe.subscription_end_at = now, None
-        else:
-            cafe.subscription_end_at = now
-        cafe.save(update_fields=['is_active', 'subscription_start_at', 'subscription_end_at', 'updated_at'])
-        action = BillingEvent.Action.ACTIVATED if active else BillingEvent.Action.DEACTIVATED
-        BillingEvent.objects.create(cafe=cafe, action=action, performed_by=performed_by, notes=notes)
-        # Global Convention 9: the public page shows the menu again, or the inactive screen (UC-GUEST-002).
+        cafe.is_active = True
+        # The three dates describe the current period; earlier periods stay in the billing history.
+        cafe.subscription_start_at, cafe.subscription_end_at = timezone.now(), None
+        cafe.subscription_expires_on = expires_on
+        cafe.save(update_fields=['is_active', 'subscription_start_at', 'subscription_end_at',
+                                 'subscription_expires_on', 'updated_at'])
+        BillingEvent.objects.create(
+            cafe=cafe, action=BillingEvent.Action.ACTIVATED, performed_by=performed_by, notes=notes
+        )
+        # Global Convention 9: the public page shows the menu again.
         schedule_menu_revalidation(cafe.slug)
     return get_cafe(cafe.pk)
+
+
+def deactivate_cafe(cafe_id, *, performed_by, notes=''):
+    """UC-ADMIN-005: is_active = false and subscription_end_at = now. The end date is kept."""
+    with transaction.atomic():
+        cafe = _lock_cafe(cafe_id)
+        if not cafe.is_active:
+            raise ValidationError({'detail': 'Cafe is already inactive.'}, code='already_inactive')  # A1
+        _end_subscription(cafe, action=BillingEvent.Action.DEACTIVATED, performed_by=performed_by, notes=notes)
+    return get_cafe(cafe.pk)
+
+
+def renew_cafe(cafe_id, *, performed_by, expires_on, notes=''):
+    """
+    UC-ADMIN-011: a later end date for an active cafe, and a BillingEvent 'renewed'. Nothing else
+    changes, so the public menu is not revalidated. Raises ValidationError (400) for an inactive
+    cafe (A1), a date that is not later than the current one (A2) or out of range (A3).
+    """
+    with transaction.atomic():
+        # Locked: the nightly job cannot expire the cafe between this check and the save.
+        cafe = _lock_cafe(cafe_id)
+        if not cafe.is_active:
+            raise ValidationError({'detail': 'Cafe is inactive. Activate it instead.'}, code='renew_inactive')  # A1
+        _check_expires_on(expires_on)
+        if cafe.subscription_expires_on is not None and expires_on <= cafe.subscription_expires_on:
+            raise ValidationError({'expires_on': ['The date must be later than the current end date.']})  # A2
+
+        cafe.subscription_expires_on = expires_on
+        cafe.save(update_fields=['subscription_expires_on', 'updated_at'])
+        BillingEvent.objects.create(
+            cafe=cafe, action=BillingEvent.Action.RENEWED, performed_by=performed_by, notes=notes
+        )
+    return get_cafe(cafe.pk)
+
+
+def expire_due_subscriptions(today=None):
+    """
+    UC-ADMIN-012, for the nightly job: deactivates every active cafe whose last paid day is before
+    `today` (default: today in the business time zone) and writes a BillingEvent 'expired' without
+    a user. Returns the slugs of the expired cafes.
+
+    A cafe whose last day is today stays active; one without an end date is never touched.
+    Running it again changes nothing more.
+    """
+    today = today or business_today()
+    due = Cafe.objects.filter(is_active=True, subscription_expires_on__lt=today)
+    expired = []
+    for cafe_id in list(due.order_by('pk').values_list('pk', flat=True)):
+        # One transaction per cafe: a failure at one cafe does not undo the others.
+        with transaction.atomic():
+            # Checked again under the lock: an admin may have renewed, deactivated or deleted it meanwhile.
+            cafe = due.select_for_update().filter(pk=cafe_id).first()
+            if cafe is None:
+                continue
+            _end_subscription(
+                cafe, action=BillingEvent.Action.EXPIRED, performed_by=None,
+                notes=f'Paid until {cafe.subscription_expires_on.isoformat()}.',
+            )
+            expired.append(cafe.slug)
+    return expired
+
+
+# The owner dashboard and the admin pages warn when this many days or fewer are left (Global Convention 5).
+EXPIRY_WARNING_DAYS = 7
+
+# A longer period is most likely a mistyped year (UC-ADMIN-004 A7): 2 years, with room for a leap day.
+MAX_SUBSCRIPTION_DAYS = 731
+
+
+def _check_expires_on(expires_on):
+    """UC-ADMIN-004 A6 and A7 (also UC-ADMIN-011 A3): today or later, and at most 2 years ahead."""
+    today = business_today()
+    if expires_on < today:
+        raise ValidationError({'expires_on': ['The date must be today or later.']})
+    if expires_on > today + timedelta(days=MAX_SUBSCRIPTION_DAYS):
+        raise ValidationError({'expires_on': ['The date must be within 2 years from today.']})
+
+
+def _end_subscription(cafe, *, action, performed_by, notes):
+    """Deactivates a locked, active cafe, by an admin (UC-ADMIN-005) or by the system (UC-ADMIN-012)."""
+    cafe.is_active = False
+    cafe.subscription_end_at = timezone.now()
+    cafe.save(update_fields=['is_active', 'subscription_end_at', 'updated_at'])
+    BillingEvent.objects.create(cafe=cafe, action=action, performed_by=performed_by, notes=notes)
+    # Global Convention 9: the public page shows the inactive screen (UC-GUEST-002).
+    schedule_menu_revalidation(cafe.slug)
 
 
 def update_cafe(cafe_id, *, performed_by, name=None, slug=None, primary_color=None, plan=None):
@@ -334,7 +415,10 @@ def billing_history(cafe_id):
 
 def platform_stats():
     """UC-ADMIN-009: the cafe counts for the admin home page, in one query."""
+    warn_until = business_today() + timedelta(days=EXPIRY_WARNING_DAYS)
     return Cafe.objects.aggregate(
+        # Active cafes with days_left <= 7, overdue ones included (Global Convention 5).
+        expiring_soon_cafes=Count('pk', filter=Q(is_active=True, subscription_expires_on__lte=warn_until)),
         total_cafes=Count('pk'),
         active_cafes=Count('pk', filter=Q(is_active=True)),
         inactive_cafes=Count('pk', filter=Q(is_active=False)),

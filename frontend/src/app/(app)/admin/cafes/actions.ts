@@ -49,21 +49,41 @@ function writeThenRefresh(path: string | null, init: ApiInit): Promise<FormError
   return ownerWriteThenRefresh(path, init, adminWrite);
 }
 
-/** A subscription change's state: the typed notes come back after a refusal; `saved` closes the dialog. */
-export type SubscriptionState = { error: FormError | null; notes?: string; saved?: boolean };
+/** A subscription change's state: the typed notes and date come back after a refusal; `saved` closes the dialog. */
+export type SubscriptionState = { error: FormError | null; notes?: string; expiresOn?: string; saved?: boolean };
 
 /**
  * Activates (UC-ADMIN-004) or deactivates (UC-ADMIN-005) the cafe, with optional notes that Django
  * stores on the BillingEvent (at most 500 characters, A4). The hidden "change" input picks the
- * endpoint. Django refuses a change to the state the cafe already has (A1), for example from a page
+ * endpoint. An activation also sends the last paid day, "expires_on" (GC 5); Django checks it
+ * (A5-A7). Django refuses a change to the state the cafe already has (A1), for example from a page
  * opened before another admin's change.
  */
 export async function changeSubscription(_previous: SubscriptionState, formData: FormData): Promise<SubscriptionState> {
   const change = formData.get("change");
   if (change !== "activate" && change !== "deactivate") return { error: NOT_FOUND };
   const notes = String(formData.get("notes") ?? "");
-  const error = await writeThenRefresh(cafePath(formData, `${change}/`), { method: "POST", json: { notes } });
-  return error ? { error, notes } : { error: null, saved: true };
+  if (change === "deactivate") {
+    const error = await writeThenRefresh(cafePath(formData, "deactivate/"), { method: "POST", json: { notes } });
+    return error ? { error, notes } : { error: null, saved: true };
+  }
+  return sendPeriod(formData, "activate/", notes);
+}
+
+/**
+ * Renews an active cafe's subscription (UC-ADMIN-011): a later last paid day, with optional notes
+ * for the BillingEvent. Django refuses an inactive cafe (A1) and a date that is not later than the
+ * current one (A2).
+ */
+export async function renewSubscription(_previous: SubscriptionState, formData: FormData): Promise<SubscriptionState> {
+  return sendPeriod(formData, "renew/", String(formData.get("notes") ?? ""));
+}
+
+/** The shared body of activate/ and renew/: { expires_on, notes }. */
+async function sendPeriod(formData: FormData, endpoint: "activate/" | "renew/", notes: string): Promise<SubscriptionState> {
+  const expiresOn = String(formData.get("expires_on") ?? "");
+  const error = await writeThenRefresh(cafePath(formData, endpoint), { method: "POST", json: { expires_on: expiresOn, notes } });
+  return error ? { error, notes, expiresOn } : { error: null, saved: true };
 }
 
 /** The reset-link dialog's state: the new link, or Django's error. */

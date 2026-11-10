@@ -201,9 +201,12 @@ The next merge into `main` deploys. Set `DEPLOY_ENABLED` to anything else to sto
 
 ## 12. Database backups
 
-The `backup` service runs two jobs every night (`backend/crontab`, times in UTC):
-02:00 `backup_database` (pg_dump, gzip, encrypt with `age`, upload as `backups/YYYY-MM-DD.sql.gz.age`) and
-02:30 `flushexpiredtokens` (removes expired login tokens).
+The `backup` service runs three jobs every night (`backend/crontab`, times in UTC):
+02:00 `backup_database` (pg_dump, gzip, encrypt with `age`, upload as `backups/YYYY-MM-DD.sql.gz.age`),
+02:30 `flushexpiredtokens` (removes expired login tokens) and
+21:10 `expire_subscriptions` (00:10 in Damascus: deactivates the cafes whose last paid day has passed; to run it
+by hand: `docker compose exec backup python manage.py expire_subscriptions`). If this job stops, no cafe is
+deactivated; the admin pages then show such cafes as "Overdue".
 
 A dump holds every cafe's data and the password hashes. It is encrypted for your `age` public key before
 it leaves the server, and only the private key, which never goes on the server, can read it. A leaked

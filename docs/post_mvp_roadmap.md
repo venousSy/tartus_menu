@@ -114,7 +114,12 @@
 - **Tests:** link used twice → 400; after change-password → 400; expired → 400; all refresh tokens blacklisted
   after a reset; non-admin 403; unknown cafe 404; throttle.
 
-### F. Automatic subscription expiry and warnings — size M–L
+### F. Automatic subscription expiry and warnings — size M–L — done 2026-11-10 (PR #75)
+- Built as below. Details decided while building: `days_left` is a model property (`Cafe.days_left`, with
+  `core/business_time.py` `business_today()`); a manual deactivation keeps `subscription_expires_on`; the
+  `expired` event's notes are "Paid until YYYY-MM-DD."; `renew_inactive` text is "Cafe is inactive. Activate it
+  instead."; the 2-year limit is 731 days; the date fields propose one month ahead; the admin badges also show in
+  the cafe list. The dev database needs `migrate` (cafes 0003). No heartbeat (item C's optional part is not built).
 - **Design:** new field `cafes.subscription_expires_on DATE NULL` ("paid until this day, inclusive, Damascus time").
   `subscription_end_at` keeps its meaning (the moment of deactivation). New `BillingEvent.Action` values
   `renewed`, `expired`; system actions use `performed_by=None` and show as "System".

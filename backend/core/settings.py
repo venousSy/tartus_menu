@@ -141,6 +141,10 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
+# Where the cafes are. Subscription dates are calendar days in this zone (core/business_time.py);
+# stored moments stay UTC.
+BUSINESS_TIME_ZONE = 'Asia/Damascus'
+
 
 # Static files & Media configurations
 STATIC_URL = 'static/'

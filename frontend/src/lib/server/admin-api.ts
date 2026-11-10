@@ -18,6 +18,8 @@ export type AdminCafeSummary = {
   plan: string; // the plan code: "basic" or "pro"
   is_active: boolean;
   owner_email: string;
+  subscription_expires_on: string | null; // the last paid day, "YYYY-MM-DD"; null = no end date (GC 5)
+  days_left: number | null; // 0 on the last day, negative when overdue; null when inactive or without an end date
 };
 
 /** GET /api/v1/admin/cafes/{id}/ (UC-ADMIN-003), also the answer of create, activate, deactivate and edit. */
@@ -36,9 +38,9 @@ export const CAFES_PER_PAGE = 20;
 
 /** One entry of GET /api/v1/admin/cafes/{id}/billing/ (UC-ADMIN-008), newest first. */
 export type BillingEvent = {
-  action: "activated" | "deactivated" | "plan_changed";
+  action: "activated" | "deactivated" | "plan_changed" | "renewed" | "expired";
   notes: string;
-  performed_by_email: string | null; // null when that admin account was deleted later
+  performed_by_email: string | null; // null for "expired" (the system), or when that admin account was deleted later
   created_at: string;
 };
 
@@ -55,6 +57,7 @@ export type PlatformStats = {
   inactive_cafes: number;
   basic_plan_count: number;
   pro_plan_count: number;
+  expiring_soon_cafes: number; // active, 7 days or fewer left, overdue ones included
 };
 
 /** A read for a page; a 403 ends the session (see above). */

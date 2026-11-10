@@ -34,8 +34,9 @@ class CafeSettingsSerializer(serializers.Serializer):
     Cafe settings for the owner dashboard (UC-OWNER-009 and UC-OWNER-014).
 
     Input (PATCH): name and primary_color. Output: { name, slug, primary_color, logo_url, is_active,
-    plan: { name, max_categories, max_items, allows_images, allows_branding } }.
-    slug (Super Admin only), logo_url (UC-OWNER-010), is_active and plan are read-only.
+    subscription_expires_on, days_left, plan: { name, max_categories, max_items, allows_images,
+    allows_branding } }.
+    slug (Super Admin only), logo_url (UC-OWNER-010), is_active, the subscription fields and plan are read-only.
     Stored values are returned even when the plan hides them from customers (Global Convention 7).
     """
 
@@ -44,6 +45,9 @@ class CafeSettingsSerializer(serializers.Serializer):
     primary_color = primary_color_field()  # A3
     logo_url = serializers.CharField(read_only=True)
     is_active = serializers.BooleanField(read_only=True)
+    # Global Convention 5: the last paid day and the days until it; the dashboard warns at 7 or fewer.
+    subscription_expires_on = serializers.DateField(read_only=True)
+    days_left = serializers.IntegerField(read_only=True)
     plan = PlanSerializer(read_only=True)
 
     def to_internal_value(self, data):
@@ -106,6 +110,8 @@ class AdminCafeSummarySerializer(serializers.Serializer):
     plan = serializers.CharField(source='plan.name')  # the plan code, "basic" or "pro", as in the create request
     is_active = serializers.BooleanField()
     owner_email = serializers.EmailField(source='owner.email')
+    subscription_expires_on = serializers.DateField()  # the last paid day; null = no end date
+    days_left = serializers.IntegerField()  # null for an inactive cafe or one without an end date (GC 5)
 
 
 class AdminCafeSerializer(AdminCafeSummarySerializer):
@@ -179,18 +185,26 @@ class AdminCafeUpdateSerializer(serializers.Serializer):
 
 
 class SubscriptionChangeSerializer(serializers.Serializer):
-    """Optional body of activate/ and deactivate/ (UC-ADMIN-004 and 005): { "notes": "..." }."""
+    """Optional body of deactivate/ (UC-ADMIN-005): { "notes": "..." }."""
 
     # Stored on the BillingEvent, e.g. payment details. StrictCharField: a number is rejected (A4).
     notes = StrictCharField(allow_blank=True, max_length=500, default='')
 
 
+class SubscriptionPeriodSerializer(SubscriptionChangeSerializer):
+    """Body of activate/ and renew/ (UC-ADMIN-004 and 011): { "expires_on": "YYYY-MM-DD", "notes": "..." }."""
+
+    # Only the format is checked here (A5). The service knows today's date in the business time zone
+    # and the cafe's current end date, so it checks the range (A6, A7) and "later than now" (011 A2).
+    expires_on = serializers.DateField()
+
+
 class BillingEventSerializer(serializers.Serializer):
     """One entry of a cafe's billing history (UC-ADMIN-008)."""
 
-    action = serializers.CharField()  # "activated", "deactivated" or "plan_changed"
+    action = serializers.CharField()  # "activated", "deactivated", "plan_changed", "renewed" or "expired"
     notes = serializers.CharField()
-    # null when that admin account was deleted later (performed_by is SET_NULL)
+    # null for "expired" (written by the system), or when that admin account was deleted later (SET_NULL)
     performed_by_email = serializers.EmailField(source='performed_by.email', allow_null=True)
     created_at = serializers.DateTimeField()
 
@@ -210,3 +224,4 @@ class PlatformStatsSerializer(serializers.Serializer):
     inactive_cafes = serializers.IntegerField()
     basic_plan_count = serializers.IntegerField()
     pro_plan_count = serializers.IntegerField()
+    expiring_soon_cafes = serializers.IntegerField()  # active, 7 days or fewer left (overdue included)

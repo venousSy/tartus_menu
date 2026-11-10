@@ -10,7 +10,8 @@ import base64
 import json
 import re
 import zlib
-from datetime import timedelta
+from datetime import date, datetime, timedelta
+from datetime import timezone as dt_timezone
 from io import BytesIO, StringIO
 from unittest import mock
 
@@ -21,6 +22,7 @@ from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db.models import QuerySet
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -28,11 +30,14 @@ from django.utils.dateparse import parse_datetime
 from django.utils.http import urlsafe_base64_decode
 from PIL import Image
 from rest_framework import status
+
+from core.business_time import business_today
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import AccessToken
 
 from menu.models import Category, MenuItem
 
+from . import services
 from .models import BillingEvent, Cafe, CafeTable, SubscriptionPlan
 
 User = get_user_model()
@@ -77,7 +82,7 @@ class CafeAPITestCase(APITestCase):
         """The settings as the API returns them for the Basic cafe, with `changes` applied."""
         data = {
             'name': {'ar': 'Tartus Coffee', 'en': ''}, 'slug': 'tartus-coffee', 'primary_color': '#C0392B',
-            'logo_url': '', 'is_active': True,
+            'logo_url': '', 'is_active': True, 'subscription_expires_on': None, 'days_left': None,
             'plan': {'name': 'basic', 'max_categories': 5, 'max_items': 50, 'allows_images': False,
                      'allows_branding': False},
         }
@@ -559,6 +564,11 @@ class AdminAPITestCase(CafeAPITestCase):
         owner = User.objects.create_user(email=f'owner@{slug}.com')
         return Cafe.objects.create(owner=owner, plan=plan or self.basic, slug=slug, **fields)
 
+    @staticmethod
+    def day(offset):
+        """A date `offset` days from today in the business time zone, as the API sends it: "YYYY-MM-DD"."""
+        return (business_today() + timedelta(days=offset)).isoformat()
+
 
 class AdminCafeReadAndCreateTests(AdminAPITestCase):
     """POST (UC-ADMIN-001) and GET (UC-ADMIN-002) cafes/, GET cafes/{id}/ (UC-ADMIN-003), GET stats/ (UC-ADMIN-009)"""
@@ -576,7 +586,7 @@ class AdminCafeReadAndCreateTests(AdminAPITestCase):
         self.assertEqual(response.data, {
             'id': cafe.pk, 'name': {'ar': 'Sea View', 'en': ''}, 'slug': 'sea-view', 'plan': 'pro',
             'is_active': False, 'owner_email': 'new.owner@sea.com',  # stored lowercased
-            'subscription_start_at': None, 'subscription_end_at': None, 'logo_url': '', 'primary_color': '',
+            'subscription_expires_on': None, 'days_left': None, 'subscription_start_at': None, 'subscription_end_at': None, 'logo_url': '', 'primary_color': '',
         })
         owner = cafe.owner
         self.assertEqual((owner.role, owner.is_staff), (User.Role.CAFE_OWNER, False))
@@ -629,7 +639,7 @@ class AdminCafeReadAndCreateTests(AdminAPITestCase):
         self.assertEqual([cafe['slug'] for cafe in second.data['results']], ['cafe-0', 'tartus-coffee'])
         self.assertEqual(second.data['results'][-1], {
             'id': self.cafe.pk, 'name': {'ar': 'Tartus Coffee', 'en': ''}, 'slug': 'tartus-coffee', 'plan': 'basic',
-            'is_active': True, 'owner_email': 'owner@cafe.com',
+            'is_active': True, 'owner_email': 'owner@cafe.com', 'subscription_expires_on': None, 'days_left': None,
         })
 
     def test_search_matches_slug_name_and_owner_email(self):  # UC-ADMIN-002 step 1
@@ -654,7 +664,8 @@ class AdminCafeReadAndCreateTests(AdminAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data, {
             'id': self.cafe.pk, 'name': {'ar': 'Tartus Coffee', 'en': ''}, 'slug': 'tartus-coffee', 'plan': 'basic',
-            'is_active': True, 'owner_email': 'owner@cafe.com', 'subscription_start_at': None,
+            'is_active': True, 'owner_email': 'owner@cafe.com', 'subscription_expires_on': None, 'days_left': None,
+            'subscription_start_at': None,
             'subscription_end_at': None, 'logo_url': '', 'primary_color': '#C0392B',  # stored, hidden on Basic
         })
         missing = self.client.get(reverse('admin_api:cafe', args=[self.cafe.pk + 100]))
@@ -666,7 +677,7 @@ class AdminCafeReadAndCreateTests(AdminAPITestCase):
         response = self.client.get(self.url('stats'))
 
         self.assertEqual(response.data, {'total_cafes': 2, 'active_cafes': 1, 'inactive_cafes': 1,
-                                         'basic_plan_count': 1, 'pro_plan_count': 1})
+                                         'basic_plan_count': 1, 'pro_plan_count': 1, 'expiring_soon_cafes': 0})
 
     def test_only_a_system_admin_may_call_the_admin_api(self):  # Global Conventions 1 and 2
         staff_owner = User.objects.create_user(email='staff@cafe.com', is_staff=True)  # is_staff never decides
@@ -678,7 +689,7 @@ class AdminCafeReadAndCreateTests(AdminAPITestCase):
         ]
         endpoints = [('get', 'cafes'), ('post', 'cafes'), ('get', 'cafe'), ('patch', 'cafe'), ('delete', 'cafe'),
                      ('post', 'cafe-activate'), ('post', 'cafe-deactivate'), ('get', 'cafe-billing'), ('get', 'stats'),
-                     ('post', 'cafe-password-reset-link')]
+                     ('post', 'cafe-password-reset-link'), ('post', 'cafe-renew')]
         for label, user, status_code, body in callers:
             if user is None:
                 self.client.credentials()
@@ -704,14 +715,16 @@ class AdminCafeWriteTests(AdminAPITestCase):
 
     def test_deactivate_then_activate(self):  # UC-ADMIN-005 and UC-ADMIN-004 main flows
         off = self.client.post(self.url('cafe-deactivate'), {'notes': 'Did not pay for May.'}, format='json')
-        on = self.client.post(self.url('cafe-activate'))  # no body: notes are optional
+        on = self.client.post(self.url('cafe-activate'), {'expires_on': self.day(30)}, format='json')  # notes are optional
 
         self.assertEqual((off.status_code, off.data['is_active'], on.status_code, on.data['is_active']),
                          (200, False, 200, True))
         self.assertIsNotNone(off.data['subscription_end_at'])  # set by the deactivation
-        # The dates describe the current period: a new start, and the old end cleared (UC-ADMIN-004 step 2).
+        self.assertEqual((off.data['subscription_expires_on'], off.data['days_left']), (None, None))
+        # The dates describe the current period: a new start, the old end cleared, the last paid day (step 2).
         self.assertIsNotNone(on.data['subscription_start_at'])
         self.assertIsNone(on.data['subscription_end_at'])
+        self.assertEqual((on.data['subscription_expires_on'], on.data['days_left']), (self.day(30), 30))
         self.assertEqual(self.events(), [('deactivated', self.admin.pk), ('activated', self.admin.pk)])
         self.assertEqual(list(BillingEvent.objects.order_by('created_at', 'pk').values_list('notes', flat=True)),
                          ['Did not pay for May.', ''])
@@ -721,10 +734,10 @@ class AdminCafeWriteTests(AdminAPITestCase):
             ('501 characters', {'notes': 'x' * 501}, ['Ensure this field has no more than 500 characters.']),
             ('a number', {'notes': 123}, ['Not a valid string.']),
         ]
-        for name in ('cafe-deactivate', 'cafe-activate'):
+        for name in ('cafe-deactivate', 'cafe-activate', 'cafe-renew'):
             for label, body, errors in cases:
                 with self.subTest(endpoint=name, notes=label):
-                    response = self.client.post(self.url(name), body, format='json')
+                    response = self.client.post(self.url(name), {**body, 'expires_on': self.day(30)}, format='json')
 
                     self.assertEqual((response.status_code, response.data),
                                      (status.HTTP_400_BAD_REQUEST, {'notes': errors}))
@@ -733,7 +746,7 @@ class AdminCafeWriteTests(AdminAPITestCase):
         self.assertFalse(BillingEvent.objects.exists())
 
     def test_same_state_again_returns_400(self):  # UC-ADMIN-004 A1, UC-ADMIN-005 A1
-        already_active = self.client.post(self.url('cafe-activate'))
+        already_active = self.client.post(self.url('cafe-activate'), {'expires_on': self.day(30)}, format='json')
         self.client.post(self.url('cafe-deactivate'))
         already_inactive = self.client.post(self.url('cafe-deactivate'))
 
@@ -743,12 +756,14 @@ class AdminCafeWriteTests(AdminAPITestCase):
                          (status.HTTP_400_BAD_REQUEST, {'detail': 'Cafe is already inactive.'}))
         self.assertEqual(self.events(), [('deactivated', self.admin.pk)])  # only the real change is logged
 
-    def test_unknown_cafe_returns_404(self):  # UC-ADMIN-004 A2, 005 A2, 006 A7, 007 A1, 008 A2
+    def test_unknown_cafe_returns_404(self):  # UC-ADMIN-004 A2, 005 A2, 006 A7, 007 A1, 008 A2, 010 A1, 011 A5
         missing = Cafe(pk=self.cafe.pk + 100)
-        for method, name in [('post', 'cafe-activate'), ('post', 'cafe-deactivate'), ('patch', 'cafe'),
-                             ('delete', 'cafe'), ('get', 'cafe-billing'), ('post', 'cafe-password-reset-link')]:
+        body = {'expires_on': self.day(30)}  # a valid body: the serializer runs before the cafe is looked up
+        for method, name in [('post', 'cafe-activate'), ('post', 'cafe-deactivate'), ('post', 'cafe-renew'),
+                             ('patch', 'cafe'), ('delete', 'cafe'), ('get', 'cafe-billing'),
+                             ('post', 'cafe-password-reset-link')]:
             with self.subTest(endpoint=f'{method} {name}'):
-                response = getattr(self.client, method)(self.url(name, missing), {}, format='json')
+                response = getattr(self.client, method)(self.url(name, missing), body, format='json')
 
                 self.assertEqual((response.status_code, response.data),
                                  (status.HTTP_404_NOT_FOUND, {'detail': 'Not found.'}))
@@ -900,7 +915,10 @@ class AdminCafeWriteTests(AdminAPITestCase):
         steps = [
             ('create', lambda: self.client.post(self.url('cafes'), create_body, format='json'), None),  # not a trigger
             ('deactivate', lambda: self.client.post(self.url('cafe-deactivate')), ['tartus-coffee']),
-            ('activate', lambda: self.client.post(self.url('cafe-activate')), ['tartus-coffee']),
+            ('activate', lambda: self.client.post(self.url('cafe-activate'), {'expires_on': self.day(30)},
+                                                  format='json'), ['tartus-coffee']),
+            ('renew', lambda: self.client.post(self.url('cafe-renew'), {'expires_on': self.day(60)},
+                                               format='json'), None),  # the public menu does not change
             ('slug change', lambda: self.client.patch(self.url('cafe'), {'slug': 'sea-view'}, format='json'),
              ['tartus-coffee', 'sea-view']),  # the old page and the new one
             ('nothing changed', lambda: self.client.patch(self.url('cafe'), {'slug': 'sea-view'}, format='json'), None),
@@ -916,6 +934,188 @@ class AdminCafeWriteTests(AdminAPITestCase):
                     urlopen.assert_not_called()
                 else:
                     self.assertEqual(json.loads(urlopen.call_args.args[0].data), {'slugs': slugs})
+
+
+@override_settings(FRONTEND_REVALIDATE_URL='')
+class SubscriptionExpiryTests(AdminAPITestCase):
+    """
+    The end date of a subscription (Global Convention 5): activate/ with a date (UC-ADMIN-004 A5-A7),
+    renew/ (UC-ADMIN-011), the nightly job (UC-ADMIN-012) and days_left for the owner and the admin.
+    """
+
+    def set_cafe(self, **fields):
+        Cafe.objects.filter(pk=self.cafe.pk).update(**fields)
+
+    def period(self, name, body):
+        return self.client.post(self.url(name), body, format='json')
+
+    def events(self):
+        return list(BillingEvent.objects.order_by('created_at', 'pk').values_list('action', 'performed_by', 'notes'))
+
+    def test_activation_needs_a_valid_end_date(self):  # UC-ADMIN-004 A5, A6, A7
+        self.set_cafe(is_active=False)
+        cases = [
+            ('missing', {}, ['This field is required.']),
+            ('not a date', {'expires_on': 'next month'},
+             ['Date has wrong format. Use one of these formats instead: YYYY-MM-DD.']),
+            ('yesterday', {'expires_on': self.day(-1)}, ['The date must be today or later.']),
+            ('over 2 years', {'expires_on': self.day(732)}, ['The date must be within 2 years from today.']),
+        ]
+        for label, body, errors in cases:
+            with self.subTest(label):
+                response = self.period('cafe-activate', body)
+
+                self.assertEqual((response.status_code, response.data),
+                                 (status.HTTP_400_BAD_REQUEST, {'expires_on': errors}))
+        self.cafe.refresh_from_db()
+        self.assertFalse(self.cafe.is_active)
+        self.assertFalse(BillingEvent.objects.exists())
+
+    def test_the_first_and_the_last_allowed_day(self):  # UC-ADMIN-004 A6, A7 at their borders
+        for offset in (0, 731):
+            with self.subTest(offset=offset):
+                self.set_cafe(is_active=False)
+
+                response = self.period('cafe-activate', {'expires_on': self.day(offset)})
+
+                self.assertEqual((response.status_code, response.data['days_left']), (status.HTTP_200_OK, offset))
+
+    def test_renew_moves_the_end_date_and_logs_it(self):  # UC-ADMIN-011 main flow
+        self.set_cafe(subscription_expires_on=self.day(3), subscription_start_at=timezone.now())
+        start = Cafe.objects.get(pk=self.cafe.pk).subscription_start_at
+
+        response = self.period('cafe-renew', {'expires_on': self.day(33), 'notes': 'Paid 1 more month.'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual((response.data['is_active'], response.data['subscription_expires_on'], response.data['days_left']),
+                         (True, self.day(33), 33))
+        self.cafe.refresh_from_db()
+        self.assertEqual((self.cafe.subscription_start_at, self.cafe.subscription_end_at), (start, None))  # same period
+        self.assertEqual(self.events(), [('renewed', self.admin.pk, 'Paid 1 more month.')])
+
+    def test_renew_gives_a_cafe_without_an_end_date_its_first_one(self):  # UC-ADMIN-011 A2, second sentence
+        response = self.period('cafe-renew', {'expires_on': self.day(10)})
+
+        self.assertEqual((response.status_code, response.data['days_left']), (status.HTTP_200_OK, 10))
+
+    def test_renew_refusals_change_nothing(self):  # UC-ADMIN-011 A1, A2, A3
+        self.set_cafe(subscription_expires_on=self.day(5))
+        later = ['The date must be later than the current end date.']
+        cases = [
+            ('same day', {'expires_on': self.day(5)}, {'expires_on': later}),  # A2
+            ('earlier', {'expires_on': self.day(2)}, {'expires_on': later}),
+            ('in the past', {'expires_on': self.day(-1)}, {'expires_on': ['The date must be today or later.']}),  # A3
+            ('over 2 years', {'expires_on': self.day(732)},
+             {'expires_on': ['The date must be within 2 years from today.']}),
+            ('missing', {}, {'expires_on': ['This field is required.']}),
+        ]
+        for label, body, errors in cases:
+            with self.subTest(label):
+                response = self.period('cafe-renew', body)
+
+                self.assertEqual((response.status_code, response.data), (status.HTTP_400_BAD_REQUEST, errors))
+        self.set_cafe(is_active=False)
+        inactive = self.period('cafe-renew', {'expires_on': self.day(30)})  # A1
+
+        self.assertEqual((inactive.status_code, inactive.data),
+                         (status.HTTP_400_BAD_REQUEST, {'detail': 'Cafe is inactive. Activate it instead.'}))
+        self.assertEqual(inactive['X-Error-Code'], 'renew_inactive')
+        self.cafe.refresh_from_db()
+        self.assertEqual(self.cafe.subscription_expires_on.isoformat(), self.day(5))
+        self.assertFalse(BillingEvent.objects.exists())
+
+    def test_an_overdue_cafe_can_still_be_renewed(self):  # the job did not run; the admin takes the payment
+        self.set_cafe(subscription_expires_on=self.day(-2))
+
+        response = self.period('cafe-renew', {'expires_on': self.day(28)})
+
+        self.assertEqual((response.status_code, response.data['days_left']), (status.HTTP_200_OK, 28))
+
+    def test_the_job_expires_only_active_cafes_whose_last_day_has_passed(self):  # UC-ADMIN-012 main flow
+        self.set_cafe(subscription_expires_on=self.day(-1))
+        last_day = self.add_cafe('last-day', is_active=True, subscription_expires_on=self.day(0))
+        no_end = self.add_cafe('no-end', is_active=True)
+        already_off = self.add_cafe('already-off', is_active=False, subscription_expires_on=self.day(-30))
+        out = StringIO()
+
+        with override_settings(FRONTEND_REVALIDATE_URL='http://frontend.test/internal/revalidate'), \
+                mock.patch('urllib.request.urlopen') as urlopen, self.captureOnCommitCallbacks(execute=True):
+            call_command('expire_subscriptions', stdout=out)
+
+        self.cafe.refresh_from_db()
+        self.assertEqual((self.cafe.is_active, self.cafe.subscription_expires_on.isoformat()), (False, self.day(-1)))
+        self.assertIsNotNone(self.cafe.subscription_end_at)
+        self.assertEqual(self.events(), [('expired', None, f'Paid until {self.day(-1)}.')])  # by the system
+        self.assertEqual(json.loads(urlopen.call_args.args[0].data), {'slugs': ['tartus-coffee']})  # GC 9
+        self.assertEqual(urlopen.call_count, 1)
+        self.assertEqual(out.getvalue(), 'Expired 1: tartus-coffee.\n')
+        for cafe, active in ((last_day, True), (no_end, True), (already_off, False)):
+            cafe.refresh_from_db()
+            self.assertEqual(cafe.is_active, active, cafe.slug)
+        self.assertIsNone(already_off.subscription_end_at)  # not touched at all
+
+    def test_a_second_run_changes_nothing(self):  # UC-ADMIN-012: idempotent, A1
+        self.set_cafe(subscription_expires_on=self.day(-1))
+        call_command('expire_subscriptions', stdout=StringIO())
+        out = StringIO()
+
+        call_command('expire_subscriptions', stdout=out)
+
+        self.assertEqual(out.getvalue(), 'No subscription expired.\n')
+        self.assertEqual(BillingEvent.objects.count(), 1)
+
+    def test_the_job_skips_a_cafe_renewed_in_the_same_moment(self):  # UC-ADMIN-012: checked again under the lock
+        self.set_cafe(subscription_expires_on=self.day(-1))
+        first = QuerySet.first
+
+        def renewed_just_before_the_lock(queryset):
+            # The job has listed the cafe as due; an admin's renewal commits before the job locks the row.
+            Cafe.objects.filter(pk=self.cafe.pk).update(subscription_expires_on=self.day(30))
+            return first(queryset)
+
+        with mock.patch.object(QuerySet, 'first', renewed_just_before_the_lock):
+            expired = services.expire_due_subscriptions()
+
+        self.cafe.refresh_from_db()
+        self.assertEqual((expired, self.cafe.is_active), ([], True))
+        self.assertFalse(BillingEvent.objects.exists())
+
+    def test_the_day_is_the_business_day_not_the_utc_day(self):  # Global Convention 5: Asia/Damascus
+        # 22:30 UTC on 9 May is 01:30 on 10 May in Damascus (UTC+3): the 9th is over there.
+        self.set_cafe(subscription_expires_on=date(2027, 5, 9))
+        moment = datetime(2027, 5, 9, 22, 30, tzinfo=dt_timezone.utc)
+
+        with mock.patch('django.utils.timezone.now', return_value=moment):
+            days_left = Cafe.objects.get(pk=self.cafe.pk).days_left
+            expired = services.expire_due_subscriptions()
+
+        self.assertEqual((days_left, expired), (-1, ['tartus-coffee']))
+
+    def test_the_owner_and_the_admin_see_the_end_date_and_the_days_left(self):  # UC-OWNER-014, UC-ADMIN-002, 003, 009
+        self.set_cafe(subscription_expires_on=self.day(7))
+        self.add_cafe('overdue', is_active=True, subscription_expires_on=self.day(-1))
+        self.add_cafe('far', is_active=True, subscription_expires_on=self.day(8))
+        self.add_cafe('off', is_active=False, subscription_expires_on=self.day(2))  # inactive: no warning
+
+        detail = self.client.get(self.url('cafe'))
+        listed = {cafe['slug']: cafe['days_left'] for cafe in self.client.get(self.url('cafes')).data['results']}
+        stats = self.client.get(self.url('stats'))
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {AccessToken.for_user(self.owner)}')
+        owner = self.client.get(reverse('cafes:settings'))
+
+        self.assertEqual((detail.data['subscription_expires_on'], detail.data['days_left']), (self.day(7), 7))
+        self.assertEqual(listed, {'tartus-coffee': 7, 'overdue': -1, 'far': 8, 'off': None})
+        self.assertEqual(stats.data['expiring_soon_cafes'], 2)  # 7 days left, and the overdue one
+        self.assertEqual((owner.data['subscription_expires_on'], owner.data['days_left']), (self.day(7), 7))
+
+    def test_the_billing_history_shows_an_expiry_without_a_user(self):  # UC-ADMIN-008 note
+        self.set_cafe(subscription_expires_on=self.day(-1))
+        services.expire_due_subscriptions()
+
+        response = self.client.get(self.url('cafe-billing'))
+
+        self.assertEqual([(e['action'], e['notes'], e['performed_by_email']) for e in response.data],
+                         [('expired', f'Paid until {self.day(-1)}.', None)])
 
 
 class CreatePlansCommandTests(TestCase):

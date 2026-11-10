@@ -1,5 +1,6 @@
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import { Suspense } from "react";
+import { EXPIRY_WARNING_DAYS, formatDate, toLang } from "@/lib/i18n";
 import { getSettings } from "@/lib/server/owner-api";
 import { PageHeader } from "../page-header";
 import { DashboardNav } from "./dashboard-nav";
@@ -19,7 +20,7 @@ export default async function DashboardLayout({ children }: LayoutProps<"/dashbo
             part in the browser, where the boundary catches the error. */}
         <RetryBoundary>
           <Suspense>
-            <InactiveNotice />
+            <SubscriptionNotice />
             {children}
           </Suspense>
         </RetryBoundary>
@@ -31,14 +32,20 @@ export default async function DashboardLayout({ children }: LayoutProps<"/dashbo
 /**
  * GC 5: the owner of an inactive cafe can still log in and read the settings, but Django refuses
  * every other dashboard call. Reading the settings also re-checks the role (getSettings).
+ * An active cafe gets a warning on every page during its last 7 paid days, so the owner can renew
+ * before the nightly job deactivates it (UC-ADMIN-012).
  */
-async function InactiveNotice() {
+async function SubscriptionNotice() {
   const settings = await getSettings();
-  if (settings.is_active) return null;
-  const t = await getTranslations("Dashboard");
+  const ending = settings.is_active && settings.days_left != null && settings.days_left <= EXPIRY_WARNING_DAYS;
+  if (settings.is_active && !ending) return null;
+  const [t, locale] = await Promise.all([getTranslations("Dashboard"), getLocale()]);
   return (
     <p className="mb-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">
-      {t("inactive")}
+      {ending
+        // A negative number (the job has not run yet) reads as "today": the paid time is over.
+        ? t("expiring", { days: Math.max(settings.days_left!, 0), date: formatDate(settings.subscription_expires_on!, toLang(locale)) })
+        : t("inactive")}
     </p>
   );
 }

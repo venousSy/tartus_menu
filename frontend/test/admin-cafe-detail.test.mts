@@ -19,6 +19,7 @@ type Event = { action: string; notes: string; performed_by_email: string | null;
 const SEA = () => ({
   id: 7, name: { ar: "مقهى البحر", en: "Sea Cafe" }, slug: "sea-cafe", plan: "pro", is_active: true, owner_email: "owner@example.test",
   subscription_start_at: "2026-11-02T08:30:00Z" as string | null, subscription_end_at: null as string | null,
+  subscription_expires_on: "2027-02-10" as string | null, days_left: 92 as number | null,
   logo_url: "https://media.example.test/cafes/7/logo.webp", primary_color: "#C0392B",
 });
 const EVENTS = (): Event[] => [
@@ -27,7 +28,7 @@ const EVENTS = (): Event[] => [
 ];
 const NEW_CAFE = {
   id: 8, name: { ar: "مقهى جديد", en: "" }, slug: "new-cafe", plan: "basic", is_active: false, owner_email: "new@example.test",
-  subscription_start_at: null, subscription_end_at: null, logo_url: "", primary_color: "",
+  subscription_start_at: null, subscription_end_at: null, subscription_expires_on: null, days_left: null, logo_url: "", primary_color: "",
 };
 const RESET_LINK = { url: "https://menu.example.test/reset-password#Nw.d2x4ab-0123456789abcdef", expires_at: "2026-11-03T08:30:00Z" };
 const fake = { cafe: SEA() as ReturnType<typeof SEA> | null, events: EVENTS(), categories: 8, status: 0, calls: [] as string[], bodies: [] as unknown[] };
@@ -38,7 +39,7 @@ const fakeDjango: FakeDjango = (req, path, body, answer) => {
   if (fake.status) return answer(fake.status, { detail: "You do not have permission to perform this action." });
   if (path === "/admin/cafes/8/") return answer(200, NEW_CAFE);
   if (path === "/admin/cafes/8/billing/") return answer(200, []);
-  const match = /^\/admin\/cafes\/7\/(billing\/|activate\/|deactivate\/|password-reset-link\/)?$/.exec(path);
+  const match = /^\/admin\/cafes\/7\/(billing\/|activate\/|deactivate\/|renew\/|password-reset-link\/)?$/.exec(path);
   const cafe = fake.cafe;
   if (!match || !cafe) return answer(404, { detail: "Not found." });
   if (match[1] === "password-reset-link/") return answer(200, RESET_LINK); // UC-ADMIN-010: nothing changes
@@ -46,13 +47,33 @@ const fakeDjango: FakeDjango = (req, path, body, answer) => {
   if (match[1] === "billing/") return answer(200, fake.events);
   if (match[1]) {
     // SubscriptionChangeSerializer (notes at most 500), then _set_subscription: A1, the dates, the event.
-    if (String(body.notes ?? "").length > 500) return answer(400, { notes: ["Ensure this field has no more than 500 characters."] });
+    // SubscriptionPeriodSerializer (activate/, renew/): the date's format, then the notes.
+    const errors: Record<string, string[]> = {};
+    if (match[1] !== "deactivate/") {
+      if (!body.expires_on) errors.expires_on = ["This field is required."];
+      else if (!/^\d{4}-\d{2}-\d{2}$/.test(body.expires_on)) errors.expires_on = ["Date has wrong format. Use one of these formats instead: YYYY-MM-DD."];
+    }
+    if (String(body.notes ?? "").length > 500) errors.notes = ["Ensure this field has no more than 500 characters."];
+    if (Object.keys(errors).length) return answer(400, errors);
+    const event = (action: string) =>
+      fake.events.unshift({ action, notes: body.notes ?? "", performed_by_email: "admin@example.test", created_at: "2026-11-02T10:00:00Z" });
+    if (match[1] === "renew/") {
+      // renew_cafe: inactive (A1, with its code), not later than the current day (A2); "today" is 2026-11-10.
+      if (!cafe.is_active) return answer(400, { detail: "Cafe is inactive. Activate it instead." }, { "Content-Type": "application/json", "X-Error-Code": "renew_inactive" });
+      if (body.expires_on < "2026-11-10") return answer(400, { expires_on: ["The date must be today or later."] });
+      if (cafe.subscription_expires_on && body.expires_on <= cafe.subscription_expires_on) {
+        return answer(400, { expires_on: ["The date must be later than the current end date."] });
+      }
+      Object.assign(cafe, { subscription_expires_on: body.expires_on, days_left: 181 });
+      event("renewed");
+      return answer(200, cafe);
+    }
     const active = match[1] === "activate/";
     if (cafe.is_active === active) return answer(400, { detail: `Cafe is already ${active ? "active" : "inactive"}.` });
     Object.assign(cafe, active
-      ? { is_active: true, subscription_start_at: "2026-11-02T10:00:00Z", subscription_end_at: null }
-      : { is_active: false, subscription_end_at: "2026-11-02T10:00:00Z" });
-    fake.events.unshift({ action: active ? "activated" : "deactivated", notes: body.notes ?? "", performed_by_email: "admin@example.test", created_at: "2026-11-02T10:00:00Z" });
+      ? { is_active: true, subscription_start_at: "2026-11-02T10:00:00Z", subscription_end_at: null, subscription_expires_on: body.expires_on, days_left: 30 }
+      : { is_active: false, subscription_end_at: "2026-11-02T10:00:00Z", days_left: null });
+    event(active ? "activated" : "deactivated");
     return answer(200, cafe);
   }
   if (req.method === "PATCH") {
@@ -112,12 +133,28 @@ test("details: Damascus time with Western digits, color, logo, and the billing l
   assert.ok(/بواسطة <bdi dir="ltr">admin@example.test<\/bdi>/.test(html));
   const en = await page("/admin/cafes/7", "en");
   assert.ok(shown(en, "Billing history") && shown(en, "Running") && /Nov 2, 2026, 11:30/.test(en));
+  // GC 5: the last paid day is a calendar day (no time zone moves it); 92 days left needs no warning.
+  assert.ok(shown(en, "Paid until") && en.includes("Feb 10, 2027") && !shown(en, "92 days left") && !shown(en, "Overdue"));
+});
+
+test("the last paid days: a badge from 7 days down, 'overdue' after them; an expiry is logged by the system", async () => {
+  Object.assign(fake.cafe!, { subscription_expires_on: "2026-11-13", days_left: 3 });
+  assert.ok(shown(await page(), "بقي 3 أيام"));
+  fake.cafe!.days_left = 0;
+  assert.ok(shown(await page("/admin/cafes/7", "en"), "Ends today"));
+  fake.cafe!.days_left = -2; // the nightly job has not run
+  assert.ok(shown(await page(), "تجاوز تاريخ الانتهاء"));
+  Object.assign(fake.cafe!, { is_active: false, days_left: null, subscription_end_at: "2026-11-13T21:10:00Z" });
+  fake.events.unshift({ action: "expired", notes: "Paid until 2026-11-13.", performed_by_email: null, created_at: "2026-11-13T21:10:00Z" });
+  const html = await page();
+  assert.ok(shown(html, "انتهاء الاشتراك") && shown(html, "بواسطة النظام تلقائيًا") && shown(html, "بواسطة مشرف حُذف حسابه"), "the system, not a deleted admin");
+  assert.equal(formWith(html, "expires_on").names.includes("change"), true, "an inactive cafe offers Activate, not Renew");
 });
 
 test("a new cafe shows no dates, the default color, no logo and no events", async () => {
   const html = await page("/admin/cafes/8");
   assert.ok(shown(html, "اشتراك موقوف") && shown(html, "اللون الافتراضي") && shown(html, "لا يوجد شعار") && shown(html, "لا توجد أحداث بعد."));
-  assert.equal((html.match(/<dd[^>]*>—<\/dd>/g) ?? []).length, 2, "start and end: none yet");
+  assert.equal((html.match(/<dd[^>]*>—<\/dd>/g) ?? []).length, 3, "start, end and last paid day: none yet");
 });
 
 test("an unknown cafe or a malformed id shows the not-found page; malformed ids never reach Django", async () => {
@@ -137,9 +174,39 @@ test("deactivate, then activate: the notes go to Django and the answer shows the
   html = await page();
   assert.ok(shown(html, "اشتراك موقوف") && html.includes("لم يدفع هذا الشهر.") && html.indexOf(">إيقاف الاشتراك<") < html.indexOf(">تغيير الخطة<"));
   assert.ok(/<textarea[^>]*dir="auto"/.test(html), "notes in either language");
-  res = await submit(PAGE, cookie, formWith(html, "change"));
+  // An activation needs the last paid day (UC-ADMIN-004); the form proposes one month from today.
+  const activate = formWith(html, "change");
+  assert.match(value(activate, "expires_on") ?? "", /^\d{4}-\d{2}-\d{2}$/);
+  res = await submit(PAGE, cookie, activate, { expires_on: "2027-01-31" });
   assert.deepEqual(actionState(res.html), { error: null, saved: true });
+  assert.deepEqual(fake.bodies[1], { expires_on: "2027-01-31", notes: "" });
   assert.deepEqual(writes(), ["POST /admin/cafes/7/deactivate/", "POST /admin/cafes/7/activate/"]);
+  assert.ok((await page("/admin/cafes/7", "en")).includes("Jan 31, 2027"));
+});
+
+test("renew: a later last paid day and notes go to Django; the page shows the new day and the event", async () => {
+  const html = await page();
+  const form = formWith(html, "expires_on"); // an active cafe: the renew form (Deactivate takes no date)
+  assert.equal(form.names.includes("change"), false);
+  const res = await submit(PAGE, cookie, form, { expires_on: "2027-05-10", notes: "دفع 3 أشهر." });
+  assert.deepEqual(actionState(res.html), { error: null, saved: true });
+  assert.deepEqual(fake.bodies, [{ expires_on: "2027-05-10", notes: "دفع 3 أشهر." }]);
+  assert.deepEqual(writes(), ["POST /admin/cafes/7/renew/"]);
+  const after = await page("/admin/cafes/7", "en");
+  assert.ok(after.includes("May 10, 2027") && shown(after, "Subscription renewed") && shown(after, "Active subscription"));
+});
+
+test("renew refusals: each message at the date, the typing kept; an inactive cafe is told to activate", async () => {
+  const form = formWith(await page(), "expires_on");
+  const refusal = async (values: Record<string, string>) => actionState((await submit(PAGE, cookie, form, values)).html);
+  assert.deepEqual(await refusal({ expires_on: "2027-02-10", notes: "x" }),
+    { error: { form: null, fields: { expires_on: [{ key: "dateNotLater" }] } }, notes: "x", expiresOn: "2027-02-10" });
+  assert.deepEqual(await refusal({ expires_on: "2026-01-01" }), { error: { form: null, fields: { expires_on: [{ key: "datePast" }] } }, notes: "", expiresOn: "2026-01-01" });
+  assert.deepEqual(await refusal({ expires_on: "soon" }), { error: { form: null, fields: { expires_on: [{ key: "dateFormat" }] } }, notes: "", expiresOn: "soon" });
+  assert.deepEqual(await refusal({ expires_on: "" }), { error: { form: null, fields: { expires_on: [{ key: "required" }] } }, notes: "", expiresOn: "" });
+  fake.cafe!.is_active = false; // deactivated by another admin, or expired, after this page was opened
+  assert.deepEqual(await refusal({ expires_on: "2027-05-10" }), { error: refused("renewInactive"), notes: "", expiresOn: "2027-05-10" });
+  assert.equal(fake.events.length, 2);
 });
 
 test("subscription refusals: a stale page, notes over 500 characters; the notes are kept", async () => {
@@ -148,8 +215,8 @@ test("subscription refusals: a stale page, notes over 500 characters; the notes 
   let state = actionState((await submit(PAGE, cookie, stale, { notes: "again" })).html);
   assert.deepEqual(state, { error: refused("alreadyInactive"), notes: "again" });
   const long = "x".repeat(501); // only a changed page can send this (maxLength 500)
-  state = actionState((await submit(PAGE, cookie, formWith(await page(), "change"), { notes: long })).html);
-  assert.deepEqual(state, { error: { form: null, fields: { notes: [{ key: "maxLength", values: { max: 500 } }] } }, notes: long });
+  state = actionState((await submit(PAGE, cookie, formWith(await page(), "change"), { notes: long, expires_on: "2027-01-31" })).html);
+  assert.deepEqual(state, { error: { form: null, fields: { notes: [{ key: "maxLength", values: { max: 500 } }] } }, notes: long, expiresOn: "2027-01-31" });
   assert.equal(fake.events.length, 2);
 });
 
@@ -213,7 +280,7 @@ test("delete: Cancel comes first; one DELETE, then back to the list; a second tr
 
 test("changed ids or changes never reach Django; a 403 from any dialog ends the session", async () => {
   const html = await page();
-  const forms = [formWith(html, "change"), formWith(html, "slug"), resetLinkForm(html), deleteForm(html)];
+  const forms = [formWith(html, "change"), formWith(html, "expires_on"), formWith(html, "slug"), resetLinkForm(html), deleteForm(html)];
   for (const form of forms) {
     for (const id of ["7/../8", "0", "abc"]) {
       const state = actionState((await submit(PAGE, cookie, form, { id })).html) as { error: unknown };

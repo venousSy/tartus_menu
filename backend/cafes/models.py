@@ -4,6 +4,8 @@ from django.conf import settings
 from django.utils.translation import gettext_lazy as _
 from django.core.validators import MinValueValidator, MaxValueValidator
 
+from core.business_time import business_today
+
 class SubscriptionPlan(models.Model):
     """
     Represents available tiers in the system (e.g., Basic, Pro).
@@ -49,7 +51,10 @@ class Cafe(models.Model):
     is_active = models.BooleanField(default=False)
     subscription_start_at = models.DateTimeField(null=True, blank=True)
     subscription_end_at = models.DateTimeField(null=True, blank=True)
-    
+    # The last paid day, a calendar day in the business time zone (Global Convention 5). The cafe is
+    # active through that whole day. NULL = no end date: the cafe never expires by itself.
+    subscription_expires_on = models.DateField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -67,6 +72,16 @@ class Cafe(models.Model):
     def __str__(self):
         # English, then Arabic, then the slug. "or", not get()'s default: a missing English name is "".
         return self.name.get('en') or self.name.get('ar') or self.slug
+
+    @property
+    def days_left(self):
+        """
+        Days until the last paid day: 0 on that day, negative when the nightly job has not run yet.
+        None for an inactive cafe and for one without an end date (Global Convention 5).
+        """
+        if not self.is_active or self.subscription_expires_on is None:
+            return None
+        return (self.subscription_expires_on - business_today()).days
 
 
 class CafeTable(models.Model):
@@ -105,12 +120,15 @@ class CafeTable(models.Model):
 
 class BillingEvent(models.Model):
     """
-    Audit log for subscription and billing changes made by the Super Admin.
+    Audit log for subscription and billing changes made by the Super Admin, and by the system
+    (the nightly expiry job writes 'expired' with performed_by = NULL).
     """
     class Action(models.TextChoices):
         ACTIVATED = 'activated', _('Activated')
         DEACTIVATED = 'deactivated', _('Deactivated')
         PLAN_CHANGED = 'plan_changed', _('Plan Changed')
+        RENEWED = 'renewed', _('Renewed')
+        EXPIRED = 'expired', _('Expired')
 
     cafe = models.ForeignKey(
         Cafe,

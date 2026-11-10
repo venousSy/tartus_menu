@@ -34,8 +34,8 @@ All architectural decisions have been locked in. Below is a summary of every dec
 | Analytics | Not in the MVP. Planned post-MVP (post_mvp_roadmap.md Phase 3): menu opens per day/hour and per table, no cookies or personal data; Basic sees a summary, Pro the detail (plan flag `allows_detailed_analytics`) |
 | Business time zone | `Asia/Damascus` for analytics days/hours and subscription dates; the database and Django `TIME_ZONE` stay UTC |
 | Monitoring (post-MVP) | Health URL `/health` + an external uptime check; error tracking with Sentry or GlitchTip (`sentry-sdk`, `@sentry/nextjs`; active only when a DSN is set) |
-| Password recovery (post-MVP) | A one-time reset link made by the Super Admin first; self-service email later |
-| Subscription expiry (post-MVP) | A paid-until date; a nightly job deactivates expired cafes; a warning 7 days before |
+| Password recovery (post-MVP) | A one-time reset link made by the Super Admin (valid 24 hours, sent by hand); self-service email later |
+| Subscription expiry (post-MVP) | A paid-until date (`subscription_expires_on`, required at activation, moved by "Renew"); a nightly job deactivates expired cafes; a warning 7 days before for the owner and the admin |
 | Approved dependencies (post-MVP) | `sentry-sdk`, `@sentry/nextjs`, psycopg 3 — each added in its own step |
 | Routing | Host `menu.domain.com`; customer page route `/menu/[cafe-slug]` |
 | Theming | Logo (Pro) + Primary Color (Pro) injected as CSS variable |
@@ -104,7 +104,7 @@ Post-MVP steps (details in [post_mvp_roadmap.md](post_mvp_roadmap.md); each star
 18. **[x] Stable QR links `/t/<qr_token>`** (roadmap A) — use_cases.md UC-GUEST-003.
 19. **[x] Error tracking** — Sentry or GlitchTip (roadmap D); system_design.md §5 "Error Tracking".
 20. **[x] Password reset link made by the Super Admin** (roadmap E1) — use_cases.md UC-ADMIN-010, UC-AUTH-005.
-21. **[ ] Subscription expiry and warnings** (roadmap F).
+21. **[x] Subscription expiry and warnings** (roadmap F) — use_cases.md Global Convention 5, UC-ADMIN-011, UC-ADMIN-012.
 22. **[ ] Analytics** (roadmap B).
 23. **[ ] Item tags** (roadmap G).
 24. **[ ] Item variants (sizes with prices)** (roadmap H).

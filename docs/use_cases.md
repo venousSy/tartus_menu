@@ -20,6 +20,8 @@
 - [UC-ADMIN-008] View Billing History
 - [UC-ADMIN-009] View Platform Stats
 - [UC-ADMIN-010] Generate Password Reset Link
+- [UC-ADMIN-011] Renew Subscription
+- [UC-ADMIN-012] Automatic Expiry
 
 ### Cafe Owner
 - [UC-OWNER-001] Manage Categories
@@ -85,6 +87,8 @@ A table's QR code does not hold this URL. It holds the table's permanent short l
 - Every /api/v1/dashboard/ endpoint requires the owner's cafe to be active (cafe.is_active = true). The only exception is GET /api/v1/dashboard/settings/ (UC-OWNER-014), which answers 200 even when the cafe is inactive.
 - An inactive cafe gets 403 Forbidden — {"detail": "Your subscription is inactive. Please contact support."}.
 - The role check runs first, then the active check. A caller who is not a Cafe Owner gets the role error, never the subscription message.
+- A subscription is paid until a date: cafe.subscription_expires_on, a calendar day in the business time zone (Asia/Damascus). The cafe stays active through the whole of that day. In the night after it, a scheduled job deactivates the cafe (UC-ADMIN-012). NULL means "no end date": such a cafe never expires by itself (cafes activated before this rule existed).
+- days_left = subscription_expires_on minus today (business time zone); 0 on the last paid day, negative when the job has not run yet. It is null for an inactive cafe and for a cafe without an end date. The owner dashboard and the admin pages warn when days_left is 7 or less.
 - Auth endpoints (/api/v1/auth/) never check the subscription. The owner of an inactive cafe can still log in, refresh, log out, change the password and reset it with a link (UC-AUTH-005).
 
 **6. Bilingual text fields**
@@ -115,7 +119,7 @@ Every service operation that checks a plan limit, assigns a sort_order, reorders
 The customer menu page is cached by Next.js (ISR). To keep it fresh:
 
 - After the database commit of every successful write that changes what the public menu shows, the backend asks the frontend to revalidate (rebuild) the page /menu/[slug] of that cafe (system_design.md §3.5).
-- Triggers: UC-OWNER-001 to UC-OWNER-006, UC-OWNER-009, UC-OWNER-010, UC-ADMIN-004, UC-ADMIN-005, UC-ADMIN-006 and UC-ADMIN-007. When UC-ADMIN-006 changes the slug, both the old and the new slug are revalidated.
+- Triggers: UC-OWNER-001 to UC-OWNER-006, UC-OWNER-009, UC-OWNER-010, UC-ADMIN-004, UC-ADMIN-005, UC-ADMIN-006, UC-ADMIN-007 and UC-ADMIN-012. When UC-ADMIN-006 changes the slug, both the old and the new slug are revalidated.
 - The call runs after the commit and never changes the API response. If it fails, the error is logged and the request still succeeds.
 - Fallback: the page is also rebuilt on a time basis at most every 5 minutes, so a lost call heals itself.
 - Expected result: a change is visible on the public menu within a few seconds.
@@ -309,7 +313,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 | **Actor** | Super Admin |
 | **Trigger** | Admin navigates to the Cafe List screen |
 | **Preconditions** | Admin is authenticated |
-| **Postconditions (Success)** | Returns a paginated list of cafes with summary fields (id, name, slug, plan, is_active, owner email) |
+| **Postconditions (Success)** | Returns a paginated list of cafes with summary fields (id, name, slug, plan, is_active, owner email, subscription_expires_on, days_left — Global Convention 5) |
 | **API** | GET /api/v1/admin/cafes/ |
 | **Architectural Note** | Queryset returns all cafes (no cafe_id filter — admin sees everything). Pagination via DRF PageNumberPagination. |
 
@@ -336,7 +340,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 
 **Main Flow:**
 1. Admin requests cafe by ID.
-2. System returns full cafe object: name, slug, plan, is_active, subscription dates, logo_url, primary_color, owner email.
+2. System returns full cafe object: name, slug, plan, is_active, subscription dates (subscription_start_at, subscription_end_at, subscription_expires_on, days_left), logo_url, primary_color, owner email.
 
 **Alternate Flows:**
 - **A1 — Cafe not found:** 404 Not Found.
@@ -353,13 +357,13 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 | **Actor** | Super Admin |
 | **Trigger** | Admin clicks "Activate" on a cafe detail page |
 | **Preconditions** | Cafe exists; is_active = false |
-| **Postconditions (Success)** | cafe.is_active = true; subscription_start_at set to now and subscription_end_at cleared (null), so both dates describe the current period; a BillingEvent (action='activated') is created |
+| **Postconditions (Success)** | cafe.is_active = true; subscription_start_at set to now, subscription_end_at cleared (null) and subscription_expires_on set to the sent date, so the three dates describe the current period; a BillingEvent (action='activated') is created |
 | **API** | POST /api/v1/admin/cafes/{id}/activate/ |
 | **Architectural Note** | Service Layer method CafeService.activate(cafe, performed_by). Wrapped in atomic. Creates the BillingEvent audit record in the same transaction. |
 
 **Main Flow:**
-1. Admin triggers activation, optionally with { "notes": "Paid 3 months in cash." } (a string of at most 500 characters, for example payment details).
-2. Service sets is_active = true, subscription_start_at = now(), subscription_end_at = null.
+1. Admin triggers activation with { "expires_on": "2027-02-10", "notes": "Paid 3 months in cash." }. expires_on is required: the last paid day (Global Convention 5). notes is optional (a string of at most 500 characters, for example payment details).
+2. Service sets is_active = true, subscription_start_at = now(), subscription_end_at = null, subscription_expires_on = expires_on.
 3. Service creates BillingEvent(action='activated', performed_by=admin, notes=the sent notes or "").
 4. Returns updated cafe object.
 
@@ -368,6 +372,9 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 - **A2 — Cafe not found:** 404 Not Found.
 - **A3 — Non-admin caller:** 403 Forbidden.
 - **A4 — notes is not a string or longer than 500 characters:** 400 Bad Request with a field-level error on notes.
+- **A5 — expires_on is missing or not a date (YYYY-MM-DD):** 400 Bad Request with DRF's field-level error on expires_on.
+- **A6 — expires_on is in the past:** 400 Bad Request — {"expires_on": ["The date must be today or later."]}. Today is the date in the business time zone.
+- **A7 — expires_on is more than 2 years (731 days) ahead:** 400 Bad Request — {"expires_on": ["The date must be within 2 years from today."]}. This catches a mistyped year.
 
 ---
 
@@ -380,7 +387,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 | **Actor** | Super Admin |
 | **Trigger** | Admin clicks "Deactivate" on a cafe detail page |
 | **Preconditions** | Cafe exists; is_active = true |
-| **Postconditions (Success)** | cafe.is_active = false; subscription_end_at set to now; a BillingEvent (action='deactivated') is created |
+| **Postconditions (Success)** | cafe.is_active = false; subscription_end_at set to now; subscription_expires_on is kept as it was (the next activation replaces it); a BillingEvent (action='deactivated') is created |
 | **API** | POST /api/v1/admin/cafes/{id}/deactivate/ |
 | **Architectural Note** | Mirror of UC-ADMIN-004. Service Layer enforces atomicity. |
 
@@ -462,7 +469,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 | **Preconditions** | Cafe exists |
 | **Postconditions (Success)** | Returns a list of BillingEvent records sorted by created_at DESC |
 | **API** | GET /api/v1/admin/cafes/{id}/billing/ |
-| **Architectural Note** | Billing events are deleted together with the cafe (UC-ADMIN-007). The history covers the lifetime of the cafe only. |
+| **Architectural Note** | Billing events are deleted together with the cafe (UC-ADMIN-007). The history covers the lifetime of the cafe only. action is one of activated, deactivated, plan_changed, renewed (UC-ADMIN-011) and expired (UC-ADMIN-012). An expired event was written by the system: its performed_by_email is null and the UI shows "System". |
 
 **Main Flow:**
 1. Admin requests billing history for a cafe.
@@ -487,7 +494,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 
 **Main Flow:**
 1. Admin requests stats.
-2. System returns: { total_cafes, active_cafes, inactive_cafes, basic_plan_count, pro_plan_count }.
+2. System returns: { total_cafes, active_cafes, inactive_cafes, basic_plan_count, pro_plan_count, expiring_soon_cafes }. expiring_soon_cafes counts the active cafes whose days_left is 7 or less (Global Convention 5), overdue ones included.
 
 ---
 
@@ -514,6 +521,58 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 - **A1 — Cafe not found:** 404 Not Found.
 - **A2 — Non-admin caller:** 403 Forbidden.
 - **A3 — A link is requested again:** a new link is returned. Earlier links stay valid until they expire; the first one that is used ends all of them.
+
+---
+
+### UC-ADMIN-011 — Renew Subscription
+
+> **As a Super Admin, I want to move the end date of an active subscription after a new payment so that the cafe stays active without a gap.**
+
+| Field | Value |
+|---|---|
+| **Actor** | Super Admin |
+| **Trigger** | Admin clicks "Renew" on a cafe detail page |
+| **Preconditions** | Cafe exists; is_active = true |
+| **Postconditions (Success)** | subscription_expires_on is set to the sent date; is_active, subscription_start_at and subscription_end_at do not change; a BillingEvent (action='renewed') is created |
+| **API** | POST /api/v1/admin/cafes/{id}/renew/ |
+| **Architectural Note** | Service Layer: cafes/services.py renew_cafe(cafe_id, expires_on, notes, performed_by), atomic, with the cafe row locked (Global Convention 8). The public menu does not change, so nothing is revalidated. An inactive cafe is not renewed but activated (UC-ADMIN-004), which starts a new period. |
+
+**Main Flow:**
+1. Admin sends { "expires_on": "2027-05-10", "notes": "Paid 3 more months." } (same fields as UC-ADMIN-004).
+2. Service checks that the cafe is active and that the date is later than the current subscription_expires_on.
+3. Service saves the date and creates BillingEvent(action='renewed', performed_by=admin, notes=the sent notes or "").
+4. Returns updated cafe object.
+
+**Alternate Flows:**
+- **A1 — Cafe is inactive:** 400 Bad Request — {"detail": "Cafe is inactive. Activate it instead."} (X-Error-Code: renew_inactive).
+- **A2 — expires_on is not later than the current end date:** 400 Bad Request — {"expires_on": ["The date must be later than the current end date."]}. A cafe without an end date accepts any valid date.
+- **A3 — expires_on missing, not a date, in the past or more than 2 years ahead:** 400 Bad Request, as UC-ADMIN-004 A5 to A7.
+- **A4 — Invalid notes:** 400 Bad Request, as UC-ADMIN-004 A4.
+- **A5 — Cafe not found:** 404 Not Found.
+- **A6 — Non-admin caller:** 403 Forbidden.
+
+---
+
+### UC-ADMIN-012 — Automatic Expiry
+
+> **As the platform operator, I want a cafe whose paid time is over to be deactivated automatically so that nobody has to remember each end date.**
+
+| Field | Value |
+|---|---|
+| **Actor** | System (a scheduled job; no user) |
+| **Trigger** | Every night at 00:10 in the business time zone: python manage.py expire_subscriptions |
+| **Preconditions** | None |
+| **Postconditions (Success)** | Every cafe with is_active = true and subscription_expires_on earlier than today is deactivated: is_active = false, subscription_end_at = now, and a BillingEvent (action='expired', performed_by = null) is created. Its public menu page is revalidated (Global Convention 9) |
+| **API** | None (management command) |
+| **Architectural Note** | Service Layer: cafes/services.py expire_due_subscriptions(today). Each cafe is handled in its own transaction with its row locked, and the condition is checked again under the lock: a cafe that an admin renewed or deactivated in the same moment is skipped. Running the job twice changes nothing more (idempotent). A cafe whose last paid day is today stays active. A cafe without an end date is never touched. If the job does not run, cafes stay active and the admin pages show them as overdue (negative days_left). |
+
+**Main Flow:**
+1. The job reads today's date in the business time zone.
+2. For each active cafe with subscription_expires_on < today: the service deactivates it and writes the 'expired' event with notes "Paid until YYYY-MM-DD.".
+3. The command prints how many cafes expired, with their slugs.
+
+**Alternate Flows:**
+- **A1 — Nothing is due:** the command prints "No subscription expired." and ends successfully.
 
 
 ---
@@ -901,7 +960,7 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 
 **Main Flow:**
 1. Owner requests the settings.
-2. System returns { name: {ar, en}, slug, primary_color, logo_url, is_active, plan: { name, max_categories, max_items, allows_images, allows_branding } }.
+2. System returns { name: {ar, en}, slug, primary_color, logo_url, is_active, subscription_expires_on, days_left, plan: { name, max_categories, max_items, allows_images, allows_branding } }. The dashboard shows a warning on every page when days_left is 7 or less (Global Convention 5).
 
 **Alternate Flows:**
 - **A1 — Cafe inactive:** 200 OK with is_active: false (this is not an error).
@@ -1005,6 +1064,8 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 | UC-ADMIN-008 | View Billing History | Super Admin | GET /api/v1/admin/cafes/{id}/billing/ |
 | UC-ADMIN-009 | View Platform Stats | Super Admin | GET /api/v1/admin/stats/ |
 | UC-ADMIN-010 | Generate Password Reset Link | Super Admin | POST /api/v1/admin/cafes/{id}/password-reset-link/ |
+| UC-ADMIN-011 | Renew Subscription | Super Admin | POST /api/v1/admin/cafes/{id}/renew/ |
+| UC-ADMIN-012 | Automatic Expiry | System | manage.py expire_subscriptions (nightly) |
 | UC-OWNER-001 | Manage Categories | Cafe Owner | POST/PATCH/DELETE /api/v1/dashboard/categories/ |
 | UC-OWNER-002 | Manage Menu Items | Cafe Owner | POST/PATCH/DELETE /api/v1/dashboard/items/ |
 | UC-OWNER-003 | Reorder Categories | Cafe Owner | POST /api/v1/dashboard/categories/reorder/ |
