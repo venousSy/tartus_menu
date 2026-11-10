@@ -41,7 +41,9 @@
 
 ## Phase 1 — Before the first real cafe
 
-### C. Health endpoint and uptime monitoring — size S
+### C. Health endpoint and uptime monitoring — size S — done 2026-11-09 (PR #71)
+- Built as below; deploy/README.md §13 sets up the external monitor. The optional `CRON_HEARTBEAT_URL` was
+  not built (it needs a monitor account first).
 - **Docs:** system_design §3.7 "Health"; §5 Nginx rule `= /health`, healthcheck column in Docker Services.
 - **Backend:** `HealthView` in `core/views.py` (no auth, `SELECT 1`) → 200 `{"status":"ok"}` or
   503 `{"detail":"Database unavailable."}` + `X-Error-Code: db_unavailable`; route `api/v1/health/`.

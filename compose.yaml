@@ -64,6 +64,14 @@ services:
     volumes:
       # collectstatic writes the Django admin's CSS and JS here at every start; Nginx will serve them.
       - static:/app/staticfiles
+    # "Healthy" once Django answers its health check (system_design.md §3.7), which also runs one
+    # database query. The image has no curl, so Python asks; "backend" is an allowed host, localhost is not.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://backend:8000/api/v1/health/', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   # Daily jobs (system_design.md §5, "Scheduled Jobs"): the backend image, but instead of Gunicorn it runs
   # supercronic with backend/crontab (02:00 UTC backup_database, 02:30 UTC flushexpiredtokens).
@@ -92,18 +100,29 @@ services:
     build: ./frontend
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     environment:
       DJANGO_API_URL: http://backend:8000/api/v1
       FRONTEND_REVALIDATE_SECRET: ${FRONTEND_REVALIDATE_SECRET}
+    # "Healthy" once Next.js answers /health, which asks Django in turn.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   # The only service with published ports: everything from the internet goes through it.
   nginx:
     image: nginx:alpine
     restart: unless-stopped
+    # Nginx starts once both apps answer, so the first visitors never see a 502.
     depends_on:
-      - backend
-      - frontend
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
     ports:
       - "80:80"
       - "443:443"

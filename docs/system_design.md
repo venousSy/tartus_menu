@@ -366,6 +366,23 @@ Frontend paths. None of them starts with `/api/`, because Nginx sends `/api/` to
 | `/bff/auth/session-ended` | Browser | Clears the cookies and opens `/login` when Django no longer accepts the session |
 | `/bff/dashboard/qr-pdf` | Cafe Owner | Streams the QR codes PDF (UC-OWNER-008) |
 | `/internal/revalidate` | Django only | §3.5 |
+| `/health` | Uptime monitor, Docker, the deploy job | §3.7 |
+
+### 3.7 Health Check
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/api/v1/health/` | None | Django answers and PostgreSQL runs one query (`SELECT 1`) |
+| GET | `/health` (Next.js) | None | The whole chain: Nginx → Next.js → Django → PostgreSQL |
+
+**Django:** `200 {"status": "ok"}`, or `503 {"detail": "Database unavailable."}` with `X-Error-Code: db_unavailable`. No authentication (a stale token never turns it into a 401), no DRF throttle, no business rule.
+
+**Next.js `/health`:** asks Django's health check with a 2-second timeout and never caches the answer: `200 {"status": "ok"}`, otherwise `503 {"detail": "Service unavailable."}`. It is not part of the proxy matcher.
+
+Who calls it:
+- An external uptime monitor (for example UptimeRobot or Better Stack, free plan) on `https://<domain>/health` every few minutes; it alerts the operator when the site is down (deploy/README.md).
+- Docker healthchecks: `backend` calls Django's check, `frontend` calls its own `/health`; Nginx starts only after both are healthy.
+- The deploy job, after the migration: the deploy fails unless `https://<domain>/health` answers 200 within about a minute.
 
 ---
 
@@ -431,6 +448,7 @@ Internet
     ├── /<DJANGO_ADMIN_PATH>   → Django admin site
     ├── /static/*              → collected static files (Django admin assets)
     ├── /internal/*            → 404 (internal Next.js routes, Docker network only)
+    ├── /health                → Next.js health check (§3.7), not logged
     │
     └── /*                     → Next.js (port 3000)
                                     └── Cloudflare R2 (image CDN, custom domain)
@@ -447,6 +465,7 @@ All services run inside Docker Compose on a single VPS.
 - `add_header X-Robots-Tag "noindex, nofollow"` on `/menu/`.
 - HTTP → HTTPS redirect and HSTS.
 - `/internal/` answers 404 to the public (§3.5).
+- `= /health` goes to Next.js (§3.7), without an access-log line, inside the `/menu/` rate-limit zone.
 
 ### Scheduled Jobs
 
@@ -457,13 +476,13 @@ All services run inside Docker Compose on a single VPS.
 
 ### Docker Services
 
-| Service | Image | Port |
-|---|---|---|
-| `nginx` | `nginx:alpine` | 80, 443 |
-| `backend` | Custom Django image | 8000 (internal) |
-| `frontend` | Custom Next.js image | 3000 (internal) |
-| `db` | `postgres:16-alpine` | 5432 (internal) |
-| `backup` | Custom cron image | — |
+| Service | Image | Port | Healthcheck |
+|---|---|---|---|
+| `nginx` | `nginx:alpine` | 80, 443 | — (starts after `backend` and `frontend` are healthy) |
+| `backend` | Custom Django image | 8000 (internal) | `GET /api/v1/health/` (§3.7) |
+| `frontend` | Custom Next.js image | 3000 (internal) | `GET /health` (§3.7); starts after `backend` is healthy |
+| `db` | `postgres:16-alpine` | 5432 (internal) | `pg_isready` |
+| `backup` | Custom cron image | — | — |
 
 ### CI/CD Pipeline (GitHub Actions)
 
@@ -477,7 +496,8 @@ git push → main branch
           ├── docker-compose pull
           ├── docker-compose up -d
           ├── Run DB migrations (python manage.py migrate)
-          └── Create the cache table (python manage.py createcachetable)
+          ├── Create the cache table (python manage.py createcachetable)
+          └── Check https://<domain>/health answers 200 (§3.7), else the deploy fails
 ```
 
 > `createcachetable` creates the table used by Django's `DatabaseCache` (login throttle counters). It is safe to run on every deploy.

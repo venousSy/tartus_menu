@@ -100,6 +100,14 @@ server {
         return 404;
     }
 
+    # Health check for the uptime monitor (system_design.md §3.7): Nginx -> Next.js -> Django -> PostgreSQL.
+    # Checked every minute or so, so it stays out of the access log; the menu budget stops a flood.
+    location = /health {
+        access_log off;
+        limit_req zone=menu burst=20 nodelay;
+        proxy_pass $frontend;
+    }
+
     # Next.js: BFF login route, customer menu, dashboards.
     location = /bff/auth/login {
         limit_req zone=login burst=5 nodelay;

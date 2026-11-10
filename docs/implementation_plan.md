@@ -100,7 +100,7 @@ The features and improvements after the MVP, in phases, with the owner's decisio
 
 Post-MVP steps (details in [post_mvp_roadmap.md](post_mvp_roadmap.md); each starts with its own docs turns):
 
-17. **[ ] Health URL and uptime monitoring** (roadmap C).
+17. **[x] Health URL and uptime monitoring** (roadmap C) — system_design.md §3.7.
 18. **[ ] Stable QR links `/t/<qr_token>`** (roadmap A) — before any QR code is printed for a real cafe.
 19. **[ ] Error tracking** — Sentry or GlitchTip (roadmap D).
 20. **[ ] Password reset link made by the Super Admin** (roadmap E1).
