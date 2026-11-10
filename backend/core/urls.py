@@ -14,7 +14,9 @@ urlpatterns = [
     path('api/v1/admin/', include('cafes.admin_urls')),
     path('api/v1/dashboard/', include('menu.urls')),
     path('api/v1/dashboard/', include('cafes.urls')),
+    path('api/v1/dashboard/analytics/', include('analytics.urls')),
     path('api/v1/menu/', include('menu.public_urls')),
+    path('api/v1/menu/', include('analytics.public_urls')),  # POST <slug>/views/ (UC-GUEST-004)
     path('api/v1/qr/', include('cafes.public_urls')),
 ]
 

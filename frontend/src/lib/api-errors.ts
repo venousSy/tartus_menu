@@ -13,7 +13,7 @@ export type ApiErrorKey =
   | "listChanged" | "wrongPassword" | "samePassword" | "passwordTooShort" | "passwordTooCommon"
   | "passwordNumeric" | "passwordTooSimilar" | "slugTaken" | "slugFormat" | "emailTaken" | "emailFormat"
   | "unknownPlan" | "alreadyActive" | "alreadyInactive" | "downgradeCategories" | "downgradeItems"
-  | "resetLinkInvalid" | "dateFormat" | "datePast" | "dateTooFar" | "dateNotLater" | "renewInactive";
+  | "analyticsNeedPro" | "resetLinkInvalid" | "dateFormat" | "datePast" | "dateTooFar" | "dateNotLater" | "renewInactive";
 
 /** A message to show: a known one by key, translated when the page renders, or Django's own text. */
 export type ApiMessage = { key: ApiErrorKey; values?: Record<string, string | number> } | { text: string };
@@ -32,6 +32,7 @@ const KNOWN: [RegExp, ApiErrorKey, string[]?][] = [
   [/^Item images require a Pro plan\.$/, "imagesNeedPro"],
   [/^Custom colors require a Pro plan\.$/, "colorsNeedPro"],
   [/^Custom logos require a Pro plan\.$/, "logosNeedPro"],
+  [/^Detailed analytics require a Pro plan\.$/, "analyticsNeedPro"],
   [/^Only JPEG, PNG, and WebP images are allowed\.$/, "imageType"],
   [/^Image must be under 2MB\.$/, "imageTooLarge"],
   [/^Image dimensions are too large\.$/, "imageDimensions"],
@@ -86,7 +87,7 @@ const CODES: Record<string, ApiErrorKey> = {
   image_dimensions: "imageDimensions", image_upload_failed: "imageUploadFailed", qr_first: "qrFirst",
   not_found: "notFound", already_active: "alreadyActive", already_inactive: "alreadyInactive",
   downgrade_categories: "downgradeCategories", downgrade_items: "downgradeItems",
-  reset_link_invalid: "resetLinkInvalid", renew_inactive: "renewInactive",
+  reset_link_invalid: "resetLinkInvalid", renew_inactive: "renewInactive", analytics_need_pro: "analyticsNeedPro",
 };
 
 function valuesOf(match: RegExpExecArray, names: string[]) {

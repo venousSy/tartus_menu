@@ -38,11 +38,14 @@
 - [UC-OWNER-012] List Categories
 - [UC-OWNER-013] List Menu Items
 - [UC-OWNER-014] View Cafe Settings
+- [UC-OWNER-015] Analytics Summary
+- [UC-OWNER-016] Detailed Analytics
 
 ### Customer (Guest)
 - [UC-GUEST-001] View Public Menu
 - [UC-GUEST-002] View Inactive Cafe Screen
 - [UC-GUEST-003] Open Menu from QR
+- [UC-GUEST-004] Record Menu Open
 
 
 ---
@@ -73,7 +76,7 @@ The User model also defines the role CAFE_STAFF. CAFE_STAFF is OUT OF SCOPE for 
 
 - Plan limits count only rows with deleted_at IS NULL. Hidden categories (is_visible = false) and unavailable items (is_available = false) DO count.
 - A NULL limit (max_categories or max_items) means unlimited.
-- Features are enforced by plan flags, never by plan name: allows_images (item images) and allows_branding (logo and primary color).
+- Features are enforced by plan flags, never by plan name: allows_images (item images), allows_branding (logo and primary color) and allows_detailed_analytics (menu opens per hour and per table, UC-OWNER-016).
 - Changing a slug is not a plan feature: only a Super Admin can change a cafe slug.
 
 **4. Public menu URL**
@@ -960,10 +963,60 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 
 **Main Flow:**
 1. Owner requests the settings.
-2. System returns { name: {ar, en}, slug, primary_color, logo_url, is_active, subscription_expires_on, days_left, plan: { name, max_categories, max_items, allows_images, allows_branding } }. The dashboard shows a warning on every page when days_left is 7 or less (Global Convention 5).
+2. System returns { name: {ar, en}, slug, primary_color, logo_url, is_active, subscription_expires_on, days_left, plan: { name, max_categories, max_items, allows_images, allows_branding, allows_detailed_analytics } }. The dashboard shows a warning on every page when days_left is 7 or less (Global Convention 5).
 
 **Alternate Flows:**
 - **A1 — Cafe inactive:** 200 OK with is_active: false (this is not an error).
+
+---
+
+### UC-OWNER-015 — Analytics Summary
+
+> **As a Cafe Owner, I want to see how many times my menu was opened each day so that I know how much my customers use it.**
+
+| Field | Value |
+|---|---|
+| **Actor** | Cafe Owner (any plan) |
+| **Trigger** | Owner opens the Analytics screen or picks another period |
+| **Preconditions** | Owner is authenticated; cafe is active (Global Convention 5) |
+| **Postconditions (Success)** | The menu opens of the owner's own cafe for the last N days are returned, one number per day |
+| **API** | GET /api/v1/dashboard/analytics/summary/?days=7 |
+| **Architectural Note** | Service Layer: analytics/services.py summary(cafe, days). The cafe comes from request.user.cafe. The numbers are the counters of UC-GUEST-004. A "day" is a calendar day in the business time zone (Asia/Damascus); the period is today and the N-1 days before it. A day without opens is returned with 0, so the chart has no gaps. The numbers are approximate: a reload counts again, and a script can send opens. |
+
+**Main Flow:**
+1. Owner requests the summary. days is 7, 30 or 90; without it, 7.
+2. System returns { "days": 7, "total": 153, "by_day": [ { "date": "2026-11-04", "count": 12 }, ... ] } — exactly N entries, oldest first.
+
+**Alternate Flows:**
+- **A1 — days is not 7, 30 or 90:** 400 Bad Request with DRF's field-level error on days.
+- **A2 — No opens yet:** every count is 0 and total is 0.
+- **A3 — Cafe inactive:** 403 Forbidden (Global Convention 5).
+- **A4 — Not a Cafe Owner:** 403 Forbidden.
+
+---
+
+### UC-OWNER-016 — Detailed Analytics
+
+> **As a Cafe Owner on a plan with detailed analytics, I want to see at which hours and from which tables my menu is opened so that I can plan staff and see which tables use the QR code.**
+
+| Field | Value |
+|---|---|
+| **Actor** | Cafe Owner (plan with allows_detailed_analytics, i.e. Pro) |
+| **Trigger** | Owner opens the Analytics screen |
+| **Preconditions** | Owner is authenticated; cafe is active; plan.allows_detailed_analytics = true |
+| **Postconditions (Success)** | The menu opens of the last N days are returned per hour of the day and per table |
+| **API** | GET /api/v1/dashboard/analytics/detail/?days=7 |
+| **Architectural Note** | Service Layer: analytics/services.py detail(cafe, days) checks the plan flag, never the plan name (Global Convention 3). Hours are hours of the day (0-23) in the business time zone, summed over the period. table_number 0 means "no table": the menu was opened without a table number, or with a number that is not an active table of the cafe. The frontend does not call this endpoint for a plan without the flag; it shows an upgrade note instead. |
+
+**Main Flow:**
+1. Owner requests the detail (days as in UC-OWNER-015).
+2. System returns { "days": 7, "total": 153, "by_hour": [ { "hour": 0, "count": 0 }, ... 24 entries ], "by_table": [ { "table_number": 3, "count": 40 }, { "table_number": 0, "count": 21 }, ... ] }. by_table holds only tables with at least one open, the most opened first.
+
+**Alternate Flows:**
+- **A1 — Plan without the flag:** 403 Forbidden — {"detail": "Detailed analytics require a Pro plan."} (X-Error-Code: analytics_need_pro).
+- **A2 — days is not 7, 30 or 90:** 400 Bad Request, as UC-OWNER-015 A1.
+- **A3 — No opens yet:** total 0, 24 hours with 0, by_table [].
+- **A4 — Cafe inactive / not a Cafe Owner:** 403 Forbidden, as UC-OWNER-015 A3 and A4. The subscription check comes before the plan check.
 
 
 ---
@@ -1045,6 +1098,33 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 
 ---
 
+### UC-GUEST-004 — Record Menu Open
+
+> **As the platform, I want to count each time a customer opens a menu so that the cafe owner can see how the menu is used (UC-OWNER-015, UC-OWNER-016), without knowing anything about the customer.**
+
+| Field | Value |
+|---|---|
+| **Actor** | Customer's browser (unauthenticated, automatic; the customer does nothing) |
+| **Trigger** | The menu page of an active cafe finishes loading in the browser |
+| **Preconditions** | None |
+| **Postconditions (Success)** | The counter of (cafe, current hour, table) is 1 higher |
+| **APIs** | POST /menu/[slug]/views (Next.js, passes the call on) · POST /api/v1/menu/{slug}/views/ (Django, public) |
+| **Architectural Note** | The menu page is cached by Next.js, so Django never sees a customer open it: the page itself reports the open, once per page load, with navigator.sendBeacon (fallback: fetch with keepalive). The browser calls the Next.js route, which passes the body to Django, as for every other call (system_design.md §3.6). Privacy: no cookie, no browser storage, no IP address and no user agent is stored — only a number per cafe, hour and table (table menu_view_counts). So the metric is "menu opens", not "visitors": a reload counts again. The hour is the start of the current hour in UTC. Service Layer: analytics/services.py record_view(slug, table) adds 1 with an atomic database update, so parallel opens are not lost. Rate limited by Nginx only (its own zone); no DRF throttle. The offline copy of a menu (service worker) sends nothing while the device is offline. |
+
+**Main Flow:**
+1. The menu page loads. The browser sends { "table": 3 } (the number of ?table=N), or { "table": null } without one.
+2. System finds the cafe by slug and adds 1 to the counter of (cafe, this hour, table 3).
+3. System returns 204 No Content.
+
+**Alternate Flows:**
+- **A1 — Unknown slug:** 404 Not Found.
+- **A2 — Cafe inactive:** 204 No Content, nothing is counted.
+- **A3 — table is a valid number but not an active table of this cafe:** the open is counted under table 0 ("no table").
+- **A4 — table is not an integer from 1 to 200 or null:** 400 Bad Request with a field-level error on table. A missing body counts as { "table": null }.
+- **A5 — Django cannot be reached:** the Next.js route answers 503; the browser ignores every answer, and the open is lost.
+
+---
+
 ## Appendix: Use Case Index
 
 | ID | Name | Actor | API Endpoint |
@@ -1080,6 +1160,9 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 | UC-OWNER-012 | List Categories | Cafe Owner | GET /api/v1/dashboard/categories/ |
 | UC-OWNER-013 | List Menu Items | Cafe Owner | GET /api/v1/dashboard/items/ |
 | UC-OWNER-014 | View Cafe Settings | Cafe Owner | GET /api/v1/dashboard/settings/ |
+| UC-OWNER-015 | Analytics Summary | Cafe Owner | GET /api/v1/dashboard/analytics/summary/ |
+| UC-OWNER-016 | Detailed Analytics | Cafe Owner (Pro) | GET /api/v1/dashboard/analytics/detail/ |
 | UC-GUEST-001 | View Public Menu | Customer | GET /api/v1/menu/{slug}/ |
 | UC-GUEST-002 | View Inactive Cafe Screen | Customer | GET /api/v1/menu/{slug}/ |
 | UC-GUEST-003 | Open Menu from QR | Customer | GET /api/v1/qr/{qr_token}/ (behind GET /t/[qr_token]) |
+| UC-GUEST-004 | Record Menu Open | Customer's browser | POST /api/v1/menu/{slug}/views/ (behind POST /menu/[slug]/views) |

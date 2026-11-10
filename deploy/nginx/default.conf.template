@@ -12,6 +12,11 @@ limit_req_status 429;
 # cafe scan its QR codes at once, the steady rate stops one address from flooding Django with unknown slugs.
 limit_req_zone $binary_remote_addr zone=menu:10m rate=2r/s;
 
+# The menu open counter (UC-GUEST-004): every call is one database write, and anyone may call it.
+# One open per second per address on average; the burst lets a full cafe behind one Wi-Fi address open
+# its menus at once. A script cannot inflate a cafe's numbers faster than that.
+limit_req_zone $binary_remote_addr zone=views:10m rate=1r/s;
+
 # Do not tell the internet which Nginx version runs here.
 server_tokens off;
 
@@ -85,6 +90,13 @@ server {
         proxy_pass $backend;
     }
 
+    # The menu open counter, called directly (UC-GUEST-004). A regex location wins over the prefix
+    # location /api/v1/menu/ above, so these calls use the "views" budget, not the menu's.
+    location ~ ^/api/v1/menu/[^/]+/views/$ {
+        limit_req zone=views burst=50 nodelay;
+        proxy_pass $backend;
+    }
+
     # The QR link lookup (UC-GUEST-003) is public too; Next.js calls it on the Docker network.
     location /api/v1/qr/ {
         limit_req zone=menu burst=100 nodelay;
@@ -136,6 +148,14 @@ server {
     # menu. Same budget as the menu, since a full cafe may scan at once. The route sets X-Robots-Tag itself.
     location /t/ {
         limit_req zone=menu burst=100 nodelay;
+        proxy_pass $frontend;
+    }
+
+    # The same counter as the menu page calls it: Next.js passes the call to Django (UC-GUEST-004).
+    location ~ ^/menu/[^/]+/views$ {
+        limit_req zone=views burst=50 nodelay;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        add_header Strict-Transport-Security "max-age=31536000" always;
         proxy_pass $frontend;
     }
 

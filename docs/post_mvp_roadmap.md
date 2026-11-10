@@ -139,7 +139,18 @@
 - **Risks:** cron down → cafes stay active (C's heartbeat detects it); NULL date never expires
   (admin list shows "no end date").
 
-## Phase 3 — B. Analytics — size L
+## Phase 3 — B. Analytics — size L — done 2026-11-10 (PR #76)
+
+- **Built differently from the design below:** the browser does not call Django directly. The menu page posts to
+  a Next.js route, `POST /menu/<slug>/views`, which passes the body to Django's public
+  `POST /api/v1/menu/<slug>/views/`. Reasons (the same as for item A): it works in local development, where
+  Next.js and Django are on different ports; the browser keeps talking only to Next.js, so the BFF rule of
+  system_design §3.6 needs no exception; and the route passes on nothing about the visitor. Nginx has the zone
+  `views` on both paths.
+- Other details decided while building: a missing body counts as "no table"; `?days=` without a value is the
+  default week; `create_plans --sync-flags` sets all feature flags to their standard values (limits untouched) and
+  must be run once on an existing database; `prune_menu_views` runs at 03:00 UTC; the owner's home page names the
+  plan's analytics level; the page skips the report while the browser is offline.
 
 - **Beacon:** `POST /api/v1/menu/{slug}/views/` body `{"table": N|null}` → 204. The browser calls Django
   directly (public, no token; write this exception to the BFF rule into system_design §3.4).

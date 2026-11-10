@@ -10,3 +10,6 @@
 # Deactivate the cafes whose paid time is over (UC-ADMIN-012). 21:10 UTC is 00:10 in Damascus (UTC+3 all
 # year), ten minutes after the last paid day ended there.
 10 21 * * * python manage.py expire_subscriptions
+
+# Delete menu open counters older than 400 days (analytics, UC-GUEST-004).
+0 3 * * * python manage.py prune_menu_views

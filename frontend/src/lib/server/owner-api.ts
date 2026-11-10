@@ -23,7 +23,23 @@ export type CafeSettings = {
     max_items: number | null;
     allows_images: boolean;
     allows_branding: boolean;
+    allows_detailed_analytics: boolean; // menu opens per hour and per table (UC-OWNER-016)
   };
+};
+
+/** The periods the analytics endpoints accept, in days (UC-OWNER-015). */
+export const ANALYTICS_PERIODS = [7, 30, 90] as const;
+export type AnalyticsPeriod = (typeof ANALYTICS_PERIODS)[number];
+
+/** GET /api/v1/dashboard/analytics/summary/ (UC-OWNER-015): menu opens per day, oldest first, empty days as 0. */
+export type AnalyticsSummary = { days: number; total: number; by_day: { date: string; count: number }[] };
+
+/** GET /api/v1/dashboard/analytics/detail/ (UC-OWNER-016): 24 hours of the day, and the tables with opens (0 = no table). */
+export type AnalyticsDetail = {
+  days: number;
+  total: number;
+  by_hour: { hour: number; count: number }[];
+  by_table: { table_number: number; count: number }[];
 };
 
 /** A category of GET /api/v1/dashboard/categories/ (UC-OWNER-012), hidden ones included. */
@@ -85,6 +101,19 @@ export function getItems(): Promise<MenuItem[]> {
 /** The cafe's active tables with their QR codes (UC-OWNER-011). Read-only; 403 when inactive. */
 export function getQrCodes(): Promise<QrCodes> {
   return apiGet<QrCodes>("/dashboard/qr/preview/");
+}
+
+/** The cafe's menu opens per day for the last `days` days (UC-OWNER-015). Every plan; 403 when inactive. */
+export function getAnalyticsSummary(days: AnalyticsPeriod): Promise<AnalyticsSummary> {
+  return apiGet<AnalyticsSummary>(`/dashboard/analytics/summary/?days=${days}`);
+}
+
+/**
+ * The opens per hour of the day and per table (UC-OWNER-016). Django answers 403 for a plan without
+ * allows_detailed_analytics, so a page calls this only when the settings show the flag.
+ */
+export function getAnalyticsDetail(days: AnalyticsPeriod): Promise<AnalyticsDetail> {
+  return apiGet<AnalyticsDetail>(`/dashboard/analytics/detail/?days=${days}`);
 }
 
 /**
