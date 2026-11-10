@@ -53,7 +53,7 @@ When in doubt, do less: finish what the step needs, list the remaining work unde
 
 ## 4. Architecture Rules (Modular Monolith + Service Layer)
 
-Each Django app (`users`, `cafes`, `menu`) follows this layering. Dependencies point downward only.
+Each Django app (`users`, `cafes`, `menu`, and `analytics` once it exists) follows this layering. Dependencies point downward only.
 
 | Layer | File | Responsibility |
 |---|---|---|
@@ -86,7 +86,7 @@ Details live in the docs; these are the rules agents most often break.
 - Authorization for admin endpoints uses `role == SYSTEM_ADMIN`, not `is_staff`.
 - API prefix is `/api/v1/`. Errors use DRF format `{"detail": "..."}`. Currency is SYP, hardcoded; there is no currency field.
 - No secrets in code. Read configuration from environment variables. When a new environment variable is introduced, update `.env.example` in the same turn (Section 3).
-- Out of MVP scope — do not build or hint at: `CAFE_STAFF` features, analytics, Redis, table sessions or ordering.
+- Out of scope — do not build or hint at: `CAFE_STAFF` features, Redis, table sessions or ordering. Analytics is planned in `docs/post_mvp_roadmap.md` (Phase 3) and is built only after its docs turns.
 
 ## 6. Response Format
 
