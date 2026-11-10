@@ -19,7 +19,7 @@
 | Tables | Persisted `CafeTable` per physical table (unique `table_number` per cafe + `qr_token`); table count is derived from active rows, no `table_count` column |
 | Slug changes | Super Admin only |
 | Billing | Manual activation by Super Admin |
-| Analytics | Deferred — not in MVP |
+| Analytics | Menu opens counted per cafe, hour and table (app `analytics`); no cookies and no personal data; every plan sees opens per day, a plan with `allows_detailed_analytics` (Pro) also per hour and per table |
 | Reverse Proxy | Nginx + Let's Encrypt |
 | Deployment | Docker Compose on VPS |
 | CI/CD | GitHub Actions → SSH → restart containers |
@@ -61,7 +61,8 @@ subscription_plans
 ├── max_categories   INT           -- NULL = unlimited
 ├── max_items        INT           -- NULL = unlimited
 ├── allows_images    BOOLEAN       -- item images
-└── allows_branding  BOOLEAN       -- logo + primary color
+├── allows_branding  BOOLEAN       -- logo + primary color
+└── allows_detailed_analytics  BOOLEAN  -- menu opens per hour and per table (default false)
 ```
 
 ```
@@ -140,6 +141,18 @@ billing_events
 └── created_at  TIMESTAMPTZ  DEFAULT now()
 ```
 
+```
+menu_view_counts                 -- app "analytics" (use_cases.md UC-GUEST-004)
+├── id            PK
+├── cafe_id       FK → cafes.id  (CASCADE DELETE)
+├── hour          TIMESTAMPTZ    -- start of the hour, UTC
+├── table_number  SMALLINT       -- 1..200, or 0 = no table; CHECK 0..200
+├── count         INT            -- menu opens in that hour from that table
+└── UNIQUE (cafe_id, hour, table_number)
+```
+
+> One row per cafe, hour and table: a counter, not a log of visits. A menu open runs `UPDATE ... SET count = count + 1` on its row (created on the first open of the hour). Nothing about the visitor is stored. Rows older than 400 days are deleted every night.
+
 ### 2.3 Delete & Isolation Policies
 
 | Table | Delete Policy | Isolation |
@@ -149,6 +162,7 @@ billing_events
 | `categories` | **Soft delete** (`deleted_at`) | `cafe_id` |
 | `menu_items` | **Soft delete** (`deleted_at`) | `cafe_id` |
 | `billing_events` | Hard delete (audit log, not user-facing) | `cafe_id` |
+| `menu_view_counts` | Hard delete: with the cafe (CASCADE), and by age (400 days) | `cafe_id` |
 
 ---
 
@@ -299,6 +313,26 @@ The cafe object of the admin API carries `subscription_expires_on` (`"2027-02-10
 | PATCH | `/api/v1/dashboard/settings/` | Update name, primary_color (slug is Super Admin only) |
 | POST | `/api/v1/dashboard/settings/logo/` | Upload logo → R2 |
 
+#### Analytics
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/v1/dashboard/analytics/summary/?days=7` | Menu opens per day (UC-OWNER-015); every plan |
+| GET | `/api/v1/dashboard/analytics/detail/?days=7` | Menu opens per hour of the day and per table (UC-OWNER-016); needs `allows_detailed_analytics`, else 403 `analytics_need_pro` |
+
+`days` is 7 (default), 30 or 90. Days and hours are in the business time zone. Missing days and hours are returned with `0`.
+
+```json
+{ "days": 7, "total": 153, "by_day": [ { "date": "2026-11-04", "count": 12 } ] }
+```
+```json
+{
+  "days": 7, "total": 153,
+  "by_hour": [ { "hour": 0, "count": 0 }, { "hour": 1, "count": 2 } ],
+  "by_table": [ { "table_number": 3, "count": 40 }, { "table_number": 0, "count": 21 } ]
+}
+```
+
 ---
 
 ### 3.4 Public — Customer Menu (No Auth)
@@ -352,6 +386,14 @@ The cafe object of the admin API carries `subscription_expires_on` (`"2027-02-10
 |---|---|---|
 | GET | `/api/v1/qr/{qr_token}/` | Where a printed code leads now: `200 {"slug": "tartus-coffee", "table_number": 3}`; `table_number` is `null` for an inactive table; `404 {"detail": "Not found."}` for an unknown token (a malformed one matches no route) |
 
+**Menu open counter (use_cases.md UC-GUEST-004):**
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/v1/menu/{slug}/views/` | Body `{"table": 3}` or `{"table": null}` (also no body). Adds 1 to the counter of (cafe, current hour, table) and answers `204`. Unknown slug: `404`. Inactive cafe: `204`, not counted. A number that is not an active table of the cafe is counted as table `0`. `table` outside 1..200: `400` |
+
+> The menu page sends it once per page load to the Next.js route `POST /menu/{slug}/views` (`navigator.sendBeacon`), which passes it to Django. No authentication, no cookie, nothing stored about the visitor. Nginx rate-limits both paths with their own zone (`views`).
+
 > Next.js serves `GET /t/{qr_token}`: it calls this endpoint (no cache) and answers `302` with a relative `Location: /menu/<slug>?table=N`, `Cache-Control: no-store`. A 404 or a token that is not a UUID redirects to `/qr-invalid`; an unreachable Django gives `503` with `Retry-After: 60`. No authentication; Nginx rate-limits `/t/` and `/api/v1/qr/` with the menu zone.
 
 ---
@@ -393,6 +435,7 @@ Frontend paths. None of them starts with `/api/`, because Nginx sends `/api/` to
 | Path | Who | What |
 |---|---|---|
 | `/menu/{slug}` | Customer | The public menu (§3.4), cached; `?table=N` is read in the browser only |
+| `/menu/{slug}/views` | Customer's browser | POST only: reports one menu open (§3.4, UC-GUEST-004) |
 | `/t/{qr_token}` | Customer | The short link in a table's QR code; redirects to the menu (§3.4, UC-GUEST-003) |
 | `/qr-invalid` | Customer | "This QR code is not valid", for a code that belongs to no table |
 | `/` | Anyone | Redirects to `/login` |
@@ -501,6 +544,7 @@ All services run inside Docker Compose on a single VPS.
 - Every proxied location sets `X-Forwarded-For $proxy_add_x_forwarded_for` and `X-Forwarded-Proto`.
 - `limit_req` (per client IP) on `/api/v1/auth/login/`, the BFF login route `/bff/auth/login` (§3.6), the password reset pair `/api/v1/auth/password-reset/confirm/` and `/bff/auth/password-reset` (same zone as the login) and the Django admin login page.
 - A separate, generous `limit_req` zone (per client IP) on the `/menu/` pages (§3.4 public menu note), the QR short links `/t/` and the public APIs `/api/v1/menu/` and `/api/v1/qr/`. Many customers of one cafe may share one IP behind its Wi-Fi.
+- Its own `limit_req` zone `views` (1 request per second per client IP, burst 50) on the menu open counter: `/menu/{slug}/views` and `/api/v1/menu/{slug}/views/` (UC-GUEST-004). A full cafe behind one Wi-Fi address still fits; a script cannot write faster than that.
 - `client_max_body_size 3m` (the API limits uploads to 2 MB; larger bodies are rejected before Django).
 - `add_header X-Robots-Tag "noindex, nofollow"` on `/menu/`.
 - HTTP → HTTPS redirect and HSTS.
@@ -514,6 +558,7 @@ All services run inside Docker Compose on a single VPS.
 | `pg_dump` → `age` → Cloudflare R2 | Daily | Database backup, encrypted for an offline key (30-day retention) |
 | `python manage.py flushexpiredtokens` | Daily | Removes expired rows from the JWT outstanding/blacklist tables, which grow with every login and refresh |
 | `python manage.py expire_subscriptions` | Daily, 21:10 UTC (00:10 in Damascus) | Deactivates the cafes whose paid time is over (UC-ADMIN-012) |
+| `python manage.py prune_menu_views` | Daily | Deletes menu open counters older than 400 days |
 
 ### Error Tracking
 
@@ -563,10 +608,12 @@ git push → main branch
 | Custom logo | ❌ | governed by allows_branding |
 | Custom primary color | ❌ | governed by allows_branding |
 | QR Code PDF export | ✅ | ✅ |
+| Analytics: menu opens per day | ✅ | ✅ |
+| Analytics: per hour and per table | ❌ | governed by allows_detailed_analytics |
 | Change cafe slug | Super Admin only | Super Admin only |
 
 Enforcement is done in the **Service Layer** (`services.py`) before any create/update operation. The API returns `403 Forbidden` with a message like `{"detail": "Your plan does not support item images. Upgrade to Pro."}` when a limit is exceeded.
-Enforcement uses the plan flags (`allows_images`, `allows_branding`, `max_categories`, `max_items`), never the plan name. Limits count only rows with `deleted_at IS NULL`.
+Enforcement uses the plan flags (`allows_images`, `allows_branding`, `allows_detailed_analytics`, `max_categories`, `max_items`), never the plan name. A flag added after the plans were created is set on the existing rows with `python manage.py create_plans --sync-flags`. Limits count only rows with `deleted_at IS NULL`.
 After a downgrade, stored item images, logo and primary color are kept but hidden from customers until the plan allows them again (use_cases.md Global Convention 7). They never block a downgrade; only `max_categories` and `max_items` do (UC-ADMIN-006 A2).
 
 ---
@@ -584,6 +631,8 @@ After a downgrade, stored item images, logo and primary color are kept but hidde
 | SQL injection | Django ORM parameterized queries |
 | Login brute force | Nginx `limit_req` + DRF `ScopedRateThrottle` (`login`, 5/min per client IP, `DatabaseCache`, `NUM_PROXIES`) |
 | Password reset link theft or reuse | Only a Super Admin can make a link (UC-ADMIN-010); the secret part sits after `#`, so it reaches no server log and no `Referer` header; valid 24 hours (`PASSWORD_RESET_TIMEOUT`); one-time, because the token is signed over the password hash; one answer for every invalid link; throttle `password_reset` (5/min per client IP) + Nginx `limit_req`; a reset blacklists every refresh token |
+| Customer privacy in analytics | Only counters per cafe, hour and table are stored: no IP address, user agent, cookie or browser storage (UC-GUEST-004); the numbers are shown as approximate |
+| Inflated analytics numbers | The counter endpoint is public by design; Nginx limits it to 1 request per second per client IP (zone `views`), and the dashboard labels the numbers as approximate |
 | Race conditions on limits and ordering | Cafe row lock (`select_for_update`) inside the service transaction (use_cases.md Global Convention 8) |
 | Mass assignment | Serializers list writable fields explicitly; `cafe`, `sort_order`, `deleted_at`, `is_active`, `image_url` and `logo_url` are never writable through general update endpoints |
 | Django admin discovery | Admin site served at a non-obvious path (`DJANGO_ADMIN_PATH`), rate limited by Nginx |

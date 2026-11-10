@@ -64,7 +64,32 @@ function subscribeOnline(listener: () => void) {
 
 const readOffline = () => !navigator.onLine;
 
-export function MenuView({ menu, messages, manifestHref }: {
+// The menus whose open this page load has already reported (UC-GUEST-004). Outside the component,
+// so a second run of the effect (React's development double run, a re-mount) does not count twice.
+const reportedOpens = new Set<string>();
+
+/**
+ * Tells the server that this menu was opened, once per page load. The page is cached, so the
+ * server cannot count it otherwise. Only the table number is sent: no cookie or storage is used,
+ * so a reload counts again ("menu opens", not "visitors").
+ */
+function reportOpen(slug: string) {
+  if (reportedOpens.has(slug) || !navigator.onLine) return; // offline: the kept copy is shown, nothing can be sent
+  reportedOpens.add(slug);
+  const table = Number(readTable());
+  const body = JSON.stringify({ table: table >= 1 && table <= 200 ? table : null });
+  const url = `/menu/${encodeURIComponent(slug)}/views`;
+  try {
+    // sendBeacon queues the request even while the page is being left; the answer is never read.
+    if (navigator.sendBeacon?.(url, new Blob([body], { type: "application/json" }))) return;
+  } catch {
+    // An old browser without sendBeacon or Blob: the fetch below does the same.
+  }
+  fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
+}
+
+export function MenuView({ slug, menu, messages, manifestHref }: {
+  slug: string;
   menu: PublicMenu;
   messages: MenuMessages;
   manifestHref: string;
@@ -80,6 +105,8 @@ export function MenuView({ menu, messages, manifestHref }: {
     document.documentElement.lang = lang;
     document.documentElement.dir = dirOf(lang);
   }, [lang]);
+
+  useEffect(() => reportOpen(slug), [slug]);
 
   // The cafe's web manifest, for "Add to Home Screen". Browsers look for it among the children of
   // <head>, but the metadata of this streamed page lands in <body>, so the link is added here.

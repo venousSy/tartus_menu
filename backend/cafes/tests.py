@@ -84,7 +84,7 @@ class CafeAPITestCase(APITestCase):
             'name': {'ar': 'Tartus Coffee', 'en': ''}, 'slug': 'tartus-coffee', 'primary_color': '#C0392B',
             'logo_url': '', 'is_active': True, 'subscription_expires_on': None, 'days_left': None,
             'plan': {'name': 'basic', 'max_categories': 5, 'max_items': 50, 'allows_images': False,
-                     'allows_branding': False},
+                     'allows_branding': False, 'allows_detailed_analytics': False},
         }
         return {**data, **changes}
 
@@ -1121,7 +1121,7 @@ class SubscriptionExpiryTests(AdminAPITestCase):
 class CreatePlansCommandTests(TestCase):
     """python manage.py create_plans on a database without plans (deploy/README.md §6)."""
 
-    FIELDS = ('max_categories', 'max_items', 'allows_images', 'allows_branding')
+    FIELDS = ('max_categories', 'max_items', 'allows_images', 'allows_branding', 'allows_detailed_analytics')
 
     def run_command(self, *args):
         out = StringIO()
@@ -1136,9 +1136,11 @@ class CreatePlansCommandTests(TestCase):
 
         self.assertEqual(self.plan_values('basic'), {
             'max_categories': 5, 'max_items': 20, 'allows_images': False, 'allows_branding': False,
+            'allows_detailed_analytics': False,
         })
         self.assertEqual(self.plan_values('pro'), {
             'max_categories': None, 'max_items': None, 'allows_images': True, 'allows_branding': True,
+            'allows_detailed_analytics': True,
         })
         self.assertEqual(output, 'Basic: created.\nPro: created.\n')
 
@@ -1157,6 +1159,21 @@ class CreatePlansCommandTests(TestCase):
         self.assertEqual(SubscriptionPlan.objects.count(), 2)
         self.assertEqual(self.plan_values('basic')['max_categories'], 8)
         self.assertEqual(output, 'Basic: already exists, left unchanged.\nPro: already exists, left unchanged.\n')
+
+    def test_sync_flags_sets_a_new_flag_on_existing_plans_and_keeps_their_limits(self):
+        # The plans as they were before allows_detailed_analytics existed: the new column is False everywhere.
+        self.run_command()
+        SubscriptionPlan.objects.update(allows_detailed_analytics=False)
+        SubscriptionPlan.objects.filter(name='basic').update(max_categories=8, allows_images=True)  # tuned by hand
+
+        output = self.run_command('--sync-flags')
+        again = self.run_command('--sync-flags')
+
+        self.assertEqual(output, 'Basic: flags updated (allows_images).\nPro: flags updated (allows_detailed_analytics).\n')
+        self.assertEqual(again, 'Basic: flags already up to date.\nPro: flags already up to date.\n')
+        self.assertTrue(self.plan_values('pro')['allows_detailed_analytics'])
+        basic = self.plan_values('basic')
+        self.assertEqual((basic['max_categories'], basic['allows_images']), (8, False))  # the limit stays
 
     def test_limit_below_one_is_refused(self):
         for value in ('0', '-2', 'five'):

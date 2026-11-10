@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     'users',
     'cafes',
     'menu',
+    'analytics',
 ]
 
 MIDDLEWARE = [

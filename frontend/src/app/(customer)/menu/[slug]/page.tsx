@@ -41,6 +41,7 @@ async function Menu({ params }: Pick<Props, "params">) {
   // Only the "Menu" texts go to the browser, as props, not the whole message files.
   return (
     <MenuView
+      slug={slug}
       menu={menu}
       messages={{ ar: ar.Menu, en: en.Menu }}
       manifestHref={`/menu/${encodeURIComponent(slug)}/manifest.webmanifest`}

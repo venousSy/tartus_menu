@@ -24,8 +24,21 @@ const SECRET = "test-revalidate-secret";
 // What the fake Django answers for GET /menu/<slug>/ (system_design.md §3.4); a missing slug is a 404.
 const menus = new Map<string, object>();
 const calls: string[] = [];
+// The menu opens the fake Django counted (UC-GUEST-004): the slug, the body, and what the request carried.
+const opens: { slug: string; body: unknown; headers: Record<string, unknown> }[] = [];
 const fakeDjango: FakeDjango = async (req, path, body, answer) => {
   calls.push(path);
+  const counter = req.method === "POST" && /^\/menu\/([^/]+)\/views\/$/.exec(path);
+  if (counter) {
+    // record_view: 404 for an unknown cafe, 400 for a table outside 1..200, else 204.
+    if (!menus.has(counter[1])) return answer(404, { detail: "Not found." });
+    const table = (body as { table?: unknown }).table ?? null;
+    if (table !== null && !(Number.isInteger(table) && (table as number) >= 1 && (table as number) <= 200)) {
+      return answer(400, { table: ["A valid integer is required."] });
+    }
+    opens.push({ slug: counter[1], body, headers: req.headers });
+    return answer(204);
+  }
   // As slow as a real API call. A page reads the menu twice (title and body): with an instant
   // answer, a refresh started by the first read could finish before the second and hide a stale copy.
   await sleep(100);
@@ -228,6 +241,51 @@ test("every answer carries the security headers: no framing, no sniffing, same-o
     assert.equal(res.headers.get("x-content-type-options"), "nosniff", path);
     assert.equal(res.headers.get("referrer-policy"), "same-origin", path);
   }
+});
+
+/** Reports a menu open like the menu page does (UC-GUEST-004): POST /menu/<slug>/views with a JSON body. */
+function reportOpen(slug: string, body?: unknown, headers: Record<string, string> = {}) {
+  return fetch(`${SITE}/menu/${slug}/views`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+test("a menu open goes to Django's counter with the table number, and with nothing about the visitor", async () => {
+  menus.set("count-cafe", menuWith("Latte"));
+  opens.length = 0;
+  const visitor = { Cookie: "lang=ar; access=secret", "X-Forwarded-For": "203.0.113.7", "User-Agent": "Mozilla/5.0 (test phone)", Authorization: "Bearer secret" };
+  const res = await reportOpen("count-cafe", { table: 3 }, visitor);
+  assert.deepEqual([res.status, await res.text(), res.headers.get("cache-control")], [204, "", "no-store"]);
+  assert.equal((await reportOpen("count-cafe", { table: null })).status, 204);
+  assert.equal((await reportOpen("count-cafe")).status, 204, "no body counts as no table");
+  assert.deepEqual(opens.map((open) => [open.slug, open.body]), [["count-cafe", { table: 3 }], ["count-cafe", { table: null }], ["count-cafe", {}]]);
+  const sent = opens[0].headers;
+  assert.deepEqual([sent.cookie, sent["x-forwarded-for"], sent.authorization], [undefined, undefined, undefined]);
+  assert.notEqual(sent["user-agent"], visitor["User-Agent"]);
+});
+
+test("the counter's refusals: an unknown cafe, a bad table, a bad slug without asking Django, GET, Django down", async () => {
+  menus.set("count-refusals", menuWith("Latte"));
+  opens.length = 0;
+  assert.equal((await reportOpen("no-such-cafe-count", { table: 1 })).status, 404);
+  assert.equal((await reportOpen("count-refusals", { table: 201 })).status, 400);
+  calls.length = 0;
+  assert.equal((await reportOpen("bad%20slug", { table: 1 })).status, 404);
+  assert.deepEqual(calls, [], "a slug Django cannot have is not passed on");
+  assert.equal((await fetch(`${SITE}/menu/count-refusals/views`)).status, 405, "POST only");
+  assert.deepEqual(opens, []);
+});
+
+test("the menu page carries its slug, so the browser can report the open; an inactive cafe's page reports nothing", async () => {
+  menus.set("count-page", menuWith("Latte"));
+  menus.set("count-closed", menuWith("Latte", { is_active: false }));
+  opens.length = 0;
+  // MenuView gets the slug as a prop and posts to /menu/<slug>/views in the browser.
+  assert.match(await page("count-page"), /\\"slug\\":\\"count-page\\"|"slug":"count-page"/);
+  assert.equal(/\\"slug\\":\\"count-closed\\"|"slug":"count-closed"/.test(await page("count-closed")), false);
+  assert.deepEqual(opens, [], "rendering a page on the server counts nothing");
 });
 
 test("the bare domain sends the visitor to the login page", async () => {

@@ -25,6 +25,8 @@ export default async function DashboardHomePage() {
         <Row label={t("items")} value={limit(plan.max_items)} />
         <Row label={t("itemImages")} value={yesNo(plan.allows_images)} />
         <Row label={t("branding")} value={yesNo(plan.allows_branding)} />
+        {/* The seventh row: wide, so two columns leave no empty cell. */}
+        <Row label={t("analytics")} value={plan.allows_detailed_analytics ? t("analyticsDetailed") : t("analyticsSummary")} wide />
       </dl>
       {/* A new tab keeps the dashboard open. A plain <a>: the menu has its own root layout. */}
       <a href={`/menu/${encodeURIComponent(settings.slug)}`} target="_blank" rel="noopener"
@@ -36,9 +38,9 @@ export default async function DashboardHomePage() {
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
   return (
-    <div className="flex flex-col gap-1 bg-white px-4 py-3">
+    <div className={`flex flex-col gap-1 bg-white px-4 py-3 ${wide ? "sm:col-span-2" : ""}`}>
       <dt className="text-sm text-stone-600">{label}</dt>
       <dd className="font-semibold">{value}</dd>
     </div>

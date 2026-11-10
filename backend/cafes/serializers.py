@@ -27,6 +27,7 @@ class PlanSerializer(serializers.Serializer):
     max_items = serializers.IntegerField(allow_null=True)
     allows_images = serializers.BooleanField()
     allows_branding = serializers.BooleanField()
+    allows_detailed_analytics = serializers.BooleanField()
 
 
 class CafeSettingsSerializer(serializers.Serializer):
@@ -35,7 +36,7 @@ class CafeSettingsSerializer(serializers.Serializer):
 
     Input (PATCH): name and primary_color. Output: { name, slug, primary_color, logo_url, is_active,
     subscription_expires_on, days_left, plan: { name, max_categories, max_items, allows_images,
-    allows_branding } }.
+    allows_branding, allows_detailed_analytics } }.
     slug (Super Admin only), logo_url (UC-OWNER-010), is_active, the subscription fields and plan are read-only.
     Stored values are returned even when the plan hides them from customers (Global Convention 7).
     """

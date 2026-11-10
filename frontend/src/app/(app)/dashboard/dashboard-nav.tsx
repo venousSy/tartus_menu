@@ -9,6 +9,7 @@ const SCREENS = [
   { href: "/dashboard/categories", label: "categories" },
   { href: "/dashboard/items", label: "items" },
   { href: "/dashboard/qr", label: "qr" },
+  { href: "/dashboard/analytics", label: "analytics" },
   { href: "/dashboard/settings", label: "settings" },
 ] as const;
 

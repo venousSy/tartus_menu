@@ -31,7 +31,7 @@ All architectural decisions have been locked in. Below is a summary of every dec
 | Plan enforcement | Enforced in Service Layer (`services.py`) — uses capability flags (`allows_images`, `allows_branding`), returns `403` on violation; after a downgrade, stored images/logo/color are kept and hidden from customers |
 | Billing activation | Manual by Super Admin via admin dashboard |
 | Inactive cafe behavior | Customer sees "Temporarily Unavailable" page; owner dashboard answers 403 everywhere except GET settings |
-| Analytics | Not in the MVP. Planned post-MVP (post_mvp_roadmap.md Phase 3): menu opens per day/hour and per table, no cookies or personal data; Basic sees a summary, Pro the detail (plan flag `allows_detailed_analytics`) |
+| Analytics | Post-MVP (post_mvp_roadmap.md Phase 3, built): menu opens per day/hour and per table, counted by a beacon from the menu page; no cookies or personal data; Basic sees a summary, Pro the detail (plan flag `allows_detailed_analytics`) |
 | Business time zone | `Asia/Damascus` for analytics days/hours and subscription dates; the database and Django `TIME_ZONE` stay UTC |
 | Monitoring (post-MVP) | Health URL `/health` + an external uptime check; error tracking with Sentry or GlitchTip (`sentry-sdk`, `@sentry/nextjs`; active only when a DSN is set) |
 | Password recovery (post-MVP) | A one-time reset link made by the Super Admin (valid 24 hours, sent by hand); self-service email later |
@@ -105,7 +105,7 @@ Post-MVP steps (details in [post_mvp_roadmap.md](post_mvp_roadmap.md); each star
 19. **[x] Error tracking** — Sentry or GlitchTip (roadmap D); system_design.md §5 "Error Tracking".
 20. **[x] Password reset link made by the Super Admin** (roadmap E1) — use_cases.md UC-ADMIN-010, UC-AUTH-005.
 21. **[x] Subscription expiry and warnings** (roadmap F) — use_cases.md Global Convention 5, UC-ADMIN-011, UC-ADMIN-012.
-22. **[ ] Analytics** (roadmap B).
+22. **[x] Analytics** (roadmap B) — use_cases.md UC-GUEST-004, UC-OWNER-015, UC-OWNER-016.
 23. **[ ] Item tags** (roadmap G).
 24. **[ ] Item variants (sizes with prices)** (roadmap H).
 25. **[ ] Password reset by email** (roadmap E2).

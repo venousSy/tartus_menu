@@ -78,6 +78,13 @@ docker compose exec backend python manage.py create_plans
 Choose other Basic limits with `--basic-max-categories N` and `--basic-max-items N`. The command is safe
 to run again: a plan that already exists is left unchanged.
 
+After an update that adds a plan feature (for example detailed analytics), the new flag is off on every
+existing plan, Pro included. Switch the feature flags to their standard values once; the limits stay as they are:
+
+```bash
+docker compose exec backend python manage.py create_plans --sync-flags
+```
+
 ## 7. Create the Super Admin
 
 ```bash
@@ -201,9 +208,10 @@ The next merge into `main` deploys. Set `DEPLOY_ENABLED` to anything else to sto
 
 ## 12. Database backups
 
-The `backup` service runs three jobs every night (`backend/crontab`, times in UTC):
+The `backup` service runs four jobs every night (`backend/crontab`, times in UTC):
 02:00 `backup_database` (pg_dump, gzip, encrypt with `age`, upload as `backups/YYYY-MM-DD.sql.gz.age`),
-02:30 `flushexpiredtokens` (removes expired login tokens) and
+02:30 `flushexpiredtokens` (removes expired login tokens),
+03:00 `prune_menu_views` (deletes analytics counters older than 400 days) and
 21:10 `expire_subscriptions` (00:10 in Damascus: deactivates the cafes whose last paid day has passed; to run it
 by hand: `docker compose exec backup python manage.py expire_subscriptions`). If this job stops, no cafe is
 deactivated; the admin pages then show such cafes as "Overdue".

@@ -57,6 +57,12 @@ export function formatDate(isoDate: string, lang: Lang): string {
     .format(new Date(`${isoDate}T00:00:00Z`));
 }
 
+/** A calendar day from the API as a short chart label: the day and the month ("4 Nov"), Western digits. */
+export function formatDayLabel(isoDate: string, lang: Lang): string {
+  return new Intl.DateTimeFormat(`${lang}-u-nu-latn`, { day: "numeric", month: "short", timeZone: "UTC" })
+    .format(new Date(`${isoDate}T00:00:00Z`));
+}
+
 /** Today's date where the cafes are, as "YYYY-MM-DD" (the "en-CA" locale writes dates that way). */
 export function businessToday(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE }).format(new Date());

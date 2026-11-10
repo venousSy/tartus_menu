@@ -20,6 +20,8 @@ class SubscriptionPlan(models.Model):
     max_items = models.PositiveIntegerField(null=True, blank=True)
     allows_images = models.BooleanField(default=False)
     allows_branding = models.BooleanField(default=False)
+    # Menu opens per hour and per table (UC-OWNER-016); every plan sees the opens per day.
+    allows_detailed_analytics = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'subscription_plans'
