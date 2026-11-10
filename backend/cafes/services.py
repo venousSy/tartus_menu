@@ -16,6 +16,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 from core.images import LOGO_MAX_SIDE, process_image
 from core.media_storage import delete_folder_on_commit, delete_image_on_commit, store_image
 from core.revalidation import schedule_menu_revalidation
+from users import services as user_services
 
 from .models import BillingEvent, Cafe, CafeTable, SubscriptionPlan
 from .qr import qr_codes_pdf, qr_png_data_url, short_url
@@ -314,6 +315,14 @@ def _lock_cafe(cafe_id):
         return Cafe.objects.select_for_update().get(pk=cafe_id)
     except Cafe.DoesNotExist:
         raise NotFound() from None
+
+
+def password_reset_link(cafe_id):
+    """
+    UC-ADMIN-010: a one-time password reset link for the cafe's owner, as {"url", "expires_at"}.
+    Nothing is written; the owner's password and sessions stay as they are until the link is used.
+    """
+    return user_services.password_reset_link(get_cafe(cafe_id).owner)
 
 
 def billing_history(cafe_id):

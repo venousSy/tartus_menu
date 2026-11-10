@@ -91,7 +91,12 @@
 
 ## Phase 2 — Operations
 
-### E1. One-time password reset link made by the Super Admin — size M
+### E1. One-time password reset link made by the Super Admin — size M — done 2026-11-10 (PR #74)
+- Built as below. Details decided while building: the link is made in `users/services.py`
+  (`password_reset_link(user)`; `cafes/services.py` only finds the owner); the throttle rate is fixed (5/min, no
+  environment variable); an inactive account gets the "invalid link" answer; the new password may equal the old one;
+  a second link does not end the first (the first one used ends all). The reset page gets
+  `Referrer-Policy: no-referrer` from `next.config.ts`. No e2e test (the unit and integration tests cover it).
 - **Design:** Django `default_token_generator` (no new table; the token contains the password hash, so it dies
   when the password changes). Link `{base}/reset-password#<uidb64>.<token>` — the `#` part never reaches a server
   or a log. `PASSWORD_RESET_TIMEOUT = 86400` (24 h, WhatsApp can be slow).

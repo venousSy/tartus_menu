@@ -72,6 +72,12 @@ server {
         proxy_pass $backend;
     }
 
+    # Tries of a password reset link (UC-AUTH-005): the same coarse outer limit as the login.
+    location = /api/v1/auth/password-reset/confirm/ {
+        limit_req zone=login burst=5 nodelay;
+        proxy_pass $backend;
+    }
+
     # The public menu API is open to the internet too, and Django does not throttle it. Next.js calls
     # Django on the Docker network, not through here, so only direct callers share this budget.
     location /api/v1/menu/ {
@@ -116,6 +122,12 @@ server {
 
     # Next.js: BFF login route, customer menu, dashboards.
     location = /bff/auth/login {
+        limit_req zone=login burst=5 nodelay;
+        proxy_pass $frontend;
+    }
+
+    # The BFF route behind the reset page (UC-AUTH-005).
+    location = /bff/auth/password-reset {
         limit_req zone=login burst=5 nodelay;
         proxy_pass $frontend;
     }

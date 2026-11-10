@@ -10,10 +10,12 @@ import base64
 import json
 import re
 import zlib
+from datetime import timedelta
 from io import BytesIO, StringIO
 from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.tokens import default_token_generator
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -22,6 +24,8 @@ from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
+from django.utils.http import urlsafe_base64_decode
 from PIL import Image
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -673,7 +677,8 @@ class AdminCafeReadAndCreateTests(AdminAPITestCase):
             ('owner with is_staff', staff_owner, 403, no_role),
         ]
         endpoints = [('get', 'cafes'), ('post', 'cafes'), ('get', 'cafe'), ('patch', 'cafe'), ('delete', 'cafe'),
-                     ('post', 'cafe-activate'), ('post', 'cafe-deactivate'), ('get', 'cafe-billing'), ('get', 'stats')]
+                     ('post', 'cafe-activate'), ('post', 'cafe-deactivate'), ('get', 'cafe-billing'), ('get', 'stats'),
+                     ('post', 'cafe-password-reset-link')]
         for label, user, status_code, body in callers:
             if user is None:
                 self.client.credentials()
@@ -741,7 +746,7 @@ class AdminCafeWriteTests(AdminAPITestCase):
     def test_unknown_cafe_returns_404(self):  # UC-ADMIN-004 A2, 005 A2, 006 A7, 007 A1, 008 A2
         missing = Cafe(pk=self.cafe.pk + 100)
         for method, name in [('post', 'cafe-activate'), ('post', 'cafe-deactivate'), ('patch', 'cafe'),
-                             ('delete', 'cafe'), ('get', 'cafe-billing')]:
+                             ('delete', 'cafe'), ('get', 'cafe-billing'), ('post', 'cafe-password-reset-link')]:
             with self.subTest(endpoint=f'{method} {name}'):
                 response = getattr(self.client, method)(self.url(name, missing), {}, format='json')
 
@@ -763,6 +768,32 @@ class AdminCafeWriteTests(AdminAPITestCase):
             ('deactivated', '', 'admin@platform.com'),
         ])
         self.assertEqual(set(response.data[0]), {'action', 'notes', 'performed_by_email', 'created_at'})
+
+    @override_settings(PUBLIC_MENU_BASE_URL='https://menu.domain.com')
+    def test_password_reset_link_is_for_the_owner_and_changes_nothing(self):  # UC-ADMIN-010 main flow, A3
+        password_hash = self.owner.password
+        before = timezone.now()
+
+        response = self.client.post(self.url('cafe-password-reset-link'))
+        again = self.client.post(self.url('cafe-password-reset-link'))
+
+        self.assertEqual((response.status_code, set(response.data)), (status.HTTP_200_OK, {'url', 'expires_at'}))
+        page, fragment = response.data['url'].split('#')
+        uid, token = fragment.split('.')
+        self.assertEqual(page, 'https://menu.domain.com/reset-password')  # the secret part is after "#"
+        self.assertEqual(urlsafe_base64_decode(uid), str(self.owner.pk).encode())
+        self.assertTrue(default_token_generator.check_token(self.owner, token))
+        expires_at = parse_datetime(response.data['expires_at'])
+        self.assertTrue(timedelta(hours=24) <= expires_at - before <= timedelta(hours=24, seconds=30))
+        self.assertEqual(again.status_code, status.HTTP_200_OK)  # A3: a link may be asked for again
+        self.owner.refresh_from_db()
+        self.assertEqual(self.owner.password, password_hash)  # nothing is stored or changed
+        self.assertFalse(BillingEvent.objects.exists())
+
+    def test_password_reset_link_for_an_inactive_cafe(self):  # UC-ADMIN-010 note, Global Convention 5
+        Cafe.objects.filter(pk=self.cafe.pk).update(is_active=False)
+
+        self.assertEqual(self.client.post(self.url('cafe-password-reset-link')).status_code, status.HTTP_200_OK)
 
     def test_edit_changes_the_given_fields(self):  # UC-ADMIN-006 main flow
         body = {'name': {'ar': 'Sea View', 'en': 'Sea View'}, 'slug': 'sea-view', 'primary_color': '#00FF00',

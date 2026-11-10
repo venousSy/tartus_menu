@@ -103,7 +103,7 @@ Post-MVP steps (details in [post_mvp_roadmap.md](post_mvp_roadmap.md); each star
 17. **[x] Health URL and uptime monitoring** (roadmap C) — system_design.md §3.7.
 18. **[x] Stable QR links `/t/<qr_token>`** (roadmap A) — use_cases.md UC-GUEST-003.
 19. **[x] Error tracking** — Sentry or GlitchTip (roadmap D); system_design.md §5 "Error Tracking".
-20. **[ ] Password reset link made by the Super Admin** (roadmap E1).
+20. **[x] Password reset link made by the Super Admin** (roadmap E1) — use_cases.md UC-ADMIN-010, UC-AUTH-005.
 21. **[ ] Subscription expiry and warnings** (roadmap F).
 22. **[ ] Analytics** (roadmap B).
 23. **[ ] Item tags** (roadmap G).

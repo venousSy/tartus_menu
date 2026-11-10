@@ -11,6 +11,7 @@ from .views import (
     AdminCafeDeactivateView,
     AdminCafeDetailView,
     AdminCafeListView,
+    AdminCafePasswordResetLinkView,
     AdminStatsView,
 )
 
@@ -24,5 +25,7 @@ urlpatterns = [
     path('cafes/<int:pk>/activate/', AdminCafeActivateView.as_view(), name='cafe-activate'),  # UC-ADMIN-004
     path('cafes/<int:pk>/deactivate/', AdminCafeDeactivateView.as_view(), name='cafe-deactivate'),  # UC-ADMIN-005
     path('cafes/<int:pk>/billing/', AdminCafeBillingView.as_view(), name='cafe-billing'),  # UC-ADMIN-008
+    path('cafes/<int:pk>/password-reset-link/', AdminCafePasswordResetLinkView.as_view(),
+         name='cafe-password-reset-link'),  # UC-ADMIN-010
     path('stats/', AdminStatsView.as_view(), name='stats'),  # UC-ADMIN-009
 ]

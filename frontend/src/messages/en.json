@@ -65,7 +65,8 @@
     "alreadyActive": "This cafe's subscription is already active.",
     "alreadyInactive": "This cafe's subscription is already inactive.",
     "downgradeCategories": "Cannot move to the {plan} plan: the cafe has {count, plural, one {# category} other {# categories}} (max {max}).",
-    "downgradeItems": "Cannot move to the {plan} plan: the cafe has {count, plural, one {# item} other {# items}} (max {max})."
+    "downgradeItems": "Cannot move to the {plan} plan: the cafe has {count, plural, one {# item} other {# items}} (max {max}).",
+    "resetLinkInvalid": "This link is not valid any more. It may be older than 24 hours or already used. Ask support for a new one."
   },
   "Dashboard": {
     "title": "Cafe dashboard",
@@ -220,6 +221,20 @@
     "changed": "Your password was changed. Log in again with the new password.",
     "logIn": "Log in"
   },
+  "ResetPassword": {
+    "title": "Set a new password",
+    "intro": "Choose a new password for your account. This link works once.",
+    "new": "New password",
+    "newAgain": "New password again",
+    "hint": "At least 8 characters. Not only numbers, not a common password, and not like your email address.",
+    "mismatch": "The two passwords are not the same.",
+    "save": "Save the new password",
+    "saving": "Saving…",
+    "done": "Your password was changed. Log in with the new password.",
+    "logIn": "Log in",
+    "noLink": "This page needs a password reset link. Open the full link that support sent you.",
+    "throttled": "Too many attempts. Try again in {seconds, plural, one {# second} other {# seconds}}."
+  },
   "Admin": {
     "title": "Super Admin",
     "navLabel": "Admin pages",
@@ -314,6 +329,17 @@
     "deleteTitle": "Delete this cafe for good?",
     "deleteWarning": "The cafe, its owner's account and all its categories, items, tables, images and billing history are deleted. This cannot be undone, and the customer menu and QR codes stop working.",
     "deleteConfirm": "Delete for good",
-    "deleting": "Deleting…"
+    "deleting": "Deleting…",
+    "resetLink": "Password reset link",
+    "resetLinkTitle": "Password reset link for the owner",
+    "resetLinkText": "Makes a one-time link that lets <mail>{email}</mail> set a new password. The current password keeps working until the link is used.",
+    "resetLinkHint": "Nothing is sent automatically: copy the link and send it to the owner yourself, for example by WhatsApp.",
+    "resetLinkCreate": "Create link",
+    "resetLinkCreating": "Creating…",
+    "resetLinkLabel": "Link for the owner",
+    "resetLinkExpires": "Valid until {date}, and only once.",
+    "resetLinkWarning": "Whoever has this link can set the password. Send it only to the owner.",
+    "resetLinkCopy": "Copy link",
+    "resetLinkCopied": "Copied."
   }
 }

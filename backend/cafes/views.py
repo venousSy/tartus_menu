@@ -31,6 +31,7 @@ from .serializers import (
     BillingEventSerializer,
     CafeSettingsSerializer,
     LogoUploadSerializer,
+    PasswordResetLinkSerializer,
     PlatformStatsSerializer,
     QRCodesSerializer,
     QRGenerateSerializer,
@@ -215,6 +216,15 @@ class AdminCafeBillingView(APIView):
 
     def get(self, request, pk):
         return Response(BillingEventSerializer(services.billing_history(pk), many=True).data)
+
+
+class AdminCafePasswordResetLinkView(APIView):
+    """POST /api/v1/admin/cafes/{id}/password-reset-link/ (UC-ADMIN-010): no body, answers { url, expires_at }."""
+
+    permission_classes = [IsSystemAdmin]
+
+    def post(self, request, pk):
+        return Response(PasswordResetLinkSerializer(services.password_reset_link(pk)).data)
 
 
 class AdminStatsView(APIView):

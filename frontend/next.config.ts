@@ -23,7 +23,12 @@ const nextConfig: NextConfig = {
   cacheComponents: true,
   partialPrefetching: true,
   async headers() {
-    return [{ source: "/:path*", headers: SECURITY_HEADERS }];
+    return [
+      { source: "/:path*", headers: SECURITY_HEADERS },
+      // The reset page is opened from a one-time link (UC-AUTH-005): it tells no other page, not even
+      // one of this site, where the visitor came from. A later entry wins over the one above.
+      { source: "/reset-password", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
+    ];
   },
   experimental: {
     serverActions: {

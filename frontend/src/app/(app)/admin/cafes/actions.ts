@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 
 import type { FormError } from "@/lib/api-errors";
-import { type AdminCafe, adminWrite } from "@/lib/server/admin-api";
+import { type AdminCafe, adminWrite, type PasswordResetLink } from "@/lib/server/admin-api";
 import type { ApiInit } from "@/lib/server/api";
 import { NOT_FOUND, pathOf, writeThenRefresh as ownerWriteThenRefresh } from "@/lib/server/owner-actions";
 
@@ -64,6 +64,20 @@ export async function changeSubscription(_previous: SubscriptionState, formData:
   const notes = String(formData.get("notes") ?? "");
   const error = await writeThenRefresh(cafePath(formData, `${change}/`), { method: "POST", json: { notes } });
   return error ? { error, notes } : { error: null, saved: true };
+}
+
+/** The reset-link dialog's state: the new link, or Django's error. */
+export type ResetLinkState = { error: FormError | null; link?: PasswordResetLink };
+
+/**
+ * Makes a one-time password reset link for the cafe's owner (UC-ADMIN-010). Django stores nothing
+ * and changes nothing, so the page is not refreshed: the link only goes back to the dialog.
+ */
+export async function createResetLink(_previous: ResetLinkState, formData: FormData): Promise<ResetLinkState> {
+  const path = cafePath(formData, "password-reset-link/");
+  if (!path) return { error: NOT_FOUND };
+  const result = await adminWrite<PasswordResetLink>(path, { method: "POST" });
+  return result.ok ? { error: null, link: result.data } : { error: result.error };
 }
 
 /** What the admin typed in the edit form. `color` is "" for the default theme. */

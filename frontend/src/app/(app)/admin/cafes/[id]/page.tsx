@@ -11,6 +11,7 @@ import { BRAND_COLOR } from "@/app/brand-mark";
 import { BilingualName } from "../../../ui/form-parts";
 import { DeleteDialog } from "./delete-dialog";
 import { EditDialog } from "./edit-dialog";
+import { ResetLinkDialog } from "./reset-link-dialog";
 import { SubscriptionDialog } from "./subscription-dialog";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -50,6 +51,7 @@ export default async function AdminCafePage({ params }: PageProps<"/admin/cafes/
       <div className="flex flex-wrap gap-2">
         <SubscriptionDialog id={cafe.id} active={cafe.is_active} />
         <EditDialog cafe={cafe} defaultColor={BRAND_COLOR} />
+        <ResetLinkDialog id={cafe.id} email={cafe.owner_email} />
         <DeleteDialog id={cafe.id} name={cafe.name} slug={cafe.slug} />
       </div>
       <dl className="grid gap-px overflow-hidden rounded-lg border border-stone-200 bg-stone-200 sm:grid-cols-2">

@@ -82,3 +82,15 @@ class ChangePasswordSerializer(serializers.Serializer):
             })
 
         return attrs
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """
+    Body of UC-AUTH-005: the two parts of the reset link (uid, token) and the new password.
+    Only the shape is checked here. The service checks the link first and the password rules after,
+    so a bad link never reveals whether a password would have been accepted.
+    """
+    uid = serializers.CharField(max_length=64)
+    token = serializers.CharField(max_length=128)
+    # Not trimmed: the login does not trim either, so the stored password is exactly what was typed.
+    new_password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=128)

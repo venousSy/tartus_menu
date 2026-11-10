@@ -195,6 +195,13 @@ class BillingEventSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
 
 
+class PasswordResetLinkSerializer(serializers.Serializer):
+    """Answer of POST cafes/{id}/password-reset-link/ (UC-ADMIN-010)."""
+
+    url = serializers.CharField()  # <site>/reset-password#<uid>.<token>
+    expires_at = serializers.DateTimeField()
+
+
 class PlatformStatsSerializer(serializers.Serializer):
     """The admin home page numbers (UC-ADMIN-009)."""
 

@@ -29,6 +29,7 @@ const NEW_CAFE = {
   id: 8, name: { ar: "مقهى جديد", en: "" }, slug: "new-cafe", plan: "basic", is_active: false, owner_email: "new@example.test",
   subscription_start_at: null, subscription_end_at: null, logo_url: "", primary_color: "",
 };
+const RESET_LINK = { url: "https://menu.example.test/reset-password#Nw.d2x4ab-0123456789abcdef", expires_at: "2026-11-03T08:30:00Z" };
 const fake = { cafe: SEA() as ReturnType<typeof SEA> | null, events: EVENTS(), categories: 8, status: 0, calls: [] as string[], bodies: [] as unknown[] };
 beforeEach(() => Object.assign(fake, { cafe: SEA(), events: EVENTS(), categories: 8, status: 0, calls: [], bodies: [] }));
 
@@ -37,9 +38,10 @@ const fakeDjango: FakeDjango = (req, path, body, answer) => {
   if (fake.status) return answer(fake.status, { detail: "You do not have permission to perform this action." });
   if (path === "/admin/cafes/8/") return answer(200, NEW_CAFE);
   if (path === "/admin/cafes/8/billing/") return answer(200, []);
-  const match = /^\/admin\/cafes\/7\/(billing\/|activate\/|deactivate\/)?$/.exec(path);
+  const match = /^\/admin\/cafes\/7\/(billing\/|activate\/|deactivate\/|password-reset-link\/)?$/.exec(path);
   const cafe = fake.cafe;
   if (!match || !cafe) return answer(404, { detail: "Not found." });
+  if (match[1] === "password-reset-link/") return answer(200, RESET_LINK); // UC-ADMIN-010: nothing changes
   if (req.method !== "GET") fake.bodies.push(body);
   if (match[1] === "billing/") return answer(200, fake.events);
   if (match[1]) {
@@ -85,11 +87,13 @@ const cookie = adminCookie();
 const page = async (path = "/admin/cafes/7", lang = "ar") =>
   (await fetch(`${SITE}${path}`, { headers: { Cookie: `${cookie}; lang=${lang}` } })).text();
 const formWith = (html: string, field: string) => formsOf(html).find((f) => f.names.includes(field))!;
-/** The delete form: its only own field is the hidden id. */
-const deleteForm = (html: string) => formsOf(html).find((f) => {
+/** The forms whose only own field is the hidden id: the reset-link form, then the delete form. */
+const idOnlyForms = (html: string) => formsOf(html).filter((f) => {
   const own = f.names.filter((n) => !n.startsWith("$"));
   return own.length === 1 && own[0] === "id";
-})!;
+});
+const resetLinkForm = (html: string) => idOnlyForms(html)[0];
+const deleteForm = (html: string) => idOnlyForms(html)[1];
 const value = (form: Form, name: string) => form.fields.find(([n]) => n === name)?.[1];
 const writes = () => fake.calls.filter((call) => !call.startsWith("GET"));
 const refused = (key: string) => ({ form: { key }, fields: {} });
@@ -185,6 +189,16 @@ test("edit refusals: each message at its field, the typing kept", async () => {
   assert.deepEqual(state.values, { slug: "bad slug", name: { ar: " ", en: "Sea Cafe" }, plan: "pro", color: "red" });
 });
 
+test("reset link: one POST without a body; the link goes back to the dialog and the page data stays as it was", async () => {
+  const html = await page();
+  const dialog = html.split("<form").find((chunk) => chunk.includes(">إنشاء الرابط<"))!.split("</form>")[0];
+  assert.ok(dialog.includes('<bdi dir="ltr" class="font-semibold">owner@example.test</bdi>'), "the dialog names the account");
+  const res = await submit(PAGE, cookie, resetLinkForm(html));
+  assert.deepEqual(actionState(res.html), { error: null, link: RESET_LINK });
+  assert.deepEqual(writes(), ["POST /admin/cafes/7/password-reset-link/"]);
+  assert.equal(fake.events.length, 2, "no billing event");
+});
+
 test("delete: Cancel comes first; one DELETE, then back to the list; a second try finds it gone", async () => {
   const html = await page();
   // React streams a dialog's form in a later chunk: find it by its button.
@@ -199,7 +213,7 @@ test("delete: Cancel comes first; one DELETE, then back to the list; a second tr
 
 test("changed ids or changes never reach Django; a 403 from any dialog ends the session", async () => {
   const html = await page();
-  const forms = [formWith(html, "change"), formWith(html, "slug"), deleteForm(html)];
+  const forms = [formWith(html, "change"), formWith(html, "slug"), resetLinkForm(html), deleteForm(html)];
   for (const form of forms) {
     for (const id of ["7/../8", "0", "abc"]) {
       const state = actionState((await submit(PAGE, cookie, form, { id })).html) as { error: unknown };

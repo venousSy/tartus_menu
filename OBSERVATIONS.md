@@ -11,7 +11,7 @@ Rules for this file:
 
 ## Open
 
-(none on 2026-11-08)
+- **60.** (2026-11-10) `ChangePasswordSerializer` (UC-AUTH-004) trims spaces around `old_password` and `new_password` (DRF's default `trim_whitespace=True`), but the login (simplejwt), the create-cafe form and the new reset-link form (UC-AUTH-005) do not. A new password typed with a space at the start or end is stored without it, and the next login with the space fails. Fix: `trim_whitespace=False` on both fields, plus a test.
 
 ## Closed without a code change
 

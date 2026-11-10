@@ -1,4 +1,3 @@
-from django.db import transaction
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -7,13 +6,14 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from . import services
 from .serializers import (
     ChangePasswordSerializer,
     CustomTokenObtainPairSerializer,
     LogoutSerializer,
+    PasswordResetConfirmSerializer,
     RefreshTokenSerializer,
 )
 
@@ -90,23 +90,23 @@ class ChangePasswordView(APIView):
         )
         serializer.is_valid(raise_exception=True)
 
-        user = request.user
+        # One transaction in the service: a changed password can never leave old sessions alive.
+        services.change_password(request.user, serializer.validated_data['new_password'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
-        # Atomic: the new password and the token revocation succeed or fail together,
-        # so a changed password can never leave old sessions alive.
-        with transaction.atomic():
-            user.set_password(serializer.validated_data['new_password'])
-            user.save(update_fields=['password'])
 
-            # Blacklist every outstanding refresh token of this user in one INSERT
-            # (not one query per token). ignore_conflicts skips rows blacklisted concurrently.
-            outstanding_tokens = OutstandingToken.objects.filter(
-                user=user,
-                blacklistedtoken__isnull=True,
-            )
-            BlacklistedToken.objects.bulk_create(
-                [BlacklistedToken(token=token) for token in outstanding_tokens],
-                ignore_conflicts=True,
-            )
+class PasswordResetConfirmView(APIView):
+    """
+    UC-AUTH-005: sets a new password with the one-time link a Super Admin made (UC-ADMIN-010).
+    The caller has no session; the link's uid and token are the proof. Rate limited like the login.
+    """
+    authentication_classes = []  # a stale token header must not turn the answer into a 401
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]  # every attempt counts (A3)
+    throttle_scope = 'password_reset'
 
+    def post(self, request, *args, **kwargs):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.reset_password(**serializer.validated_data)
         return Response(status=status.HTTP_204_NO_CONTENT)
