@@ -1,6 +1,7 @@
 """
 Owner dashboard: cafe settings (use_cases.md UC-OWNER-009, UC-OWNER-010 and UC-OWNER-014)
 and QR codes (UC-OWNER-007, UC-OWNER-008 and UC-OWNER-011).
+Public: where a printed QR code leads (UC-GUEST-003).
 Super Admin: cafe management (UC-ADMIN-001 to UC-ADMIN-009).
 
 Views stay thin: validate with the serializer, call one service function, return a response.
@@ -14,6 +15,7 @@ from django.http import FileResponse
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import MultiPartParser
+from rest_framework.permissions import AllowAny
 from rest_framework.renderers import BaseRenderer, JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -32,6 +34,7 @@ from .serializers import (
     PlatformStatsSerializer,
     QRCodesSerializer,
     QRGenerateSerializer,
+    QRTargetSerializer,
     SubscriptionChangeSerializer,
 )
 
@@ -123,6 +126,19 @@ class QRDownloadPDFView(APIView):
         pdf = services.qr_pdf(request.user.cafe)
         # FileResponse streams the bytes and sets Content-Disposition: attachment; filename="qrcodes.pdf".
         return FileResponse(BytesIO(pdf), as_attachment=True, filename='qrcodes.pdf', content_type='application/pdf')
+
+
+class QRTargetView(APIView):
+    """
+    GET /api/v1/qr/{token}/ (UC-GUEST-003): { slug, table_number } for the short link /t/<token>.
+    Public like the menu itself; Next.js calls it and redirects the customer to the menu.
+    """
+
+    authentication_classes = []  # a customer has no account; a stray token header must not cause a 401
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        return Response(QRTargetSerializer(services.resolve_qr_token(token)).data)
 
 
 class AdminCafePagination(PageNumberPagination):

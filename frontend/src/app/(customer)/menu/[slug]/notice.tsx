@@ -5,9 +5,13 @@ import { ForgetOfflineCopy } from "./forget-offline-copy";
 
 /**
  * A full-screen message in Arabic and English, for the screens that have no menu to switch
- * languages on: "Menu not found" (UC-GUEST-001 A1) and "temporarily unavailable" (UC-GUEST-002).
+ * languages on: "Menu not found" (UC-GUEST-001 A1), "temporarily unavailable" (UC-GUEST-002) and
+ * "this QR code is not valid" (UC-GUEST-003 A3).
  */
-export function Notice({ title, messageKey }: { title?: BilingualText; messageKey: "notFound" | "unavailable" }) {
+export function Notice({ title, messageKey }: {
+  title?: BilingualText;
+  messageKey: "notFound" | "unavailable" | "qrInvalid";
+}) {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-stone-50 px-6 text-center text-stone-900">
       {title?.ar && <h1 dir="auto" className="text-2xl font-bold">{title.ar}</h1>}

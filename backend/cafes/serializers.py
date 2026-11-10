@@ -78,7 +78,7 @@ class QRTableSerializer(serializers.Serializer):
 
     id = serializers.IntegerField()
     table_number = serializers.IntegerField()
-    url = serializers.CharField()
+    url = serializers.CharField()  # the short link in the code: https://<domain>/t/<qr_token> (GC 4)
     qr_token = serializers.UUIDField()
     qr_image_url = serializers.CharField()  # "data:image/png;base64,..."
 
@@ -88,6 +88,13 @@ class QRCodesSerializer(serializers.Serializer):
 
     table_count = serializers.IntegerField()
     tables = QRTableSerializer(many=True)
+
+
+class QRTargetSerializer(serializers.Serializer):
+    """Answer of GET /api/v1/qr/{token}/ (UC-GUEST-003): where a printed QR code leads now."""
+
+    slug = serializers.CharField()
+    table_number = serializers.IntegerField(allow_null=True)  # null for an inactive table (A1)
 
 
 class AdminCafeSummarySerializer(serializers.Serializer):

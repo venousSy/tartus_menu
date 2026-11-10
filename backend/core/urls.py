@@ -15,6 +15,7 @@ urlpatterns = [
     path('api/v1/dashboard/', include('menu.urls')),
     path('api/v1/dashboard/', include('cafes.urls')),
     path('api/v1/menu/', include('menu.public_urls')),
+    path('api/v1/qr/', include('cafes.public_urls')),
 ]
 
 if not settings.USE_S3:

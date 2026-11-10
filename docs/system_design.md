@@ -14,7 +14,7 @@
 | Languages | Arabic + English (JSONB fields); `ar` required, `en` optional, display falls back to `ar` |
 | Currency | SYP only (hardcoded) — new Syrian pound after the 2026-01-01 redenomination; display: Western digits, trailing `.00` hidden |
 | Menu levels | 2 levels: Category → Item |
-| QR URL | `/menu/[cafe-slug]?table=N` |
+| QR URL | The code holds the table's permanent short link `/t/[qr_token]`, which redirects to `/menu/[cafe-slug]?table=N` (survives a slug change) |
 | QR PDF | Django (`reportlab`, vector QR widget); preview images with the `qrcode` library; error correction level Q, 4-module quiet zone |
 | Tables | Persisted `CafeTable` per physical table (unique `table_number` per cafe + `qr_token`); table count is derived from active rows, no `table_count` column |
 | Slug changes | Super Admin only |
@@ -256,13 +256,13 @@ billing_events
 {
   "table_count": 12,
   "tables": [
-    { "id": 1, "table_number": 1, "url": "https://menu.domain.com/menu/tartus-coffee?table=1", "qr_token": "<uuid4>", "qr_image_url": "data:image/png;base64,..." },
-    { "id": 2, "table_number": 2, "url": "https://menu.domain.com/menu/tartus-coffee?table=2", "qr_token": "<uuid4>", "qr_image_url": "data:image/png;base64,..." }
+    { "id": 1, "table_number": 1, "url": "https://menu.domain.com/t/<qr_token of table 1>", "qr_token": "<uuid4>", "qr_image_url": "data:image/png;base64,..." },
+    { "id": 2, "table_number": 2, "url": "https://menu.domain.com/t/<qr_token of table 2>", "qr_token": "<uuid4>", "qr_image_url": "data:image/png;base64,..." }
   ]
 }
 ```
 
-`qr_token` is stored and returned but is not part of the URL in the MVP.
+`url` is the table's permanent short link `/t/<qr_token>`; the QR code and the PDF hold it. It redirects to `/menu/<current slug>?table=N` (§3.4, use_cases.md UC-GUEST-003), so printed codes survive a slug change.
 
 #### Cafe Settings
 
@@ -319,6 +319,14 @@ billing_events
 
 > This endpoint is called by the Next.js server (ISR), not by the customer's browser. It is therefore not rate limited per client IP in DRF; Nginx rate-limits the `/menu/` pages instead.
 
+**QR short links (use_cases.md UC-GUEST-003):**
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/v1/qr/{qr_token}/` | Where a printed code leads now: `200 {"slug": "tartus-coffee", "table_number": 3}`; `table_number` is `null` for an inactive table; `404 {"detail": "Not found."}` for an unknown token (a malformed one matches no route) |
+
+> Next.js serves `GET /t/{qr_token}`: it calls this endpoint (no cache) and answers `302` with a relative `Location: /menu/<slug>?table=N`, `Cache-Control: no-store`. A 404 or a token that is not a UUID redirects to `/qr-invalid`; an unreachable Django gives `503` with `Retry-After: 60`. No authentication; Nginx rate-limits `/t/` and `/api/v1/qr/` with the menu zone.
+
 ---
 
 ### 3.5 Internal — Public Menu Revalidation (Django → Next.js)
@@ -358,6 +366,8 @@ Frontend paths. None of them starts with `/api/`, because Nginx sends `/api/` to
 | Path | Who | What |
 |---|---|---|
 | `/menu/{slug}` | Customer | The public menu (§3.4), cached; `?table=N` is read in the browser only |
+| `/t/{qr_token}` | Customer | The short link in a table's QR code; redirects to the menu (§3.4, UC-GUEST-003) |
+| `/qr-invalid` | Customer | "This QR code is not valid", for a code that belongs to no table |
 | `/` | Anyone | Redirects to `/login` |
 | `/login` | Super Admin, Cafe Owner | One login page for both roles; a visitor who is already logged in goes to their home path |
 | `/dashboard/*` | Cafe Owner | The owner dashboard (§3.3) |
@@ -425,6 +435,7 @@ Login
 ### 4.3 Customer Flow
 ```
 Scan QR Code
+  └── GET /t/[qr_token] → 302 (UC-GUEST-003)
   └── GET /menu/[slug]?table=3
         ├── If active → Show Menu
         │     ├── Switch Language (ar/en, in the browser — no new request)
@@ -460,7 +471,7 @@ All services run inside Docker Compose on a single VPS.
 
 - Every proxied location sets `X-Forwarded-For $proxy_add_x_forwarded_for` and `X-Forwarded-Proto`.
 - `limit_req` (per client IP) on `/api/v1/auth/login/`, the BFF login route `/bff/auth/login` (§3.6) and the Django admin login page.
-- A separate, generous `limit_req` zone (per client IP) on the `/menu/` pages (§3.4 public menu note). Many customers of one cafe may share one IP behind its Wi-Fi.
+- A separate, generous `limit_req` zone (per client IP) on the `/menu/` pages (§3.4 public menu note), the QR short links `/t/` and the public APIs `/api/v1/menu/` and `/api/v1/qr/`. Many customers of one cafe may share one IP behind its Wi-Fi.
 - `client_max_body_size 3m` (the API limits uploads to 2 MB; larger bodies are rejected before Django).
 - `add_header X-Robots-Tag "noindex, nofollow"` on `/menu/`.
 - HTTP → HTTPS redirect and HSTS.

@@ -8,6 +8,7 @@
     "comingSoon": "Menu coming soon",
     "unavailable": "This menu is temporarily unavailable. Please ask staff for assistance.",
     "notFound": "Menu not found",
+    "qrInvalid": "This QR code is not valid. Please ask staff for assistance.",
     "offline": "You are offline. Prices may have changed."
   },
   "Login": {

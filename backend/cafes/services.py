@@ -18,7 +18,7 @@ from core.media_storage import delete_folder_on_commit, delete_image_on_commit, 
 from core.revalidation import schedule_menu_revalidation
 
 from .models import BillingEvent, Cafe, CafeTable, SubscriptionPlan
-from .qr import qr_codes_pdf, qr_png_data_url, table_url
+from .qr import qr_codes_pdf, qr_png_data_url, short_url
 
 User = get_user_model()
 
@@ -136,6 +136,21 @@ def qr_pdf(cafe):
     if not tables:
         raise ValidationError({'detail': 'Please generate QR codes first.'}, code='qr_first')
     return qr_codes_pdf(cafe, tables)
+
+
+def resolve_qr_token(token):
+    """
+    UC-GUEST-003: where the printed QR code with this token leads now, as {"slug", "table_number"}.
+
+    The slug is read on every call, so a code printed before a slug change leads to the new slug.
+    An inactive table still leads to its cafe's menu, only without a table number (A1); an inactive
+    cafe still answers, and its menu page shows the UC-GUEST-002 screen (A2). Raises NotFound (404)
+    for a token that belongs to no table (A3); a deleted cafe deleted its tables too.
+    """
+    table = CafeTable.objects.select_related('cafe').filter(qr_token=token).first()
+    if table is None:
+        raise NotFound()
+    return {'slug': table.cafe.slug, 'table_number': table.table_number if table.is_active else None}
 
 
 # --- Super Admin (UC-ADMIN-001 to UC-ADMIN-009): any cafe, looked up by the id in the URL ---
@@ -328,8 +343,8 @@ def _qr_codes(cafe, tables):
     """
     codes = []
     for table in tables:
-        # Built from the current slug on every call, so a renamed slug never leaves an old URL behind.
-        url = table_url(cafe, table.table_number)
+        # The table's permanent short link (GC 4): it survives a slug change, so printed codes stay valid.
+        url = short_url(table)
         codes.append({
             'id': table.pk,
             'table_number': table.table_number,
