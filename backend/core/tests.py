@@ -1,7 +1,7 @@
 """
 Tests for the project-wide pieces in core/: the JSON 404 handler (use_cases.md Global Convention 2), the
-health check (system_design.md §3.7), the JSON-only API in production, and the daily backup command
-(system_design.md §5, "Scheduled Jobs").
+health check (system_design.md §3.7), error tracking, the JSON-only API in production, and the daily
+backup command (system_design.md §5, "Scheduled Jobs").
 """
 
 import gzip
@@ -11,20 +11,24 @@ import runpy
 import shutil
 import subprocess
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
+import sentry_sdk
 from botocore.exceptions import ClientError
 from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import OperationalError
-from django.test import SimpleTestCase, TestCase, override_settings
+from django.test import Client, SimpleTestCase, TestCase, override_settings
 from rest_framework.settings import perform_import
 from rest_framework.views import APIView
 
+from core.error_tracking import init_error_tracking, scrub_event
 from core.management.commands import backup_database
 
 BACKUP_SETTINGS = {
@@ -70,7 +74,10 @@ class HealthTests(TestCase):
         self.assertEqual(response.json(), {'status': 'ok'})
 
     def test_database_down_answers_503_with_its_code(self):
-        with mock.patch('core.views.connection.cursor', side_effect=OperationalError('connection refused')):
+        with (
+            mock.patch('core.views.connection.cursor', side_effect=OperationalError('connection refused')),
+            self.assertLogs('django.request', level='ERROR'),  # Django logs every 5xx
+        ):
             response = self.client.get(self.url)
 
         self.assertEqual(response.status_code, 503)
@@ -81,11 +88,11 @@ class HealthTests(TestCase):
         self.assertEqual(self.client.post(self.url).status_code, 405)
 
 
-def rest_framework_setting(debug):
-    """REST_FRAMEWORK as settings.py builds it for DJANGO_DEBUG=`debug`, with valid production values.
+def run_settings(debug, **extra_env):
+    """settings.py run again for DJANGO_DEBUG=`debug` with valid production values; returns its names.
 
-    settings.py reads DJANGO_DEBUG once, at import; the test runner only turns settings.DEBUG off later,
-    so the imported REST_FRAMEWORK follows the developer's .env. Running the file again shows both cases.
+    settings.py reads the environment once, at import; the test runner only turns settings.DEBUG off later,
+    so the imported settings follow the developer's .env. Running the file again shows any case.
     """
     env = {
         'DJANGO_DEBUG': 'True' if debug else 'False',
@@ -94,9 +101,93 @@ def rest_framework_setting(debug):
         'PUBLIC_MENU_BASE_URL': 'https://menu.example.test',
         'DJANGO_ADMIN_PATH': 'hidden-admin',
         'USE_S3': 'False',
+        'SENTRY_DSN': '',
+        **extra_env,
     }
     with mock.patch.dict(os.environ, env):  # load_dotenv never overrides variables that are already set
-        return runpy.run_path(str(Path(settings.BASE_DIR) / 'core' / 'settings.py'))['REST_FRAMEWORK']
+        return runpy.run_path(str(Path(settings.BASE_DIR) / 'core' / 'settings.py'))
+
+
+def rest_framework_setting(debug):
+    """REST_FRAMEWORK as settings.py builds it for DJANGO_DEBUG=`debug`."""
+    return run_settings(debug)['REST_FRAMEWORK']
+
+
+class _FakeTracker(BaseHTTPRequestHandler):
+    """A stand-in for Sentry's ingest endpoint: keeps every envelope the SDK posts, unzipped."""
+
+    envelopes = []
+
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers['Content-Length']))
+        if self.headers.get('Content-Encoding') == 'gzip':
+            body = gzip.decompress(body)
+        type(self).envelopes.append(body)
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, *args):  # keep the test output quiet
+        pass
+
+
+class ErrorTrackingTests(SimpleTestCase):
+    """Sentry or GlitchTip (core/error_tracking.py, system_design.md §5): only with a DSN, never personal data."""
+
+    def test_settings_start_the_sdk_only_when_a_dsn_is_set(self):
+        with mock.patch('sentry_sdk.init') as init:
+            run_settings(debug=False)
+            init.assert_not_called()
+
+            run_settings(debug=False, SENTRY_DSN='https://key@errors.example.test/1', SENTRY_RELEASE='abc123')
+
+        init.assert_called_once_with(
+            dsn='https://key@errors.example.test/1', release='abc123', environment='production',
+            send_default_pii=False, include_local_variables=False, max_request_body_size='never',
+            traces_sample_rate=0, before_send=scrub_event,
+        )
+
+    def test_scrub_event_removes_body_cookies_and_credentials(self):
+        event = {'request': {
+            'url': 'https://menu.example.test/api/v1/auth/login/', 'data': {'password': 'secret'},
+            'cookies': {'access': 'jwt'},
+            'headers': {'Authorization': 'Bearer jwt', 'Cookie': 'access=jwt', 'X-Revalidate-Secret': 's',
+                        'X-Forwarded-For': '203.0.113.7', 'User-Agent': 'Mozilla/5.0'},
+        }}
+
+        self.assertEqual(scrub_event(event, {}), {'request': {
+            'url': 'https://menu.example.test/api/v1/auth/login/', 'headers': {'User-Agent': 'Mozilla/5.0'},
+        }})
+        self.assertEqual(scrub_event({'message': 'no request'}, {}), {'message': 'no request'})
+
+    def test_a_server_error_reaches_the_tracker_without_credentials(self):
+        # The real SDK and transport against a local fake tracker: what would leave the server.
+        _FakeTracker.envelopes = []
+        server = ThreadingHTTPServer(('127.0.0.1', 0), _FakeTracker)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        init_error_tracking(f'http://publickey@127.0.0.1:{server.server_port}/1', release='test', environment='test')
+        self.addCleanup(sentry_sdk.init)  # without a DSN: the SDK is off again for the other tests
+
+        def failing_get(*args, **kwargs):
+            # A local variable of the failing frame, like something an owner typed. Built at run time, so its
+            # value is not in the source lines the SDK sends, and named so the SDK's own filter does not hide it.
+            owner_input = '-'.join(['owner', 'typed', 'text'])
+            raise RuntimeError(f'boom for the tracker ({len(owner_input)})')
+
+        client = Client(raise_request_exception=False)
+        with (
+            mock.patch('core.views.HealthView.get', side_effect=failing_get),
+            self.assertLogs('django.request', level='ERROR'),  # Django logs every 5xx too
+        ):
+            response = client.get('/api/v1/health/', HTTP_AUTHORIZATION='Bearer secret-token-value',
+                                  HTTP_COOKIE='access=secret-cookie-value', HTTP_X_FORWARDED_FOR='203.0.113.7')
+        sentry_sdk.flush(timeout=5)
+
+        self.assertEqual(response.status_code, 500)
+        sent = b''.join(_FakeTracker.envelopes)
+        self.assertIn(b'boom for the tracker', sent)
+        for secret in (b'secret-token-value', b'secret-cookie-value', b'203.0.113.7', b'owner-typed-text'):
+            self.assertNotIn(secret, sent)
 
 
 class JsonOnlyApiTests(SimpleTestCase):

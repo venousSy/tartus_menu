@@ -77,7 +77,11 @@
 - **Risks:** `qr_token` becomes public (never treat it as a secret); the longer URL may raise the QR version
   (still fine at 8 cm, level Q).
 
-### D. Error tracking — size S–M (new dependency, needs the user's OK)
+### D. Error tracking — size S–M — done 2026-11-10 (PR #73)
+- Built as below with `sentry-sdk>=2.73` and `@sentry/nextjs` 11.11.0 (11.9.0, two weeks older, pulled in
+  vulnerable `glob`/`minimatch`). SDK 11 replaced `sendDefaultPii` with `dataCollection`, whose defaults collect
+  everything: user info, cookies, headers, bodies and stack-frame variables are switched off explicitly; the
+  Python SDK also gets `include_local_variables=False` and `max_request_body_size='never'`.
 - Hosted Sentry or hosted GlitchTip (same SDK; no self-hosting on the small VPS). Errors only
   (`traces_sample_rate=0`), `send_default_pii=False`, `before_send` strips cookies/Authorization, `release=IMAGE_TAG`.
 - Turns: add `sentry-sdk`; settings active only when `SENTRY_DSN` is set (+ `.env.example`, compose);

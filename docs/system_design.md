@@ -485,6 +485,14 @@ All services run inside Docker Compose on a single VPS.
 | `pg_dump` → `age` → Cloudflare R2 | Daily | Database backup, encrypted for an offline key (30-day retention) |
 | `python manage.py flushexpiredtokens` | Daily | Removes expired rows from the JWT outstanding/blacklist tables, which grow with every login and refresh |
 
+### Error Tracking
+
+Optional, with Sentry or GlitchTip (hosted; same SDK): Django uses `sentry-sdk` (`core/error_tracking.py`), the Next.js server `@sentry/nextjs` (`src/instrumentation.ts`, server only: nothing is added to the customer pages). Both start only when `SENTRY_DSN` is set, so development, tests and CI send nothing; `SENTRY_RELEASE` is the image tag.
+
+- Errors only: no performance tracing (`traces_sample_rate = 0`).
+- No personal data: no user info, cookies, request headers or bodies, and no local variables of the stack frames; a `before_send` hook also drops `Authorization`, `Cookie`, `X-Revalidate-Secret` and `X-Forwarded-For` before an event leaves the server.
+- Without a DSN, errors still reach the container log (Django `LOGGING`, Next.js stderr).
+
 ### Docker Services
 
 | Service | Image | Port | Healthcheck |
@@ -549,6 +557,7 @@ After a downgrade, stored item images, logo and primary color are kept but hidde
 | Mass assignment | Serializers list writable fields explicitly; `cafe`, `sort_order`, `deleted_at`, `is_active`, `image_url` and `logo_url` are never writable through general update endpoints |
 | Django admin discovery | Admin site served at a non-obvious path (`DJANGO_ADMIN_PATH`), rate limited by Nginx |
 | Token table growth | Daily `flushexpiredtokens` |
+| Personal data in error reports | Error tracking is off without `SENTRY_DSN`; with it, no user info, cookies, headers, bodies or local variables are sent, and a `before_send` hook drops credentials (§5 Error Tracking) |
 | Vulnerable dependencies | Minimum versions above known CVEs (`gunicorn>=23`, `Pillow>=12.3`) |
 
 ### 7.1 Row-Level Security (post-MVP plan)

@@ -32,6 +32,9 @@ x-django-environment: &django-environment
   R2_BUCKET_NAME: ${R2_BUCKET_NAME:?set R2_BUCKET_NAME in .env}
   R2_ENDPOINT_URL: ${R2_ENDPOINT_URL:?set R2_ENDPOINT_URL in .env}
   R2_CUSTOM_DOMAIN: ${R2_CUSTOM_DOMAIN:?set R2_CUSTOM_DOMAIN in .env}
+  # Optional error tracking (system_design.md §5): empty sends nothing. Reports name the running image.
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  SENTRY_RELEASE: ${IMAGE_TAG:-latest}
 
 services:
   db:
@@ -105,6 +108,8 @@ services:
     environment:
       DJANGO_API_URL: http://backend:8000/api/v1
       FRONTEND_REVALIDATE_SECRET: ${FRONTEND_REVALIDATE_SECRET}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_RELEASE: ${IMAGE_TAG:-latest}
     # "Healthy" once Next.js answers /health, which asks Django in turn.
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]

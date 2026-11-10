@@ -266,6 +266,18 @@ LOGGING = {
     },
 }
 
+# Error tracking with Sentry or GlitchTip (core/error_tracking.py, system_design.md §5): only when a DSN is
+# set, so development, tests and CI send nothing. SENTRY_RELEASE names the deployed image (compose.yaml).
+SENTRY_DSN = os.getenv('SENTRY_DSN', '')
+if SENTRY_DSN:
+    from core.error_tracking import init_error_tracking
+
+    init_error_tracking(
+        SENTRY_DSN,
+        release=os.getenv('SENTRY_RELEASE', ''),
+        environment=os.getenv('SENTRY_ENVIRONMENT') or 'production',
+    )
+
 # Production HTTPS settings.
 # Nginx terminates TLS and must always set X-Forwarded-Proto, otherwise this header can be spoofed.
 # The HTTP -> HTTPS redirect and HSTS are left to Nginx (deploy/nginx/default.conf.template).
