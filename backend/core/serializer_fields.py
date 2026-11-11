@@ -25,7 +25,7 @@ class BilingualNameField(serializers.Field):
 
     - "ar" is required and must be a non-empty string.
     - "en" is optional; when missing it is stored as "", so every stored name has both keys.
-    - Each value has at most NAME_MAX_LENGTH characters.
+    - Each value has at most max_length characters (NAME_MAX_LENGTH unless the caller gives another).
     - Any other key is rejected.
     Errors use DRF's standard messages under each key, e.g. {"name": {"ar": ["This field is required."]}}.
     The object is always validated as a whole, also in a PATCH: a sent name replaces the old one.
@@ -36,13 +36,13 @@ class BilingualNameField(serializers.Field):
         'extra_keys': 'Only the keys "ar" and "en" are allowed.',
     }
 
-    def __init__(self, **kwargs):
+    def __init__(self, max_length=NAME_MAX_LENGTH, **kwargs):
         super().__init__(**kwargs)
         # Standalone child fields, not bound to the parent serializer. In a PATCH the parent
         # has partial=True, and bound fields would then let "ar" be left out.
         self.language_fields = {
-            'ar': StrictCharField(max_length=NAME_MAX_LENGTH),
-            'en': StrictCharField(allow_blank=True, default='', max_length=NAME_MAX_LENGTH),
+            'ar': StrictCharField(max_length=max_length),
+            'en': StrictCharField(allow_blank=True, default='', max_length=max_length),
         }
 
     def to_internal_value(self, data):

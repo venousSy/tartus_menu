@@ -109,3 +109,47 @@ class MenuItem(models.Model):
 
     def __str__(self):
         return self.name.get('en') or self.name.get('ar') or f'MenuItem {self.id}'
+
+
+class MenuItemVariant(models.Model):
+    """
+    A size or option of one menu item with its own price, for example "Small" and "Large"
+    (use_cases.md Global Convention 10). Written only as a whole list with its item (menu/services.py).
+
+    No deleted_at: a variant is never shown without its item, so the item's soft delete hides it too.
+    Like MenuItem, it denormalizes cafe_id for tenant isolation (RLS).
+    """
+    item = models.ForeignKey(
+        MenuItem,
+        on_delete=models.CASCADE,
+        related_name='variants'
+    )
+    cafe = models.ForeignKey(
+        'cafes.Cafe',
+        on_delete=models.CASCADE,
+        related_name='menu_item_variants'
+    )
+    name = models.JSONField(default=dict)  # {"ar": "...", "en": "..."}
+    price = models.DecimalField(max_digits=10, decimal_places=2)  # SYP (hardcoded currency)
+    sort_order = models.PositiveIntegerField(default=100)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'menu_item_variants'
+        # Also the order of item.variants.all() and of a prefetch: the order the owner sent.
+        ordering = ['sort_order', 'id']
+        constraints = [
+            models.CheckConstraint(condition=models.Q(price__gte=0), name='menu_item_variant_price_not_negative'),
+        ]
+
+    def save(self, *args, **kwargs):
+        # Tenant-isolation invariant, as in MenuItem.save(): the copied cafe must be the item's cafe.
+        # Note: bulk_create() bypasses save(); a caller of it must take cafe from the item itself.
+        if self.cafe_id != self.item.cafe_id:
+            raise ValueError("MenuItemVariant.cafe must match MenuItemVariant.item.cafe.")
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name.get('en') or self.name.get('ar') or f'MenuItemVariant {self.id}'

@@ -40,15 +40,50 @@ class ReorderSerializer(serializers.Serializer):
     ordered_ids = serializers.ListField(child=serializers.IntegerField())
 
 
+# Global Convention 10: an item has at most 10 variants; a variant name has at most 50 characters per language.
+MAX_VARIANTS = 10
+VARIANT_NAME_MAX_LENGTH = 50
+
+
+class ItemVariantSerializer(serializers.Serializer):
+    """One variant (size) of an item: { id, name: {ar, en}, price }. Used by the owner API and the public menu."""
+
+    # Not stable: every write of an item's variants creates new rows (Global Convention 10).
+    id = serializers.IntegerField(read_only=True)
+    name = BilingualNameField(max_length=VARIANT_NAME_MAX_LENGTH)
+    price = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0'))
+
+
+class VariantListField(serializers.Field):
+    """
+    The variants of an item, as a whole list (Global Convention 10, UC-OWNER-002 A7).
+
+    A field with its own, standalone ItemVariantSerializer instead of a nested serializer: a nested one
+    is bound to its parent, and in a PATCH (partial=True) it would let a variant come without name or
+    price. The same reason as in BilingualNameField. The errors are the nested serializer's own.
+    """
+
+    def to_internal_value(self, data):
+        variants = ItemVariantSerializer(data=data, many=True, max_length=MAX_VARIANTS)
+        if not variants.is_valid():
+            raise serializers.ValidationError(variants.errors)
+        return variants.validated_data
+
+    def to_representation(self, variants):
+        # `variants` is the item's related manager; all() uses the prefetched rows when there are any.
+        return ItemVariantSerializer(variants.all(), many=True).data
+
+
 class MenuItemSerializer(serializers.Serializer):
     """
     Menu items for the owner dashboard (UC-OWNER-002 and UC-OWNER-013).
 
-    Input (POST, PATCH): category_id, name, price, and the optional description, is_featured, is_new, tags.
+    Input (POST, PATCH): category_id, name, price or variants, and the optional description, is_featured,
+    is_new, tags.
     Read-only, ignored if sent: image_url and thumbnail_url (UC-OWNER-006), is_available
     (UC-OWNER-005) and sort_order (UC-OWNER-004). The cafe always comes from request.user.cafe.
     Output: { id, category_id, name, description, price, image_url, thumbnail_url, is_available,
-    is_featured, is_new, tags, sort_order }. A plain Serializer for the same reason as CategorySerializer.
+    is_featured, is_new, tags, variants, sort_order }. A plain Serializer for the same reason as CategorySerializer.
     """
 
     id = serializers.IntegerField(read_only=True)
@@ -56,7 +91,9 @@ class MenuItemSerializer(serializers.Serializer):
     name = BilingualNameField()
     description = BilingualDescriptionField(required=False)
     # Global Convention 10: NUMERIC(10,2), 0 or greater, returned as a string such as "50.00".
-    price = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0'))
+    # Not required here: an item with variants is sent without it. Whether price and variants fit
+    # together depends on the stored item too, so the service decides it (UC-OWNER-002 A8).
+    price = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0'), required=False)
     image_url = serializers.CharField(read_only=True)
     thumbnail_url = serializers.SerializerMethodField()
     is_available = serializers.BooleanField(read_only=True)
@@ -68,6 +105,8 @@ class MenuItemSerializer(serializers.Serializer):
     # (UC-OWNER-002 A6). Optional: create uses [] and edit keeps the current list. A repeated code
     # passes here: storing each code once, in the fixed order, is the service's rule.
     tags = serializers.ListField(child=serializers.ChoiceField(choices=MenuItem.Tag.choices), required=False)
+    # Optional: create uses [] and edit keeps the current list.
+    variants = VariantListField(required=False)
     sort_order = serializers.IntegerField(read_only=True)
 
     def get_thumbnail_url(self, item):
@@ -109,6 +148,8 @@ class PublicMenuItemSerializer(serializers.Serializer):
     is_new = serializers.BooleanField()
     # Never hidden by the plan (Global Convention 11): the customer's browser filters by the dietary tags.
     tags = serializers.ListField(child=serializers.CharField())
+    # Never hidden by the plan either (Global Convention 10). Prefetched by get_public_menu.
+    variants = ItemVariantSerializer(many=True)
     sort_order = serializers.IntegerField()
 
     def get_image_url(self, item):
