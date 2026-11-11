@@ -6,9 +6,11 @@ import { useEffect, useState, useSyncExternalStore, type CSSProperties } from "r
 import { readableTextColor } from "@/lib/color";
 import { dirOf, formatPrice, pickText, type Lang } from "@/lib/i18n";
 import type { PublicMenu, PublicMenuItem } from "@/lib/server/public-menu";
+import { DIETARY_TAGS, type ItemTag, tagKind } from "@/lib/tags";
 import type en from "@/messages/en.json";
 
-export type MenuMessages = Record<Lang, (typeof en)["Menu"]>;
+/** The texts the menu needs, in both languages: its own ("Menu") and the tag names ("Tags"). */
+export type MenuMessages = Record<Lang, Pick<typeof en, "Menu" | "Tags">>;
 
 // The chosen language lives in localStorage, so it survives a reload. React reads it as an
 // external store: the server and the first browser render both use Arabic (no hydration
@@ -98,8 +100,24 @@ export function MenuView({ slug, menu, messages, manifestHref }: {
   const table = useSyncExternalStore(noSubscription, readTable, () => null);
   const offline = useSyncExternalStore(subscribeOnline, readOffline, () => false);
   const [unreachable, setUnreachable] = useState(false);
-  const t =createTranslator({ locale: lang, messages: { Menu: messages[lang] }, namespace: "Menu" });
-  const { cafe, categories } = menu;
+  const t = createTranslator({ locale: lang, messages: messages[lang], namespace: "Menu" });
+  const tTags = createTranslator({ locale: lang, messages: messages[lang], namespace: "Tags" });
+  const { cafe } = menu;
+
+  // UC-GUEST-001 step 7: the customer filters by dietary tags, here in the browser. The page from
+  // the server holds the whole menu and stays the same for everyone, so it can stay cached. The
+  // choice lives in this component only: a reload shows the whole menu again.
+  const [filters, setFilters] = useState<ItemTag[]>([]);
+  // A filter button only for a dietary tag that at least one item of this menu has (A4: maybe none).
+  const offered = DIETARY_TAGS.filter((tag) => menu.categories.some((category) => category.items.some((item) => item.tags.includes(tag))));
+  // With filters on: the items that have ALL the chosen tags, and only the categories that still have one.
+  const categories = filters.length === 0
+    ? menu.categories
+    : menu.categories
+        .map((category) => ({ ...category, items: category.items.filter((item) => filters.every((tag) => item.tags.includes(tag))) }))
+        .filter((category) => category.items.length > 0);
+  const toggleFilter = (tag: ItemTag) =>
+    setFilters((chosen) => (chosen.includes(tag) ? chosen.filter((other) => other !== tag) : [...chosen, tag]));
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -184,8 +202,30 @@ export function MenuView({ slug, menu, messages, manifestHref }: {
         </p>
       )}
 
-      {categories.length === 0 ? (
+      {offered.length > 0 && (
+        <div role="group" aria-label={t("filters")} className="mx-auto flex max-w-2xl flex-wrap items-center gap-2 px-4 pt-3">
+          <span className="text-sm text-stone-600">{t("filters")}</span>
+          {offered.map((tag) => (
+            // aria-pressed makes it a toggle button: a screen reader says "pressed" or "not pressed".
+            <button key={tag} type="button" aria-pressed={filters.includes(tag)} onClick={() => toggleFilter(tag)}
+              className="min-h-11 rounded-full border border-emerald-700 px-4 text-sm font-semibold text-emerald-900 aria-pressed:bg-emerald-700 aria-pressed:text-white">
+              {tTags(tag)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {menu.categories.length === 0 ? (
         <p className="px-4 py-16 text-center text-lg text-stone-600">{t("comingSoon")}</p>
+      ) : categories.length === 0 ? (
+        // A5: the chosen filters match no item. role="status": read out when it appears.
+        <div role="status" className="flex flex-col items-center gap-3 px-4 py-16 text-center">
+          <p className="text-lg text-stone-600">{t("noMatch")}</p>
+          <button type="button" onClick={() => setFilters([])}
+            className="min-h-11 rounded-full bg-primary px-4 font-semibold text-on-primary">
+            {t("clearFilters")}
+          </button>
+        </div>
       ) : (
         <>
           <nav aria-label={t("categories")} className="sticky top-0 z-10 border-b border-stone-200 bg-white/95 backdrop-blur">
@@ -208,7 +248,7 @@ export function MenuView({ slug, menu, messages, manifestHref }: {
                 </h2>
                 <ul className="space-y-3">
                   {category.items.map((item) => (
-                    <MenuItemCard key={item.id} item={item} lang={lang} t={t} />
+                    <MenuItemCard key={item.id} item={item} lang={lang} t={t} tTags={tTags} />
                   ))}
                 </ul>
               </section>
@@ -220,7 +260,12 @@ export function MenuView({ slug, menu, messages, manifestHref }: {
   );
 }
 
-function MenuItemCard({ item, lang, t }: { item: PublicMenuItem; lang: Lang; t: (key: "featured" | "new") => string }) {
+function MenuItemCard({ item, lang, t, tTags }: {
+  item: PublicMenuItem;
+  lang: Lang;
+  t: (key: "featured" | "new") => string;
+  tTags: (key: ItemTag) => string;
+}) {
   const description = pickText(item.description, lang);
   return (
     <li className="flex gap-3 rounded-xl bg-white p-3 shadow-sm">
@@ -235,10 +280,16 @@ function MenuItemCard({ item, lang, t }: { item: PublicMenuItem; lang: Lang; t: 
           <bdi className="shrink-0 font-bold">{formatPrice(item.price, lang)}</bdi>
         </div>
         {description && <p dir="auto" className="mt-1 text-sm text-stone-600">{description}</p>}
-        {(item.is_featured || item.is_new) && (
-          <div className="mt-2 flex gap-2 text-xs font-semibold">
+        {(item.is_featured || item.is_new || item.tags.length > 0) && (
+          <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold">
             {item.is_featured && <span className="rounded-full bg-primary px-2 py-0.5 text-on-primary">{t("featured")}</span>}
             {item.is_new && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-800">{t("new")}</span>}
+            {/* GC 11: a dietary tag as an outlined green label, a warning as a filled red one. */}
+            {item.tags.map((tag) => (
+              <span key={tag} className={`rounded-full px-2 py-0.5 ${tagKind(tag) === "dietary" ? "border border-emerald-700 text-emerald-900" : "bg-red-100 text-red-900"}`}>
+                {tTags(tag)}
+              </span>
+            ))}
           </div>
         )}
       </div>

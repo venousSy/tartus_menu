@@ -15,6 +15,7 @@ export type ItemValues = {
   price: string; // sent as typed: Django reads "12.5" as 12.50 and refuses anything that is no price
   is_featured: boolean;
   is_new: boolean;
+  tags: string[]; // the ticked tag codes (GC 11), sent as they are: Django refuses a code it does not know
 };
 
 /** An item form's state: `values` refill the form after a refused write, `saved` closes the edit dialog. */
@@ -32,6 +33,9 @@ function valuesFrom(formData: FormData): ItemValues {
     // A checkbox is part of the form data only while it is checked.
     is_featured: formData.has("is_featured"),
     is_new: formData.has("is_new"),
+    // One checkbox per tag, all named "tags": getAll() gives the ticked ones. The list is always
+    // sent, so unticking every box sends [] and Django removes the item's tags (GC 11).
+    tags: formData.getAll("tags").map(String),
   };
 }
 

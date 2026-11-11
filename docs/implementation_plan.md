@@ -106,7 +106,7 @@ Post-MVP steps (details in [post_mvp_roadmap.md](post_mvp_roadmap.md); each star
 20. **[x] Password reset link made by the Super Admin** (roadmap E1) — use_cases.md UC-ADMIN-010, UC-AUTH-005.
 21. **[x] Subscription expiry and warnings** (roadmap F) — use_cases.md Global Convention 5, UC-ADMIN-011, UC-ADMIN-012.
 22. **[x] Analytics** (roadmap B) — use_cases.md UC-GUEST-004, UC-OWNER-015, UC-OWNER-016.
-23. **[ ] Item tags** (roadmap G).
+23. **[x] Item tags** (roadmap G) — use_cases.md Global Convention 11.
 24. **[ ] Item variants (sizes with prices)** (roadmap H).
 25. **[ ] Password reset by email** (roadmap E2).
 26. **[ ] psycopg 3 and persistent connections** (roadmap I).

@@ -184,7 +184,12 @@
 
 ## Phase 4 — Menu features
 
-### G. Item tags — size M
+### G. Item tags — size M — done 2026-11-11 (PR #77)
+- Built as below. Details decided while building: a repeated code is stored once and the list is kept in the
+  fixed order (the service does it); in a PATCH `tags` replaces the whole list; the filters combine with AND; a
+  filter button appears only for a dietary tag that an item of the menu has; the choice is not stored;
+  `django.contrib.postgres` is now in `INSTALLED_APPS` (Django 6 needs it for `ArrayField`); no database CHECK on
+  the codes. The tag texts are the "Tags" messages. Choosing a filter has no automated test (observation 61).
 - **Design:** fixed set (`TextChoices`: vegan, vegetarian, gluten_free, spicy, contains_nuts, contains_dairy),
   translated in the message files; `MenuItem.tags` PostgreSQL `ArrayField`, default `[]`, max 6, de-duplicated;
   all plans. Dietary tags filter, allergen tags show as warnings.

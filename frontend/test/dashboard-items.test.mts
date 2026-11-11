@@ -20,8 +20,18 @@ const MB = 1024 * 1024;
 
 type Item = {
   id: number; category_id: number; name: { ar: string; en: string }; description: { ar: string; en: string };
-  price: string; image_url: string; thumbnail_url: string; is_available: boolean; is_featured: boolean; is_new: boolean; sort_order: number;
+  price: string; image_url: string; thumbnail_url: string; is_available: boolean; is_featured: boolean; is_new: boolean;
+  tags: string[]; sort_order: number;
 };
+// Django's MenuItem.Tag, in its order (GC 11).
+const TAGS = ["vegan", "vegetarian", "gluten_free", "spicy", "contains_nuts", "contains_dairy"];
+/** The tags answer of the fake Django: DRF's error for the first unknown code, else each code once in the fixed order. */
+function checkTags(sent: unknown): { errors: object } | { tags: string[] } {
+  if (!Array.isArray(sent)) return { errors: { tags: [`Expected a list of items but got type "${typeof sent}".`] } };
+  const bad = sent.findIndex((tag) => !TAGS.includes(tag));
+  if (bad >= 0) return { errors: { tags: { [bad]: [`"${sent[bad]}" is not a valid choice.`] } } };
+  return { tags: TAGS.filter((tag) => sent.includes(tag)) };
+}
 const CATEGORIES = [
   { id: 1, name: { ar: "مشروبات", en: "Drinks" }, sort_order: 100, is_visible: true },
   { id: 2, name: { ar: "حلويات", en: "" }, sort_order: 200, is_visible: true },
@@ -41,7 +51,7 @@ function seed(categoryId: number, ...names: string[]) {
     const last = Math.max(0, ...fake.items.filter((i) => i.category_id === categoryId).map((i) => i.sort_order));
     fake.items.push({
       id: fake.nextId++, category_id: categoryId, name: { ar, en: "" }, description: { ar: "", en: "" }, price: "10.00",
-      image_url: "", thumbnail_url: "", is_available: true, is_featured: false, is_new: false, sort_order: last + 100,
+      image_url: "", thumbnail_url: "", is_available: true, is_featured: false, is_new: false, tags: [], sort_order: last + 100,
     });
   }
 }
@@ -67,13 +77,15 @@ const fakeDjango: FakeDjango = async (req, path, body, answer, raw) => {
   if (path === "/dashboard/items/" && req.method === "POST") {
     const error = priceError(String(data.price));
     if (error) return answer(400, { price: [error] });
+    const checked = checkTags(data.tags ?? []);
+    if ("errors" in checked) return answer(400, checked.errors);
     if (fake.plan === "basic" && fake.items.length >= 2) {
       return answer(403, { detail: "Your Basic plan allows a maximum of 2 items. Upgrade to Pro for unlimited." });
     }
     seed(Number(data.category_id), data.name!.ar);
     Object.assign(fake.items.at(-1)!, {
       name: data.name, description: data.description, price: Number(data.price).toFixed(2),
-      is_featured: data.is_featured, is_new: data.is_new,
+      is_featured: data.is_featured, is_new: data.is_new, tags: checked.tags,
     });
     return answer(201, fake.items.at(-1));
   }
@@ -112,10 +124,12 @@ const fakeDjango: FakeDjango = async (req, path, body, answer, raw) => {
   if (req.method === "PATCH") {
     const error = priceError(String(data.price));
     if (error) return answer(400, { price: [error] });
+    const checked = checkTags(data.tags ?? item.tags); // PATCH: no "tags" keeps the list
+    if ("errors" in checked) return answer(400, checked.errors);
     if (Number(data.category_id) !== item.category_id) {
       item.sort_order = Math.max(0, ...fake.items.filter((i) => i.category_id === Number(data.category_id)).map((i) => i.sort_order)) + 100;
     }
-    Object.assign(item, { ...data, category_id: Number(data.category_id), price: Number(data.price).toFixed(2) });
+    Object.assign(item, { ...data, category_id: Number(data.category_id), price: Number(data.price).toFixed(2), tags: checked.tags });
     return answer(200, item);
   }
   fake.items = fake.items.filter((i) => i !== item); // DELETE: soft delete in Django
@@ -201,7 +215,7 @@ test("create sends every field as typed; a refused price keeps the typing", asyn
   });
   assert.deepEqual(fake.bodies.at(-1), {
     category_id: "1", name: { ar: "كنافة", en: "Kunafa" }, description: { ar: "بالجبن", en: "" },
-    price: "12.5", is_featured: true, is_new: false,
+    price: "12.5", is_featured: true, is_new: false, tags: [],
   });
   assert.ok(shown(result.html, "12.50 ل.س"), "the answer shows the item with Django's price");
   result = await submit(url(), cookie, createForm(result.html)!, { name_ar: "شاي", price: "1.234" });
@@ -221,6 +235,44 @@ test("edit moves an item to the end of another category; an unticked box sends f
   assert.deepEqual([fake.items[0].category_id, fake.items[0].sort_order, fake.items[0].price, fake.items[0].is_featured], [2, 200, "13.00", false]);
   await submit(url("?category=2"), cookie, deleteForm(await page("?category=2"), 1));
   assert.deepEqual(fake.items.map((i) => i.name.ar), ["كنافة"]);
+});
+
+/** `form` with these tag boxes ticked, as a browser sends them: one "tags" field per ticked box. */
+const withTags = (form: Form, ...tags: string[]): Form => {
+  const fields = [...form.fields.filter(([name]) => name !== "tags"), ...tags.map((tag): [string, string] => ["tags", tag])];
+  return { fields, names: fields.map(([name]) => name) };
+};
+const tagsOf = (form: Form) => form.fields.filter(([name]) => name === "tags").map(([, tag]) => tag);
+/** The codes of every tag box of a page, in page order (ticked or not). */
+const tagBoxes = (html: string) =>
+  [...html.matchAll(/<input[^>]*name="tags"[^>]*>/g)].map((m) => /\svalue="([^"]*)"/.exec(m[0])?.[1]);
+
+test("tags (GC 11): a box per tag; the ticked ones go to Django as a list; the row shows them, and the edit form starts from them", async () => {
+  const html = await page();
+  const form = createForm(html)!;
+  assert.deepEqual(tagBoxes(html), TAGS, "the create form (the only form with tags here): all six, in the fixed order");
+  assert.deepEqual(tagsOf(form), [], "a new item starts without tags");
+  assert.ok(html.includes("<legend") && shown(html, "الوسوم (اختياري)") && shown(html, "يحتوي مكسرات"));
+  let result = await submit(url(), cookie, withTags(form, "vegan", "contains_nuts"), { name_ar: "سلطة", price: "9" });
+  assert.deepEqual((fake.bodies.at(-1) as { tags: string[] }).tags, ["vegan", "contains_nuts"]);
+  // The row: a dietary tag in green, a warning in red.
+  assert.ok(/<span class="[^"]*bg-emerald-100[^"]*">نباتي صرف<\/span>/.test(result.html) && /<span class="[^"]*bg-red-100[^"]*">يحتوي مكسرات<\/span>/.test(result.html));
+  assert.ok(shown(await page("?category=1", "en"), "Vegan") && shown(await page("?category=1", "en"), "Contains nuts"));
+  const edit = editForm(await page(), 1);
+  assert.deepEqual(tagsOf(edit), ["vegan", "contains_nuts"], "the item's boxes are ticked");
+  // Unticking every box sends an empty list, which removes the tags (PATCH replaces the whole list).
+  result = await submit(url(), cookie, edit, { tags: null });
+  assert.deepEqual(actionState(result.html), { error: null, saved: true });
+  assert.deepEqual([(fake.bodies.at(-1) as { tags: string[] }).tags, fake.items[0].tags], [[], []]);
+});
+
+test("tags: a code Django does not know (a changed page) comes back as a message at the group, the ticks kept", async () => {
+  seed(1, "قهوة");
+  const result = await submit(url(), cookie, withTags(editForm(await page(), 1), "vegan", "halal"));
+  const state = actionState(result.html) as { error: unknown; values: { tags: string[] } };
+  assert.deepEqual(state.error, { form: null, fields: { "tags.1": [{ text: '"halal" is not a valid choice.' }] } });
+  assert.deepEqual(state.values.tags, ["vegan", "halal"]);
+  assert.deepEqual(fake.items[0].tags, [], "nothing was saved");
 });
 
 test("a drag reorders one category; the switch saves availability; bad arguments never reach Django", async () => {

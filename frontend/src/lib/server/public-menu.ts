@@ -3,6 +3,7 @@ import "server-only";
 import { cacheLife, cacheTag } from "next/cache";
 import type { BilingualText } from "@/lib/i18n";
 import { djangoFetch } from "@/lib/server/django";
+import type { ItemTag } from "@/lib/tags";
 
 // The answer of GET /api/v1/menu/{slug}/ (system_design.md §3.4).
 export type PublicMenuItem = {
@@ -15,6 +16,7 @@ export type PublicMenuItem = {
   is_available: boolean;
   is_featured: boolean;
   is_new: boolean;
+  tags: ItemTag[]; // on every plan (GC 11); the browser filters by the dietary ones
   sort_order: number;
 };
 
