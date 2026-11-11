@@ -12,7 +12,8 @@ Rules for this file:
 ## Open
 
 - **60.** (2026-11-10) `ChangePasswordSerializer` (UC-AUTH-004) trims spaces around `old_password` and `new_password` (DRF's default `trim_whitespace=True`), but the login (simplejwt), the create-cafe form and the new reset-link form (UC-AUTH-005) do not. A new password typed with a space at the start or end is stored without it, and the next login with the space fails. Fix: `trim_whitespace=False` on both fields, plus a test.
-- **61.** (2026-11-11) Choosing a dietary tag filter on the customer menu (UC-GUEST-001 step 7, A5) has no automated test: the frontend tests read the server's HTML and run no JavaScript, so they only prove that the filter buttons and tag labels are there. It was checked once by hand in headless Chromium. Fix: a step in `frontend/e2e/journey.spec.ts` that tags an item, turns a filter on and off, and sees the "no items match" state.
+- **61.** (2026-11-11) Choosing a dietary tag filter on the customer menu (UC-GUEST-001 step 8, A5) has no automated test: the frontend tests read the server's HTML and run no JavaScript, so they only prove that the filter buttons and tag labels are there. It was checked once by hand in headless Chromium. Fix: a step in `frontend/e2e/journey.spec.ts` that tags an item, turns a filter on and off, and sees the "no items match" state.
+- **62.** (2026-11-11) The size rows of the item form (`frontend/src/app/(app)/dashboard/items/price-fields.tsx`: add, remove, move up and down, the price input that leaves and returns) have no automated test, for the same reason as observation 61: the frontend tests run no JavaScript, so they post the fields a browser would send. Checked once by hand in headless Chromium against a real Django (add three rows, move, remove, a refused price shown at its row, save, edit, the customer menu). Fix: a step in `frontend/e2e/journey.spec.ts` that gives an item two sizes and sees them on the customer menu.
 
 ## Closed without a code change
 

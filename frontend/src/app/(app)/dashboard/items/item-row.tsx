@@ -58,7 +58,10 @@ export function ItemRow({ item, categories, movable, allowsImages }: {
           )}
           <div className="flex flex-col gap-1">
             <BilingualName name={item.name} />
-            <span className="text-sm font-semibold">{formatPrice(item.price, lang)}</span>
+            {/* GC 10: an item with sizes shows its lowest price, with "from". */}
+            <span className="text-sm font-semibold">
+              {item.variants.length > 0 ? t("priceFrom", { price: formatPrice(item.price, lang) }) : formatPrice(item.price, lang)}
+            </span>
             {(item.is_featured || item.is_new || imageHidden || item.tags.length > 0) && (
               <span className="flex flex-wrap gap-1">
                 {item.is_featured && <Badge text={t("featured")} />}
@@ -118,7 +121,7 @@ function EditForm({ item, categories }: { item: MenuItem; categories: Category[]
   return (
     <form ref={form} action={formAction} className="@container flex flex-col gap-3">
       <input type="hidden" name="id" value={item.id} />
-      <ItemFields values={state.values ?? itemValues(item)} error={state.error} categories={categories} />
+      <ItemFields values={state.values ?? itemValues(item)} error={state.error} categories={categories} resetOn={state} />
       <FormAlert error={state.error} />
       <div className="flex justify-end gap-2">
         <CancelButton />

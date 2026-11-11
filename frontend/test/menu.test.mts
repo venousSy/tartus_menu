@@ -49,14 +49,14 @@ startApp({ nextPort: 4110, djangoPort: 4111, django: fakeDjango, env: { FRONTEND
 startApp({ nextPort: 4112, djangoPort: 4113, django: fakeDjango, env: { FRONTEND_REVALIDATE_SECRET: "" } });
 
 /** A one-item menu in the shape of the public menu API. */
-function menuWith(item: string, { is_active = true, primary_color = "", tags = [] as string[] } = {}) {
+function menuWith(item: string, { is_active = true, primary_color = "", tags = [] as string[], variants = [] as object[] } = {}) {
   return {
     cafe: { name: { ar: "Test Cafe AR", en: "Test Cafe EN" }, primary_color, logo_url: "", is_active },
     categories: [{
       id: 1, name: { ar: "Drinks", en: "Drinks" }, sort_order: 100,
       items: [{
         id: 1, name: { ar: item, en: item }, description: { ar: "", en: "" }, price: "50.00", image_url: "", thumbnail_url: "",
-        is_available: true, is_featured: false, is_new: false, tags, sort_order: 100,
+        is_available: true, is_featured: false, is_new: false, tags, variants, sort_order: 100,
       }],
     }],
   };
@@ -309,6 +309,22 @@ test("a menu without dietary tags offers no filter: only warnings, or no tags at
   assert.deepEqual([tagLabels(spicy), filterButtons(spicy), spicy.includes('role="group"')], [[["حار", "warning"]], [], false]);
   const plain = await page("tags-none");
   assert.deepEqual([tagLabels(plain), filterButtons(plain), plain.includes('role="group"')], [[], [], false]);
+});
+
+// The sizes of an item as the server renders them: [name, price] per size. And an item's own price.
+const sizeRows = (html: string) =>
+  [...html.matchAll(/<li class="flex items-baseline[^"]*"><span dir="auto">([^<]*)<\/span><bdi[^>]*>([^<]*)<\/bdi><\/li>/g)].map((m) => [m[1], m[2]]);
+const itemPrices = (html: string) => [...html.matchAll(/<\/h3><bdi[^>]*>([^<]*)<\/bdi>/g)].map((m) => m[1]);
+
+test("item sizes (GC 10): every size with its own price, in the owner's order, instead of one price", async () => {
+  menus.set("sizes-cafe", menuWith("Juice", { variants: [
+    { id: 8, name: { ar: "كبير", en: "Large" }, price: "45.00" }, { id: 9, name: { ar: "صغير", en: "" }, price: "30.50" },
+  ] }));
+  menus.set("sizes-none", menuWith("Tea"));
+  const sized = await page("sizes-cafe");
+  assert.deepEqual([sizeRows(sized), itemPrices(sized)], [[["كبير", "45 ل.س"], ["صغير", "30.50 ل.س"]], []]);
+  const plain = await page("sizes-none");
+  assert.deepEqual([sizeRows(plain), itemPrices(plain)], [[], ["50 ل.س"]]);
 });
 
 test("the bare domain sends the visitor to the login page", async () => {

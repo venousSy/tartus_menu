@@ -6,6 +6,7 @@ import type { Category, MenuItem } from "@/lib/server/owner-api";
 import { ITEM_TAGS } from "@/lib/tags";
 import { FieldMessages, NameFields, TextField } from "../../ui/form-parts";
 import type { ItemValues } from "./actions";
+import { PriceFields } from "./price-fields";
 
 /** The values of a new item's form: empty, in the chosen category. */
 export function newItemValues(categoryId: number): ItemValues {
@@ -17,6 +18,7 @@ export function newItemValues(categoryId: number): ItemValues {
     is_featured: false,
     is_new: false,
     tags: [],
+    variants: [],
   };
 }
 
@@ -30,6 +32,10 @@ export function itemValues(item: MenuItem): ItemValues {
     is_featured: item.is_featured,
     is_new: item.is_new,
     tags: item.tags,
+    variants: item.variants.map((variant) => ({
+      name: { ar: variant.name.ar ?? "", en: variant.name.en ?? "" },
+      price: variant.price,
+    })),
   };
 }
 
@@ -37,12 +43,13 @@ export function itemValues(item: MenuItem): ItemValues {
  * The inputs of an item form (UC-OWNER-002), with Django's errors at each field. With `categories`
  * the owner can move the item to another category; without, it stays in `values.category_id`.
  * The form around them is a container (`@container`): each Arabic and English pair sits side by
- * side only where the form is wide enough.
+ * side only where the form is wide enough. `resetOn` is the form's action state (see PriceFields).
  */
-export function ItemFields({ values, error, categories }: {
+export function ItemFields({ values, error, categories, resetOn }: {
   values: ItemValues;
   error: FormError | null;
   categories?: Category[];
+  resetOn: unknown;
 }) {
   const t = useTranslations("Items");
   const lang = toLang(useLocale());
@@ -87,8 +94,7 @@ export function ItemFields({ values, error, categories }: {
           maxLength={DESCRIPTION_MAX_LENGTH} defaultValue={values.description.en}
           messages={error?.fields["description.en"]} />
       </div>
-      <TextField label={t("price")} name="price" inputMode="decimal" required defaultValue={values.price}
-        messages={error?.fields.price} />
+      <PriceFields values={values} error={error} resetOn={resetOn} />
       <div className="flex flex-wrap gap-x-6">
         <Checkbox name="is_featured" label={t("featured")} defaultChecked={values.is_featured} />
         <Checkbox name="is_new" label={t("new")} defaultChecked={values.is_new} />

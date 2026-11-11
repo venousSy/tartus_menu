@@ -59,6 +59,9 @@ export type MenuItem = {
   is_featured: boolean;
   is_new: boolean;
   tags: ItemTag[]; // codes of the fixed list, each once, in the list's order (GC 11); [] without tags
+  // Sizes with their own prices, in the owner's order (GC 10); [] for an item with one price.
+  // With sizes, `price` is the lowest of their prices. An id changes with every save of the list.
+  variants: { id: number; name: BilingualText; price: string }[];
   sort_order: number;
 };
 

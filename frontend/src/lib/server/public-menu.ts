@@ -17,6 +17,7 @@ export type PublicMenuItem = {
   is_featured: boolean;
   is_new: boolean;
   tags: ItemTag[]; // on every plan (GC 11); the browser filters by the dietary ones
+  variants: { id: number; name: BilingualText; price: string }[]; // sizes, in the owner's order (GC 10); [] = one price
   sort_order: number;
 };
 

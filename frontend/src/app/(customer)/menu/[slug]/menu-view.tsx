@@ -276,10 +276,21 @@ function MenuItemCard({ item, lang, t, tTags }: {
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-3">
           <h3 dir="auto" className="font-semibold">{pickText(item.name, lang)}</h3>
-          {/* <bdi> keeps "50 ل.س" in one piece inside right-to-left text. */}
-          <bdi className="shrink-0 font-bold">{formatPrice(item.price, lang)}</bdi>
+          {/* <bdi> keeps "50 ل.س" in one piece inside right-to-left text. An item with sizes has no single price. */}
+          {item.variants.length === 0 && <bdi className="shrink-0 font-bold">{formatPrice(item.price, lang)}</bdi>}
         </div>
         {description && <p dir="auto" className="mt-1 text-sm text-stone-600">{description}</p>}
+        {/* GC 10: every size with its own price, in the owner's order. */}
+        {item.variants.length > 0 && (
+          <ul className="mt-2 divide-y divide-stone-100">
+            {item.variants.map((variant) => (
+              <li key={variant.id} className="flex items-baseline justify-between gap-3 py-1">
+                <span dir="auto">{pickText(variant.name, lang)}</span>
+                <bdi className="shrink-0 font-bold">{formatPrice(variant.price, lang)}</bdi>
+              </li>
+            ))}
+          </ul>
+        )}
         {(item.is_featured || item.is_new || item.tags.length > 0) && (
           <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold">
             {item.is_featured && <span className="rounded-full bg-primary px-2 py-0.5 text-on-primary">{t("featured")}</span>}

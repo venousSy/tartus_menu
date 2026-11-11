@@ -18,7 +18,7 @@ export function CreateItemForm({ categoryId }: { categoryId: number }) {
   return (
     <form action={formAction} className="@container flex flex-col gap-3 rounded-lg border border-stone-200 bg-white p-4">
       <h3 className="font-bold">{t("newItem")}</h3>
-      <ItemFields values={state.values ?? newItemValues(categoryId)} error={state.error} />
+      <ItemFields values={state.values ?? newItemValues(categoryId)} error={state.error} resetOn={state} />
       <FormAlert error={state.error} />
       <button type="submit" disabled={pending} className={`${PRIMARY_BUTTON} self-start`}>
         {pending ? t("adding") : t("add")}
