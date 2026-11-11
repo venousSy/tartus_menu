@@ -4,6 +4,8 @@ from rest_framework import serializers
 
 from core.serializer_fields import BilingualDescriptionField, BilingualNameField
 
+from .models import MenuItem
+
 
 class CategorySerializer(serializers.Serializer):
     """
@@ -42,11 +44,11 @@ class MenuItemSerializer(serializers.Serializer):
     """
     Menu items for the owner dashboard (UC-OWNER-002 and UC-OWNER-013).
 
-    Input (POST, PATCH): category_id, name, price, and the optional description, is_featured, is_new.
+    Input (POST, PATCH): category_id, name, price, and the optional description, is_featured, is_new, tags.
     Read-only, ignored if sent: image_url and thumbnail_url (UC-OWNER-006), is_available
     (UC-OWNER-005) and sort_order (UC-OWNER-004). The cafe always comes from request.user.cafe.
     Output: { id, category_id, name, description, price, image_url, thumbnail_url, is_available,
-    is_featured, is_new, sort_order }. A plain Serializer for the same reason as CategorySerializer.
+    is_featured, is_new, tags, sort_order }. A plain Serializer for the same reason as CategorySerializer.
     """
 
     id = serializers.IntegerField(read_only=True)
@@ -61,6 +63,11 @@ class MenuItemSerializer(serializers.Serializer):
     # Optional: when not sent, create uses False and edit keeps the current value.
     is_featured = serializers.BooleanField(required=False)
     is_new = serializers.BooleanField(required=False)
+    # Global Convention 11: a list of codes from the fixed list. ListField refuses a value that is not
+    # a list; its child refuses an unknown code, with the position in the list as the error's key
+    # (UC-OWNER-002 A6). Optional: create uses [] and edit keeps the current list. A repeated code
+    # passes here: storing each code once, in the fixed order, is the service's rule.
+    tags = serializers.ListField(child=serializers.ChoiceField(choices=MenuItem.Tag.choices), required=False)
     sort_order = serializers.IntegerField(read_only=True)
 
     def get_thumbnail_url(self, item):
@@ -100,6 +107,8 @@ class PublicMenuItemSerializer(serializers.Serializer):
     is_available = serializers.BooleanField()
     is_featured = serializers.BooleanField()
     is_new = serializers.BooleanField()
+    # Never hidden by the plan (Global Convention 11): the customer's browser filters by the dietary tags.
+    tags = serializers.ListField(child=serializers.CharField())
     sort_order = serializers.IntegerField()
 
     def get_image_url(self, item):

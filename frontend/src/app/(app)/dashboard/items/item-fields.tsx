@@ -3,6 +3,7 @@ import { useId } from "react";
 import type { FormError } from "@/lib/api-errors";
 import { DESCRIPTION_MAX_LENGTH, pickText, toLang } from "@/lib/i18n";
 import type { Category, MenuItem } from "@/lib/server/owner-api";
+import { ITEM_TAGS } from "@/lib/tags";
 import { FieldMessages, NameFields, TextField } from "../../ui/form-parts";
 import type { ItemValues } from "./actions";
 
@@ -15,6 +16,7 @@ export function newItemValues(categoryId: number): ItemValues {
     price: "",
     is_featured: false,
     is_new: false,
+    tags: [],
   };
 }
 
@@ -27,6 +29,7 @@ export function itemValues(item: MenuItem): ItemValues {
     price: item.price,
     is_featured: item.is_featured,
     is_new: item.is_new,
+    tags: item.tags,
   };
 }
 
@@ -43,8 +46,16 @@ export function ItemFields({ values, error, categories }: {
 }) {
   const t = useTranslations("Items");
   const lang = toLang(useLocale());
+  const tTags = useTranslations("Tags");
   const categoryErrorId = useId();
   const categoryMessages = error?.fields.category_id;
+  const tagsHintId = useId();
+  const tagsErrorId = useId();
+  // Django names a refused code by its place in the list ("tags.1"); the whole list is "tags".
+  // The boxes cannot send a wrong code, so one place below the group shows whatever came back.
+  const tagMessages = Object.entries(error?.fields ?? {})
+    .filter(([field]) => field === "tags" || field.startsWith("tags."))
+    .flatMap(([, messages]) => messages);
   return (
     <>
       {categories ? (
@@ -82,14 +93,25 @@ export function ItemFields({ values, error, categories }: {
         <Checkbox name="is_featured" label={t("featured")} defaultChecked={values.is_featured} />
         <Checkbox name="is_new" label={t("new")} defaultChecked={values.is_new} />
       </div>
+      {/* GC 11: one box per tag of the fixed list, all named "tags". A <fieldset> gives the group its name. */}
+      <fieldset aria-describedby={tagMessages.length > 0 ? `${tagsHintId} ${tagsErrorId}` : tagsHintId} className="flex flex-col gap-1">
+        <legend className="text-sm font-semibold">{t("tags")}</legend>
+        <div className="flex flex-wrap gap-x-6">
+          {ITEM_TAGS.map((tag) => (
+            <Checkbox key={tag} name="tags" value={tag} label={tTags(tag)} defaultChecked={values.tags.includes(tag)} />
+          ))}
+        </div>
+        <p id={tagsHintId} className="text-sm text-stone-600">{t("tagsHint")}</p>
+        <FieldMessages id={tagsErrorId} messages={tagMessages} />
+      </fieldset>
     </>
   );
 }
 
-function Checkbox({ name, label, defaultChecked }: { name: string; label: string; defaultChecked: boolean }) {
+function Checkbox({ name, value, label, defaultChecked }: { name: string; value?: string; label: string; defaultChecked: boolean }) {
   return (
     <label className="flex min-h-11 items-center gap-2">
-      <input type="checkbox" name={name} defaultChecked={defaultChecked} className="size-5 accent-primary" />
+      <input type="checkbox" name={name} value={value} defaultChecked={defaultChecked} className="size-5 accent-primary" />
       <span>{label}</span>
     </label>
   );

@@ -5,6 +5,7 @@ import { cache } from "react";
 
 import type { BilingualText } from "@/lib/i18n";
 import { ApiError, apiFetch, apiGet } from "@/lib/server/api";
+import type { ItemTag } from "@/lib/tags";
 
 // The Cafe Owner's reads of Django (system_design.md §3.6), through api.ts.
 
@@ -57,6 +58,7 @@ export type MenuItem = {
   is_available: boolean;
   is_featured: boolean;
   is_new: boolean;
+  tags: ItemTag[]; // codes of the fixed list, each once, in the list's order (GC 11); [] without tags
   sort_order: number;
 };
 

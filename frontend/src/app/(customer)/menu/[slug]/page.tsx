@@ -38,12 +38,12 @@ async function Menu({ params }: Pick<Props, "params">) {
   if (!menu.cafe.is_active) {
     return <Notice title={menu.cafe.name} messageKey="unavailable" />; // A2 / UC-GUEST-002
   }
-  // Only the "Menu" texts go to the browser, as props, not the whole message files.
+  // Only the "Menu" and "Tags" texts go to the browser, as props, not the whole message files.
   return (
     <MenuView
       slug={slug}
       menu={menu}
-      messages={{ ar: ar.Menu, en: en.Menu }}
+      messages={{ ar: { Menu: ar.Menu, Tags: ar.Tags }, en: { Menu: en.Menu, Tags: en.Tags } }}
       manifestHref={`/menu/${encodeURIComponent(slug)}/manifest.webmanifest`}
     />
   );

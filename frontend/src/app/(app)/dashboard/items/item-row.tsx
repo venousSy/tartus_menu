@@ -7,6 +7,7 @@ import type { FormError } from "@/lib/api-errors";
 import { formatPrice, pickText, toLang } from "@/lib/i18n";
 import type { ActionState } from "@/lib/server/owner-actions";
 import type { Category, MenuItem } from "@/lib/server/owner-api";
+import { tagKind } from "@/lib/tags";
 import { CancelButton, DialogButton } from "../../ui/dialog-button";
 import { BilingualName, DANGER_BUTTON, FormAlert, PRIMARY_BUTTON } from "../../ui/form-parts";
 import { SortableRow } from "../sortable-list";
@@ -29,6 +30,7 @@ export function ItemRow({ item, categories, movable, allowsImages }: {
   allowsImages: boolean; // the plan's flag (GC 3)
 }) {
   const t = useTranslations("Items");
+  const tTags = useTranslations("Tags");
   const lang = toLang(useLocale());
   const name = pickText(item.name, lang);
   // GC 7: a plan without images keeps the stored image but hides it from customers. It is shown
@@ -57,10 +59,16 @@ export function ItemRow({ item, categories, movable, allowsImages }: {
           <div className="flex flex-col gap-1">
             <BilingualName name={item.name} />
             <span className="text-sm font-semibold">{formatPrice(item.price, lang)}</span>
-            {(item.is_featured || item.is_new || imageHidden) && (
+            {(item.is_featured || item.is_new || imageHidden || item.tags.length > 0) && (
               <span className="flex flex-wrap gap-1">
                 {item.is_featured && <Badge text={t("featured")} />}
                 {item.is_new && <Badge text={t("new")} />}
+                {/* GC 11: dietary tags in green, warnings in red, as on the customer menu. */}
+                {item.tags.map((tag) => (
+                  <span key={tag} className={`rounded-full px-2 text-xs font-semibold ${tagKind(tag) === "dietary" ? "bg-emerald-100 text-emerald-900" : "bg-red-100 text-red-900"}`}>
+                    {tTags(tag)}
+                  </span>
+                ))}
                 {imageHidden && (
                   <span className="rounded-full bg-stone-200 px-2 text-xs font-semibold text-stone-700">{t("imageHidden")}</span>
                 )}

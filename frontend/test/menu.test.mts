@@ -49,14 +49,14 @@ startApp({ nextPort: 4110, djangoPort: 4111, django: fakeDjango, env: { FRONTEND
 startApp({ nextPort: 4112, djangoPort: 4113, django: fakeDjango, env: { FRONTEND_REVALIDATE_SECRET: "" } });
 
 /** A one-item menu in the shape of the public menu API. */
-function menuWith(item: string, { is_active = true, primary_color = "" } = {}) {
+function menuWith(item: string, { is_active = true, primary_color = "", tags = [] as string[] } = {}) {
   return {
     cafe: { name: { ar: "Test Cafe AR", en: "Test Cafe EN" }, primary_color, logo_url: "", is_active },
     categories: [{
       id: 1, name: { ar: "Drinks", en: "Drinks" }, sort_order: 100,
       items: [{
         id: 1, name: { ar: item, en: item }, description: { ar: "", en: "" }, price: "50.00", image_url: "", thumbnail_url: "",
-        is_available: true, is_featured: false, is_new: false, sort_order: 100,
+        is_available: true, is_featured: false, is_new: false, tags, sort_order: 100,
       }],
     }],
   };
@@ -286,6 +286,29 @@ test("the menu page carries its slug, so the browser can report the open; an ina
   assert.match(await page("count-page"), /\\"slug\\":\\"count-page\\"|"slug":"count-page"/);
   assert.equal(/\\"slug\\":\\"count-closed\\"|"slug":"count-closed"/.test(await page("count-closed")), false);
   assert.deepEqual(opens, [], "rendering a page on the server counts nothing");
+});
+
+// The filter buttons and the tag labels as the server renders them (Arabic first). Choosing a filter
+// happens in the browser only, so it is not tested here.
+const filterButtons = (html: string) => [...html.matchAll(/<button[^>]*aria-pressed="false"[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
+const tagLabels = (html: string) => [...html.matchAll(/<span class="rounded-full px-2 py-0\.5 ([^"]*)">([^<]*)<\/span>/g)]
+  .map((m) => [m[2], m[1].includes("bg-red-100") ? "warning" : "dietary"]);
+
+test("item tags (GC 11): each tag is a label on its item; a filter button only for the dietary tags this menu has", async () => {
+  menus.set("tags-cafe", menuWith("Salad", { tags: ["vegan", "gluten_free", "contains_nuts"] }));
+  const html = await page("tags-cafe");
+  assert.deepEqual(tagLabels(html), [["نباتي صرف", "dietary"], ["خالٍ من الغلوتين", "dietary"], ["يحتوي مكسرات", "warning"]]);
+  assert.deepEqual(filterButtons(html), ["نباتي صرف", "خالٍ من الغلوتين"], "no button for vegetarian (no item has it) or for a warning");
+  assert.ok(/<div role="group" aria-label="اعرض فقط"/.test(html));
+});
+
+test("a menu without dietary tags offers no filter: only warnings, or no tags at all (A4)", async () => {
+  menus.set("tags-warning", menuWith("Wings", { tags: ["spicy"] }));
+  menus.set("tags-none", menuWith("Tea"));
+  const spicy = await page("tags-warning");
+  assert.deepEqual([tagLabels(spicy), filterButtons(spicy), spicy.includes('role="group"')], [[["حار", "warning"]], [], false]);
+  const plain = await page("tags-none");
+  assert.deepEqual([tagLabels(plain), filterButtons(plain), plain.includes('role="group"')], [[], [], false]);
 });
 
 test("the bare domain sends the visitor to the login page", async () => {

@@ -162,9 +162,10 @@ def list_items(cafe, *, category_id=None):
     return items.filter(category=category).order_by('sort_order', 'id')
 
 
-def create_item(cafe, *, category_id, name, price, description=None, is_featured=False, is_new=False):
+def create_item(cafe, *, category_id, name, price, description=None, is_featured=False, is_new=False, tags=()):
     """
     UC-OWNER-002 (create). The inputs were already validated by the serializer.
+    tags are stored once each, in the fixed order of the tag list (Global Convention 11).
 
     Raises NotFound (404) when the category is missing, deleted or foreign (A2), then
     PermissionDenied (403) when the plan's max_items is reached (A1), in the main flow's order.
@@ -201,6 +202,7 @@ def create_item(cafe, *, category_id, name, price, description=None, is_featured
             price=price,
             is_featured=is_featured,
             is_new=is_new,
+            tags=_ordered_tags(tags),
             sort_order=highest + SORT_ORDER_GAP,
         )
 
@@ -211,10 +213,11 @@ def create_item(cafe, *, category_id, name, price, description=None, is_featured
 
 
 def update_item(cafe, item_id, *, category_id=None, name=None, description=None, price=None,
-                is_featured=None, is_new=None):
+                is_featured=None, is_new=None, tags=None):
     """
     UC-OWNER-002 (edit). PATCH semantics: an argument left as None is not changed.
     is_available is not changed here: it has its own endpoint (UC-OWNER-005).
+    tags replaces the whole list: [] removes every tag, None keeps the list (Global Convention 11).
 
     A new category_id moves the item to the end of that category (its last item + 100).
     Raises NotFound (404) for a missing, deleted or foreign item or new category (A2).
@@ -238,7 +241,9 @@ def update_item(cafe, item_id, *, category_id=None, name=None, description=None,
             changed += ['category', 'sort_order']
 
         for field, value in [('name', name), ('description', description), ('price', price),
-                             ('is_featured', is_featured), ('is_new', is_new)]:
+                             ('is_featured', is_featured), ('is_new', is_new),
+                             ('tags', None if tags is None else _ordered_tags(tags))]:
+            # "is not None", not truthiness: False and [] are real values to save.
             if value is not None:
                 setattr(item, field, value)
                 changed.append(field)
@@ -366,6 +371,16 @@ def get_public_menu(slug):
         .order_by('sort_order', 'id')
     )
     return cafe, list(categories)
+
+
+def _ordered_tags(tags):
+    """
+    Global Convention 11: each tag once, in the order of the fixed list (MenuItem.Tag), whatever
+    order was sent. Walking the fixed list and keeping what was sent does both in one pass; the
+    result can never be longer than the list. The serializer has already refused unknown codes.
+    """
+    sent = set(tags)
+    return [tag for tag in MenuItem.Tag.values if tag in sent]
 
 
 def _apply_positions(model, ordered):

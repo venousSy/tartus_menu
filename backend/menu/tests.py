@@ -350,7 +350,7 @@ class ItemAPITestCase(CategoryAPITestCase):
         data = {
             'id': self.tea.pk, 'category_id': self.drinks.pk, 'name': {'ar': 'Tea', 'en': ''},
             'description': {'ar': '', 'en': ''}, 'price': '5.00', 'image_url': '', 'thumbnail_url': '',
-            'is_available': True, 'is_featured': False, 'is_new': False, 'sort_order': 100,
+            'is_available': True, 'is_featured': False, 'is_new': False, 'tags': [], 'sort_order': 100,
         }
         return {**data, **changes}
 
@@ -439,8 +439,43 @@ class CreateItemTests(ItemAPITestCase):
         self.assertEqual(response.data, {
             'id': coffee.pk, 'category_id': self.drinks.pk, 'name': {'ar': 'Coffee', 'en': ''},
             'description': {'ar': '', 'en': ''}, 'price': '12.50', 'image_url': '', 'thumbnail_url': '',
-            'is_available': True, 'is_featured': False, 'is_new': True, 'sort_order': 200,
+            'is_available': True, 'is_featured': False, 'is_new': True, 'tags': [], 'sort_order': 200,
         })
+
+    def test_tags_are_stored_once_each_in_the_fixed_order(self):  # Global Convention 11, on the Basic plan
+        body = {'category_id': self.food.pk, 'name': {'ar': 'Salad'}, 'price': '9.00',
+                'tags': ['contains_nuts', 'vegan', 'contains_nuts', 'gluten_free', 'vegan']}
+
+        response = self.client.post(self.item_list_url, body, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)  # tags need no plan flag
+        self.assertEqual(response.data['tags'], ['vegan', 'gluten_free', 'contains_nuts'])
+        self.assertEqual(MenuItem.objects.get(pk=response.data['id']).tags, ['vegan', 'gluten_free', 'contains_nuts'])
+
+    def test_all_six_tags_are_accepted(self):  # Global Convention 11: the whole fixed list
+        every_tag = ['vegan', 'vegetarian', 'gluten_free', 'spicy', 'contains_nuts', 'contains_dairy']
+        body = {'category_id': self.food.pk, 'name': {'ar': 'Salad'}, 'price': '9.00', 'tags': every_tag[::-1]}
+
+        response = self.client.post(self.item_list_url, body, format='json')
+
+        self.assertEqual((response.status_code, response.data['tags']), (status.HTTP_201_CREATED, every_tag))
+
+    def test_invalid_tags_return_400(self):  # A6
+        valid = {'category_id': self.food.pk, 'name': {'ar': 'Salad'}, 'price': '9.00'}
+        cases = [
+            ('not a list', 'vegan', ['Expected a list of items but got type "str".']),
+            ('unknown code', ['halal'], {0: ['"halal" is not a valid choice.']}),
+            # The key is the position in the list: the first code is fine, the second is not.
+            ('one unknown code', ['vegan', 'Vegan'], {1: ['"Vegan" is not a valid choice.']}),
+            ('a number', [5], {0: ['"5" is not a valid choice.']}),
+            ('null', None, ['This field may not be null.']),
+        ]
+        for label, tags, errors in cases:
+            with self.subTest(label):
+                response = self.client.post(self.item_list_url, {**valid, 'tags': tags}, format='json')
+
+                self.assertEqual((response.status_code, response.data), (status.HTTP_400_BAD_REQUEST, {'tags': errors}))
+        self.assertEqual(MenuItem.objects.filter(cafe=self.cafe).count(), 1)  # only Tea
 
     def test_read_only_fields_in_the_body_are_ignored(self):  # Architectural Note
         body = {
@@ -523,6 +558,38 @@ class EditItemTests(ItemAPITestCase):
         self.assertEqual(response.data, self.tea_data(
             price='6.00', is_featured=True, description={'ar': '', 'en': 'Green tea'},
         ))
+
+    def test_tags_replace_the_whole_list_and_stay_when_not_sent(self):  # Global Convention 11
+        url = self.item_url(self.tea.pk)
+
+        replaced = self.client.patch(url, {'tags': ['spicy', 'vegetarian']}, format='json')
+        kept = self.client.patch(url, {'price': '6.00'}, format='json')  # no "tags": the list stays
+        swapped = self.client.patch(url, {'tags': ['vegan']}, format='json')  # not added to the old list
+        cleared = self.client.patch(url, {'tags': []}, format='json')
+
+        self.assertEqual([r.status_code for r in (replaced, kept, swapped, cleared)], [status.HTTP_200_OK] * 4)
+        self.assertEqual([r.data['tags'] for r in (replaced, kept, swapped, cleared)],
+                         [['vegetarian', 'spicy'], ['vegetarian', 'spicy'], ['vegan'], []])
+        self.tea.refresh_from_db()
+        self.assertEqual((self.tea.tags, self.tea.price), ([], Decimal('6.00')))
+
+    def test_invalid_tags_in_a_patch_change_nothing(self):  # A6
+        MenuItem.objects.filter(pk=self.tea.pk).update(tags=['vegan'])
+
+        response = self.client.patch(self.item_url(self.tea.pk), {'tags': ['vegan', 'halal'], 'price': '9.00'},
+                                     format='json')
+
+        self.assertEqual((response.status_code, response.data),
+                         (status.HTTP_400_BAD_REQUEST, {'tags': {1: ['"halal" is not a valid choice.']}}))
+        self.tea.refresh_from_db()
+        self.assertEqual((self.tea.tags, self.tea.price), (['vegan'], Decimal('5.00')))
+
+    def test_tags_of_another_cafes_item_cannot_be_changed(self):  # tenant isolation, A2
+        response = self.client.patch(self.item_url(self.foreign_item.pk), {'tags': ['vegan']}, format='json')
+
+        self.assertEqual((response.status_code, response.data), (status.HTTP_404_NOT_FOUND, {'detail': 'Not found.'}))
+        self.foreign_item.refresh_from_db()
+        self.assertEqual(self.foreign_item.tags, [])
 
     def test_new_category_moves_the_item_to_its_end(self):
         self.add_item(self.food, 'Soup')  # Food: Soup at 100
@@ -925,7 +992,7 @@ class PublicMenuTests(APITestCase):
         cls.drinks = Category.objects.create(cafe=cls.cafe, name={'ar': 'Drinks', 'en': ''}, sort_order=200)
         hidden = Category.objects.create(cafe=cls.cafe, name={'ar': 'Hidden', 'en': ''}, is_visible=False)
         Category.objects.create(cafe=cls.cafe, name={'ar': 'Old', 'en': ''}, deleted_at=timezone.now())
-        cls.soup = cls.item(cls.food, 'Soup', '7.00')
+        cls.soup = cls.item(cls.food, 'Soup', '7.00', tags=['vegan', 'gluten_free'])
         cls.tea = cls.item(
             cls.drinks, 'Tea', '5.00', image_url='https://media.example.test/tea.webp', is_featured=True
         )
@@ -948,7 +1015,8 @@ class PublicMenuTests(APITestCase):
             'id': item.pk, 'name': {'ar': item.name['ar'], 'en': ''}, 'description': {'ar': '', 'en': ''},
             # Tea has no thumbnail (uploaded before thumbnails existed): the full image stands in.
             'price': str(item.price), 'image_url': item.image_url, 'thumbnail_url': item.thumbnail_url or item.image_url,
-            'is_available': True, 'is_featured': item.is_featured, 'is_new': False, 'sort_order': item.sort_order,
+            'is_available': True, 'is_featured': item.is_featured, 'is_new': False, 'tags': item.tags,
+            'sort_order': item.sort_order,
         }
         return {**data, **changes}
 
@@ -980,6 +1048,8 @@ class PublicMenuTests(APITestCase):
         self.assertEqual((response.data['cafe']['primary_color'], response.data['cafe']['logo_url']), ('', ''))
         self.assertEqual(response.data['categories'][1]['items'],
                          [self.item_data(self.tea, image_url='', thumbnail_url='')])
+        # Tags are not a plan feature: they stay visible on every plan (Global Convention 11).
+        self.assertEqual(response.data['categories'][0]['items'][0]['tags'], ['vegan', 'gluten_free'])
 
     def test_inactive_cafe_returns_200_without_categories(self):  # A2, UC-GUEST-002
         Cafe.objects.filter(pk=self.cafe.pk).update(is_active=False)
