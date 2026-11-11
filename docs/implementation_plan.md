@@ -20,7 +20,7 @@ All architectural decisions have been locked in. Below is a summary of every dec
 | Localization | Arabic + English, stored as JSONB: `{"ar": "...", "en": "..."}`; `ar` required, `en` optional, display falls back to `ar` |
 | Currency | SYP only — hardcoded, no currency field; new SYP after the 2026-01-01 redenomination; display with Western digits, trailing `.00` hidden |
 | Menu depth | 2 levels: Category → Items |
-| Item fields | name, description (both bilingual), price, image, is_available, is_featured, is_new |
+| Item fields | name, description (both bilingual), price, image, is_available, is_featured, is_new, tags (a fixed list of 6: dietary tags filter the menu, warning tags are shown; every plan) |
 | Delete policy | Soft delete (categories, items) · Hard delete (cafes, billing_events) |
 | Reorder algorithm | Gapped Integer (100, 200, 300…) — minimizes DB writes |
 | QR Code URL | The code holds the table's permanent short link `/t/[qr_token]`, which redirects (302) to `/menu/[cafe-slug]?table=N`, so printed codes survive a slug change; the `table` parameter is display-only; tables themselves are persisted (see "Tables") |

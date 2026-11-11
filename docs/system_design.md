@@ -123,6 +123,7 @@ menu_items
 ├── is_available  BOOLEAN      DEFAULT true
 ├── is_featured   BOOLEAN      DEFAULT false
 ├── is_new        BOOLEAN      DEFAULT false
+├── tags          TEXT[]       DEFAULT '{}'  -- codes from the fixed list of use_cases.md Global Convention 11
 ├── sort_order    INT          -- Gapped: 100, 200, 300
 ├── deleted_at    TIMESTAMPTZ  NULL  -- Soft delete
 ├── created_at    TIMESTAMPTZ  DEFAULT now()
@@ -130,6 +131,8 @@ menu_items
 ```
 
 > JSONB text fields (`name`, `description`) follow use_cases.md Global Convention 6: in `name`, `ar` is required and non-empty and `en` is optional; no other keys are allowed. String fields that can be "none" (`image_url`, `logo_url`, `primary_color`) use `''`, never NULL.
+
+> `menu_items.tags` is a PostgreSQL array (Django `ArrayField`), not a separate table: the list of codes is fixed and short (6), an item is always read together with its tags, and nothing else refers to a tag. Stored without repeats, in the order of the fixed list; no tags is `'{}'`, never NULL.
 
 ```
 billing_events
@@ -272,8 +275,8 @@ The cafe object of the admin API carries `subscription_expires_on` (`"2027-02-10
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/api/v1/dashboard/items/` | List items (filter by category) |
-| POST | `/api/v1/dashboard/items/` | Create item |
-| PATCH | `/api/v1/dashboard/items/{id}/` | Update item |
+| POST | `/api/v1/dashboard/items/` | Create item (`tags` optional: a list of tag codes) |
+| PATCH | `/api/v1/dashboard/items/{id}/` | Update item (`tags`, when sent, replaces the whole list) |
 | DELETE | `/api/v1/dashboard/items/{id}/` | Soft delete |
 | POST | `/api/v1/dashboard/items/reorder/` | Bulk reorder |
 | PATCH | `/api/v1/dashboard/items/{id}/availability/` | Toggle `is_available` |
@@ -366,6 +369,7 @@ The cafe object of the admin API carries `subscription_expires_on` (`"2027-02-10
           "is_available": true,
           "is_featured": true,
           "is_new": false,
+          "tags": ["vegan", "gluten_free"],
           "sort_order": 100
         }
       ]
@@ -376,7 +380,7 @@ The cafe object of the admin API carries `subscription_expires_on` (`"2027-02-10
 
 > When `is_active` is `false`, the API still returns 200 with `is_active: false` so the frontend can display the "Temporarily Unavailable" screen.
 
-> Plan-gated values are hidden in this response (use_cases.md Global Convention 7): `image_url` and `thumbnail_url` are `""` while the plan has `allows_images = false`; `logo_url` and `primary_color` are `""` while it has `allows_branding = false`. `price` is a string with two decimals in new SYP (Global Convention 10).
+> Plan-gated values are hidden in this response (use_cases.md Global Convention 7): `image_url` and `thumbnail_url` are `""` while the plan has `allows_images = false`; `logo_url` and `primary_color` are `""` while it has `allows_branding = false`. `price` is a string with two decimals in new SYP (Global Convention 10). `tags` is never hidden: it holds the item's tag codes on every plan, `[]` without tags (Global Convention 11); the customer filters by the dietary ones in the browser.
 
 > This endpoint is called by the Next.js server (ISR), not by the customer's browser. It is therefore not rate limited per client IP in DRF; Nginx rate-limits the `/menu/` pages instead.
 

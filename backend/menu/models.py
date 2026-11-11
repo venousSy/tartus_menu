@@ -1,4 +1,6 @@
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
+from django.utils.translation import gettext_lazy as _
 
 class ActiveManager(models.Manager):
     """
@@ -43,6 +45,18 @@ class MenuItem(models.Model):
     A single purchasable item on the menu.
     Belongs to a category, but denormalizes cafe_id for security (RLS/tenant isolation).
     """
+    class Tag(models.TextChoices):
+        """
+        The fixed list of item tags (use_cases.md Global Convention 11), in its display order.
+        The stored value is the code; the frontend shows the Arabic and English texts.
+        """
+        VEGAN = 'vegan', _('Vegan')
+        VEGETARIAN = 'vegetarian', _('Vegetarian')
+        GLUTEN_FREE = 'gluten_free', _('Gluten-free')
+        SPICY = 'spicy', _('Spicy')
+        CONTAINS_NUTS = 'contains_nuts', _('Contains nuts')
+        CONTAINS_DAIRY = 'contains_dairy', _('Contains dairy')
+
     category = models.ForeignKey(
         Category,
         on_delete=models.CASCADE,
@@ -64,8 +78,12 @@ class MenuItem(models.Model):
     is_available = models.BooleanField(default=True)
     is_featured = models.BooleanField(default=False)
     is_new = models.BooleanField(default=False)
+    # Tag codes in one PostgreSQL array column (text[]), not a separate table: the list is fixed and
+    # short, and an item is always read with its tags (system_design.md 2.2). No tags is [], never NULL.
+    # default=list, not default=[]: one shared list object would be changed by every new item.
+    tags = ArrayField(models.CharField(max_length=20, choices=Tag.choices), default=list, blank=True)
     sort_order = models.PositiveIntegerField(default=100)
-    
+
     deleted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

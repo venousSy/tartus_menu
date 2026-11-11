@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.postgres',  # part of Django; ArrayField (menu_items.tags) needs it installed
     
     # Third-party apps
     'rest_framework',
