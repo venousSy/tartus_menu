@@ -129,6 +129,10 @@ CACHES = {
 }
 
 
+# Tests: Django's runner plus the Row-Level Security setup (core/test_runner.py, system_design.md §7.1).
+TEST_RUNNER = 'core.test_runner.RlsTestRunner'
+
+
 # Custom User Model definition
 AUTH_USER_MODEL = 'users.User'
 

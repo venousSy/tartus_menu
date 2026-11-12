@@ -37,7 +37,7 @@ tartus_menu/
 - **Architecture:** Modular Monolith
 - **Backend:** Django + DRF, Service Layer pattern
 - **Frontend:** Next.js (App Router, Route Groups for Admin & Customer views), PWA with offline caching
-- **Database:** PostgreSQL with shared schema, multi-tenancy enforced via `cafe_id` filtering (PostgreSQL Row-Level Security planned post-MVP)
+- **Database:** PostgreSQL with shared schema, multi-tenancy enforced via `cafe_id` filtering, with PostgreSQL Row-Level Security as a second layer
 - **Authentication:** JWT via `djangorestframework-simplejwt`; the Next.js server (BFF) keeps the tokens in HttpOnly cookies
 - **Storage:** Cloudflare R2 (S3-compatible, no egress fees)
 - **Menu Features:** 2-level hierarchy (Category → Item), bilingual (Arabic & English via JSONB), static QR codes per table with print-ready PDF export via `reportlab`

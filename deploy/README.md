@@ -34,8 +34,9 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-Fill in every value of `.env` (the comments in the file explain each one). For the three secrets
-(`DJANGO_SECRET_KEY`, `DB_PASSWORD`, `FRONTEND_REVALIDATE_SECRET`) use a new random value each:
+Fill in every value of `.env` (the comments in the file explain each one). For the four secrets
+(`DJANGO_SECRET_KEY`, `DB_MIGRATE_PASSWORD`, `DB_PASSWORD`, `FRONTEND_REVALIDATE_SECRET`) use a new random
+value each (the two database roles are explained in section 16):
 
 ```bash
 openssl rand -hex 32
@@ -58,12 +59,15 @@ sudo certbot certonly --standalone -d menu.domain.com
 ```bash
 docker compose pull
 docker compose up -d
-docker compose exec backend python manage.py migrate
-docker compose exec backend python manage.py createcachetable
+docker compose logs migrate
 ```
 
 `pull` downloads the images that CI built from the newest commit on `main` (tag `latest`).
-`createcachetable` creates the table for the login rate-limit counters. Both commands are safe to run again.
+`up` first runs the one-shot `migrate` service and starts the website only after it succeeded. That service
+runs three commands as the owner role (section 16), at every `up`, and all are safe to repeat: `migrate`
+(creates or updates the tables), `createcachetable` (the table for the login rate-limit counters) and
+`create_app_role` (the role the website connects as, with its rights). Its log must end with
+`The role ... may read and write rows in ...`.
 
 ## 6. Create the subscription plans
 
@@ -130,9 +134,9 @@ automatic deploys are off:
 git pull --ff-only
 docker compose pull
 docker compose up -d
-docker compose exec backend python manage.py migrate
-docker compose exec backend python manage.py createcachetable
 ```
+
+`up` runs the new migrations by itself (the `migrate` service, section 5) before it starts the new website.
 
 To go back to an earlier version, run the images of that commit (CI keeps every image tagged with its
 commit SHA; the server keeps images it used in the last 7 days):
@@ -286,7 +290,8 @@ hides the normal query results of the restore; errors are still shown.
 
 Only when the live data is lost or broken. This replaces the whole database with the dump. Decrypt the
 dump on your own computer first, as in 12.4, and copy the `.sql.gz` to the server. Use the
-`DB_USER` and `DB_NAME` values of your `.env` (here the defaults `postgres` and `tartus_db`):
+`DB_MIGRATE_USER` (the owner role) and `DB_NAME` values of your `.env` (here the defaults `postgres` and
+`tartus_db`):
 
 ```bash
 docker compose stop nginx frontend backend backup
@@ -295,6 +300,9 @@ docker compose exec db psql -U postgres -d postgres -c "CREATE DATABASE tartus_d
 gunzip -c 2026-11-03.sql.gz | docker compose exec -T db psql -U postgres -d tartus_db -v ON_ERROR_STOP=1 -q -o /dev/null
 docker compose up -d
 ```
+
+The dump brings the tables back with their Row-Level Security policies, but without any rights: a dump
+holds none. The last line gives the app role its rights again (the `migrate` service runs `create_app_role`).
 
 Everything written after that dump's night is lost; uploaded images stay in the images bucket.
 
@@ -359,6 +367,30 @@ Limits to know: an owner gets an email only if the account's email address is a 
 addresses when you create cafes. One address gets at most one email per 5 minutes, and one visitor may ask
 5 times per hour. A Super Admin never gets a reset email; reset that password on the server:
 `docker compose exec backend python manage.py changepassword <email>`.
+
+## 16. The two database roles (Row-Level Security)
+
+A database role is a database user. The stack uses two (system_design.md §7.1):
+
+| Role | In `.env` | What it may do | Who uses it |
+|---|---|---|---|
+| Owner role | `DB_MIGRATE_USER`, `DB_MIGRATE_PASSWORD` | Everything: it owns the tables | The `migrate` service (section 5) and the `backup` service (the nightly dump and jobs) |
+| App role | `DB_USER`, `DB_PASSWORD` | Only read and write rows | The `backend` service: every request of the website |
+
+Why two: the six tables that hold cafe data have a Row-Level Security policy. PostgreSQL shows the app
+role only the rows of the cafe a request works for, even if the code forgets a filter. A role that owns the
+tables could switch that policy off, and PostgreSQL never applies policies to a superuser, so the website
+must not run as the owner role. The backup must: `pg_dump` refuses to dump tables whose policy would hide
+rows from it.
+
+- **Change the app role's password:** change `DB_PASSWORD` in `.env` and run `docker compose up -d`. The
+  `migrate` service sets the new password, then the backend restarts with it.
+- **Check it:** `docker compose exec db psql -U postgres -d tartus_db -c "\du"` lists both roles; the app
+  role has no attributes (not "Superuser", not "Bypass RLS").
+- **Read cafe data by hand:** connect as the owner role, as above. As the app role, a query on a table
+  such as `menu_items` returns no rows: no cafe is set for your session.
+- The owner role's name cannot be changed after the first start: PostgreSQL creates it only once, when
+  the `pgdata` volume is empty.
 
 ## Useful commands
 

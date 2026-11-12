@@ -10,7 +10,7 @@
 | Database | PostgreSQL (shared schema, `cafe_id` isolation) |
 | Auth | JWT via `simplejwt` — access 15 min, refresh 1 day, rotation + blacklist after rotation |
 | Storage | Cloudflare R2 |
-| Multi-tenancy | Shared tables + `cafe_id` FK; every queryset filtered by cafe + 404 masking + a cross-tenant test for every endpoint. PostgreSQL RLS is planned post-MVP (§7.1) |
+| Multi-tenancy | Shared tables + `cafe_id` FK; every queryset filtered by cafe + 404 masking + a cross-tenant test for every endpoint. Behind that, PostgreSQL Row-Level Security on the six tenant tables (§7.1) |
 | Languages | Arabic + English (JSONB fields); `ar` required, `en` optional, display falls back to `ar` |
 | Currency | SYP only (hardcoded) — new Syrian pound after the 2026-01-01 redenomination; display: Western digits, trailing `.00` hidden |
 | Menu levels | 2 levels: Category → Item |
@@ -608,6 +608,7 @@ Optional, with Sentry or GlitchTip (hosted; same SDK): Django uses `sentry-sdk` 
 | Service | Image | Port | Healthcheck |
 |---|---|---|---|
 | `nginx` | `nginx:alpine` | 80, 443 | — (starts after `backend` and `frontend` are healthy) |
+| `migrate` | Custom Django image | — | — (one-shot: at every `up` it runs `migrate`, `createcachetable` and `create_app_role` as the owner role (§7.1), then exits; `backend` starts only after it succeeded) |
 | `backend` | Custom Django image | 8000 (internal) | `GET /api/v1/health/` (§3.7) |
 | `frontend` | Custom Next.js image | 3000 (internal) | `GET /health` (§3.7); starts after `backend` is healthy |
 | `db` | `postgres:16-alpine` | 5432 (internal) | `pg_isready` |
@@ -624,12 +625,12 @@ git push → main branch
           ├── SSH into VPS
           ├── docker-compose pull
           ├── docker-compose up -d
-          ├── Run DB migrations (python manage.py migrate)
-          ├── Create the cache table (python manage.py createcachetable)
+          │     └── first the one-shot `migrate` service, as the owner role (§7.1):
+          │         migrate, createcachetable, create_app_role; then the new backend
           └── Check https://<domain>/health answers 200 (§3.7), else the deploy fails
 ```
 
-> `createcachetable` creates the table used by Django's `DatabaseCache` (login throttle counters). It is safe to run on every deploy.
+> `createcachetable` creates the table used by Django's `DatabaseCache` (login throttle counters). Like the other two commands of the `migrate` service, it is safe to run on every deploy.
 
 ---
 
@@ -657,7 +658,7 @@ After a downgrade, stored item images, logo and primary color are kept but hidde
 
 | Concern | Mitigation |
 |---|---|
-| Tenant data leakage | `cafe_id` filter on every queryset + a cross-tenant 404 test for every endpoint; PostgreSQL RLS planned post-MVP (§7.1) |
+| Tenant data leakage | `cafe_id` filter on every queryset + a cross-tenant 404 test for every endpoint; behind them, PostgreSQL Row-Level Security on the six tenant tables, and an application role that cannot switch it off (§7.1) |
 | Cross-tenant access | Resources of another cafe answer 404 (never 403) |
 | JWT token theft | Short-lived access tokens (15 min) + refresh token rotation with blacklist after rotation; tokens kept in HttpOnly cookies by the Next.js BFF, never in `localStorage` (§3.6) |
 | Image upload abuse | Format checked by content with Pillow (JPEG/PNG/WebP allowlist, max 25 megapixels), max 2 MB, re-encoded to WebP without metadata, random object keys, stored on R2 (not server disk); Nginx `client_max_body_size 3m` |
@@ -678,7 +679,7 @@ After a downgrade, stored item images, logo and primary color are kept but hidde
 
 ### 7.1 Row-Level Security
 
-**Status:** designed on 2026-11-12, not built yet (implementation_plan.md step 16). Until it is built, isolation relies on ORM filtering, 404 masking and cross-tenant tests.
+**Status:** built (implementation_plan.md step 16). It is added to, not instead of, the ORM filtering, the 404 masking and the cross-tenant tests.
 
 Row-Level Security (RLS) is a PostgreSQL feature: a table gets a *policy*, a condition that PostgreSQL adds to every query on that table. It is the second safety layer: PostgreSQL itself hides the rows of other cafes, even if the application forgets a `cafe_id` filter. It guards against our own bugs. It does not guard against an attacker who can run any SQL as the application, because that SQL could also change the settings below.
 
@@ -701,7 +702,7 @@ CREATE POLICY tenant_isolation ON <table>
 - Fail closed: with neither setting, the condition is NULL, so no row is visible and every insert, update and delete is refused or touches nothing.
 - Foreign key checks and cascades of PostgreSQL itself are not subject to policies.
 
-**Setting the tenant: `core/tenancy.py`.** Two context managers; each opens `transaction.atomic()` and sets both settings with `SELECT set_config(name, value, true)`. The `true` makes the value local to the transaction: it ends with the transaction, so it can never leak to the next request that reuses the connection (connections are kept for 60 seconds, `CONN_MAX_AGE`).
+**Setting the tenant: `core/tenancy.py`.** Two context managers (and the decorator `@in_tenant`, which runs a service whose first argument is the cafe inside `tenant(cafe)`); each opens `transaction.atomic()` and sets both settings with `SELECT set_config(name, value, true)`. The `true` makes the value local to the transaction: it ends with the transaction, so it can never leak to the next request that reuses the connection (connections are kept for 60 seconds, `CONN_MAX_AGE`).
 
 | Scope | Sets | Used by |
 |---|---|---|
@@ -712,7 +713,7 @@ Rules that follow from this:
 
 1. The scope is opened in the service layer, never in a view, a serializer or a middleware. JWT authentication runs inside the DRF view, after all middleware, so a middleware does not know the cafe yet. `ATOMIC_REQUESTS` is not used: it would keep a database transaction open during an R2 upload, and it would roll back the login throttle counters (they live in `DatabaseCache`) whenever a request fails.
 2. A service returns evaluated data (a list or an object with everything loaded), never a lazy queryset on a tenant table. A queryset that runs later, outside the scope, sees no rows.
-3. Scopes are not nested with a different tenant. An inner scope would change the settings for the rest of the outer transaction.
+3. A scope opened inside another one (a service that calls a service) is a savepoint; when it ends, it puts the outer scope's settings back.
 4. Code outside both scopes cannot read or write a tenant table. That is the point: a forgotten scope shows up as an empty answer in the tests, not as a leak in production.
 
 **Database roles.**
@@ -720,14 +721,14 @@ Rules that follow from this:
 | Role | Environment | What it is | Used by |
 |---|---|---|---|
 | App role | `DB_USER`, `DB_PASSWORD` | Not a superuser, `NOBYPASSRLS`, owns no table; may only SELECT, INSERT, UPDATE and DELETE rows and use sequences | The `backend` service (every web request) |
-| Owner role | `DB_MIGRATE_USER`, `DB_MIGRATE_PASSWORD` | Owns the tables; the role the `db` service creates on its first start (a superuser, so policies do not apply to it) | `migrate`, `createcachetable`, the command that creates the app role, and the `backup` service (`pg_dump` and the nightly commands) |
+| Owner role | `DB_MIGRATE_USER`, `DB_MIGRATE_PASSWORD` | Owns the tables; the role the `db` service creates on its first start (a superuser, so policies do not apply to it) | The one-shot `migrate` service (`migrate`, `createcachetable`, `create_app_role`) and the `backup` service (`pg_dump` and the nightly commands) |
 
 - `pg_dump` refuses to dump a table whose policy would hide rows from it, so the backup must run as the owner role.
-- The app role is created once by a management command run as the owner role (`python manage.py create_app_role`): it reads the app role's name and password from the environment, creates or updates the role, and grants the rights above, also for tables that later migrations add (`ALTER DEFAULT PRIVILEGES`). No password is ever written in a migration.
+- The app role is made by a management command run as the owner role at every `docker compose up` (`python manage.py create_app_role`): it reads the app role's name and password from the environment (`DB_APP_USER`, `DB_APP_PASSWORD`), creates or updates the role, and grants the rights above, also for tables that later migrations add (`ALTER DEFAULT PRIVILEGES`). No password is ever written in a migration.
 - Local development keeps one role for everything (the superuser of the development database), so policies are not enforced there. CI enforces them (see Tests).
 
 **Migrations.** Django cannot generate policies, so they are `RunSQL` migrations, each started with `makemigrations --empty` and with `reverse_sql` that drops the policy and disables RLS. This is the one approved exception to "never hand-write a migration" (implementation_plan.md). One migration per app: `cafes` (`billing_events` first, then `cafe_tables`), `menu` (`categories`, `menu_items`, `menu_item_variants`), `analytics` (`menu_view_counts`). A new tenant table must get its policy in the migration that creates it.
 
-**Tests.** CI runs the backend tests as a role that is not a superuser. Because of `FORCE`, the policies apply to it although it owns the test tables. Test fixtures are written with the bypass on; during each HTTP request of a test the bypass is off and the tenant is empty, so only the scopes the services open decide what is visible. Dedicated tests prove, for every tenant table: an unfiltered query inside `tenant(cafe)` returns only that cafe's rows; outside any scope it returns none; inserting a row for another cafe is refused. With a superuser (local development) these dedicated tests are skipped.
+**Tests.** CI runs the backend tests as a role that is not a superuser. Because of `FORCE`, the policies apply to it although it owns the test tables. Test fixtures are written with the bypass on; during each HTTP request of a test the bypass is off and the tenant is empty (`core/test_runner.py`), so only the scopes the services open decide what is visible. Dedicated tests prove, for every tenant table: an unfiltered query inside `tenant(cafe)` returns only that cafe's rows; outside any scope it returns none; inserting a row for another cafe is refused; and every table with a `cafe_id` column has a forced policy. With a superuser (local development) the tests that need applied policies are skipped. CI then runs the `core` tests once more as the superuser, for the two that need one: the real `pg_dump` and `create_app_role`. The end-to-end tests run the whole stack with the two roles.
 
 **Not built:** the composite foreign key (`menu_items (category_id, cafe_id)` → `categories (id, cafe_id)`). The services already check that an item and its category belong to the same cafe, and the policy now hides a category of another cafe from that check.

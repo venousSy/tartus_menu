@@ -14,7 +14,9 @@ from unittest import mock
 from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
 from django.test import override_settings
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 from PIL import Image
@@ -23,6 +25,7 @@ from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import AccessToken
 
 from cafes.models import Cafe, SubscriptionPlan
+from core.test_runner import data_queries
 
 from .models import Category, MenuItem, MenuItemVariant
 
@@ -759,10 +762,11 @@ class ItemVariantTests(ItemAPITestCase):
         # The request no longer loads the user and the cafe from the database: only the service's queries are left.
         self.client.force_authenticate(self.owner)
 
-        # The items, then the variants of all the items.
-        with self.assertNumQueries(2):
+        with CaptureQueriesContext(connection) as queries:
             response = self.client.get(self.item_list_url)
 
+        # The items, then the variants of all the items.
+        self.assertEqual(len(data_queries(queries)), 2)
         self.assertEqual([len(item['variants']) for item in response.data], [3, 2])
 
     def test_reorder_and_delete_keep_the_variants(self):  # UC-OWNER-004 shows them; a soft delete keeps the rows
@@ -1201,9 +1205,10 @@ class PublicMenuTests(APITestCase):
 
     def test_menu_shows_visible_categories_and_available_items(self):  # Main flow
         # Four queries for the whole menu (cafe with plan, categories, items, variants): no N+1 problem.
-        with self.assertNumQueries(4):
+        with CaptureQueriesContext(connection) as queries:
             response = self.client.get(self.url)
 
+        self.assertEqual(len(data_queries(queries)), 4)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         # Hidden or deleted categories, sold-out or deleted items and the other cafe are left out.
         self.assertEqual(response.data, {

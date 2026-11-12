@@ -29,10 +29,9 @@ export default async function globalSetup(): Promise<() => void> {
   compose(["down", "--volumes", "--remove-orphans"]); // leftovers of an interrupted run
   compose(["build", "backend", "frontend"]);
   compose(["run", "--rm", "certs"]);
-  compose(["up", "--detach", "--wait", "nginx"]); // also starts db, backend and frontend
+  // Also starts db, the one-shot migrate service (migrations, cache table, app role), backend and frontend.
+  compose(["up", "--detach", "--wait", "nginx"]);
 
-  manage("migrate", "--noinput");
-  manage("createcachetable");
   manage("create_plans"); // the two plans of deploy/README.md §6
   // "-e NAME" without a value copies NAME from the docker client's environment, so the password is not
   // part of the command line.

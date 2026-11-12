@@ -242,7 +242,9 @@
 - Thumbnails exist. Left: the 1200 px image is never shown (only useful with an item detail sheet); an optional
   `logo_thumbnail_url` (512 px logo shown at 48 px). Nothing deployed, so no backfill.
 
-### K. PostgreSQL RLS (implementation_plan step 16) — size L
+### K. PostgreSQL RLS (implementation_plan step 16) — size L — done 2026-11-12 (branch `feat/rls`)
+- As built, beyond the design: a one-shot Compose service `migrate` runs the migrations, `createcachetable`
+  and `create_app_role` as the owner role at every `up`, so no deploy step runs them by hand any more.
 - Designed 2026-11-12 in system_design.md §7.1, which now wins over the notes below. Changes against them:
   the owner role is the role the `db` service already creates (no new `tartus_owner`), because `pg_dump` needs
   a role that policies do not apply to; the app role is made by a command, `create_app_role`; the policy uses
