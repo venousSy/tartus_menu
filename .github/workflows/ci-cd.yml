@@ -78,8 +78,24 @@ jobs:
           DJANGO_ADMIN_PATH: ci-hidden-admin
           PUBLIC_MENU_BASE_URL: https://menu.example.com
         run: python manage.py check --deploy --fail-level WARNING
+      # PostgreSQL never applies Row-Level Security policies to a superuser, so the tests run as a plain
+      # role that may only create its test database (system_design.md §7.1, "Tests").
+      - name: Role for the tests
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect(host="127.0.0.1", dbname="tartus_db", user="postgres",
+                               password="ci-only-password", autocommit=True) as connection:
+              connection.execute("CREATE ROLE tartus_ci LOGIN CREATEDB PASSWORD 'ci-only-password'")
+          PY
       - name: Tests
+        env:
+          DB_USER: tartus_ci
         run: python manage.py test
+      # Again as the superuser, only the tests that need one: the real pg_dump (it refuses a role the
+      # policies bind) and create_app_role (it creates a role).
+      - name: Tests that need the owner role
+        run: python manage.py test core
 
   frontend-tests:
     name: Frontend lint, tests and types
@@ -223,13 +239,13 @@ jobs:
           # Run exactly the images built from this commit.
           export IMAGE_TAG="$2"
           docker compose pull backend frontend
+          # "up" first runs the one-shot migrate service (migrations, cache table, app role) as the owner
+          # role, and starts the new backend only after it succeeded.
           docker compose up -d
           # Nginx reads its template only when it starts: restart it only when the template changed.
           if ! git diff --quiet "$before" HEAD -- deploy/nginx; then
             docker compose restart nginx
           fi
-          docker compose exec -T backend python manage.py migrate --noinput
-          docker compose exec -T backend python manage.py createcachetable
           # The deploy fails unless the whole chain answers from outside, through Nginx and TLS, within
           # about a minute (system_design.md §3.7). DOMAIN comes from the server's .env.
           domain=$(sed -n 's/^DOMAIN=//p' .env)

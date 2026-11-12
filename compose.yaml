@@ -18,8 +18,10 @@ x-django-environment: &django-environment
   DJANGO_NUM_PROXIES: "1"
   LOGIN_THROTTLE_RATE: ${LOGIN_THROTTLE_RATE:-5/min}
   DB_NAME: ${DB_NAME}
-  DB_USER: ${DB_USER}
-  DB_PASSWORD: ${DB_PASSWORD}
+  # The app role: it may only read and write rows, and Row-Level Security binds it (system_design.md §7.1).
+  # The migrate and backup services replace these two with the owner role.
+  DB_USER: ${DB_USER:?set DB_USER in .env}
+  DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
   DB_HOST: db
   DB_PORT: "5432"
   FRONTEND_REVALIDATE_URL: http://frontend:3000/internal/revalidate
@@ -42,14 +44,20 @@ x-django-environment: &django-environment
   SENTRY_DSN: ${SENTRY_DSN:-}
   SENTRY_RELEASE: ${IMAGE_TAG:-latest}
 
+# The owner role instead of the app role, for the services that change the schema or dump the database.
+x-owner-role: &owner-role
+  DB_USER: ${DB_MIGRATE_USER:?set DB_MIGRATE_USER in .env}
+  DB_PASSWORD: ${DB_MIGRATE_PASSWORD:?set DB_MIGRATE_PASSWORD in .env}
+
 services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:?set DB_NAME in .env}
-      POSTGRES_USER: ${DB_USER:?set DB_USER in .env}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      # On its first start the image creates this role as a superuser: the owner role.
+      POSTGRES_USER: ${DB_MIGRATE_USER:?set DB_MIGRATE_USER in .env}
+      POSTGRES_PASSWORD: ${DB_MIGRATE_PASSWORD:?set DB_MIGRATE_PASSWORD in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
     # "Healthy" only once PostgreSQL accepts connections; the backend waits for it.
@@ -60,6 +68,29 @@ services:
       timeout: 5s
       retries: 5
 
+  # Prepares the database at every "docker compose up", as the owner role, then exits: new migrations, the
+  # cache table, and the app role with its rights. The backend starts only after it succeeded, so the
+  # application never runs against a schema older than its code. All three commands are safe to repeat.
+  migrate:
+    image: ghcr.io/venoussy/tartus-menu-backend:${IMAGE_TAG:-latest}
+    build: ./backend
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    # No entrypoint: collectstatic is only needed by the backend service.
+    entrypoint: []
+    command:
+      - sh
+      - -c
+      - python manage.py migrate --noinput && python manage.py createcachetable && python manage.py create_app_role
+    environment:
+      # In a merge list the first block wins, so the owner role comes first.
+      <<: [*owner-role, *django-environment]
+      # The role create_app_role makes: the one the backend connects as.
+      DB_APP_USER: ${DB_USER}
+      DB_APP_PASSWORD: ${DB_PASSWORD}
+
   backend:
     # CI builds this image and pushes it to GitHub Container Registry; the server only pulls it
     # (system_design.md §5). `build` stays for local builds, which get the same name.
@@ -69,6 +100,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment: *django-environment
     volumes:
       # collectstatic writes the Django admin's CSS and JS here at every start; Nginx will serve them.
@@ -95,7 +128,8 @@ services:
     entrypoint: []
     command: ["supercronic", "/app/crontab"]
     environment:
-      <<: *django-environment
+      # The owner role: pg_dump refuses a table whose Row-Level Security policy binds its role.
+      <<: [*owner-role, *django-environment]
       # Only this service gets the backup token: the backend never needs to read or write dumps.
       R2_BACKUP_BUCKET_NAME: ${R2_BACKUP_BUCKET_NAME:?set R2_BACKUP_BUCKET_NAME in .env}
       R2_BACKUP_ACCESS_KEY_ID: ${R2_BACKUP_ACCESS_KEY_ID:?set R2_BACKUP_ACCESS_KEY_ID in .env}
