@@ -676,14 +676,58 @@ After a downgrade, stored item images, logo and primary color are kept but hidde
 | Personal data in error reports | Error tracking is off without `SENTRY_DSN`; with it, no user info, cookies, headers, bodies or local variables are sent, and a `before_send` hook drops credentials (§5 Error Tracking) |
 | Vulnerable dependencies | Minimum versions above known CVEs (`gunicorn>=23`, `Pillow>=12.3`) |
 
-### 7.1 Row-Level Security (post-MVP plan)
+### 7.1 Row-Level Security
 
-**Status:** not part of the MVP. MVP isolation relies on ORM filtering, 404 masking and cross-tenant tests. RLS is the planned second safety layer: PostgreSQL itself hides rows of other cafes, even if the application forgets a filter. Design notes for when it is built:
+**Status:** designed on 2026-11-12, not built yet (implementation_plan.md step 16). Until it is built, isolation relies on ORM filtering, 404 masking and cross-tenant tests.
 
-1. Enable **and force** row-level security on every tenant table (`cafe_tables`, `categories`, `menu_items`, `menu_item_variants`, `billing_events`, `menu_view_counts`). Without `FORCE ROW LEVEL SECURITY`, the table owner skips the policies.
-2. Policies compare `cafe_id` with `current_setting('app.cafe_id', true)::bigint`. When the setting is missing, no rows are visible (fail closed).
-3. The tenant is set per transaction with `SELECT set_config('app.cafe_id', %s, true)`. A session-wide value could leak to the next request that reuses the same database connection.
-4. JWT authentication runs inside DRF views, after all Django middleware, so the tenant cannot be set in middleware. It must be set after DRF authentication (for example in one shared step at the start of each dashboard view or service), inside `transaction.atomic()`.
-5. The public menu (no user) and the Super Admin endpoints (all cafes) need their own policy or database role.
-6. The application database role is not a superuser, has no `BYPASSRLS` and does not own the tables. Migrations run with a separate owner role.
-7. Optional: a composite foreign key (`menu_items (category_id, cafe_id)` → `categories (id, cafe_id)`) so PostgreSQL itself guarantees that an item and its category belong to the same cafe.
+Row-Level Security (RLS) is a PostgreSQL feature: a table gets a *policy*, a condition that PostgreSQL adds to every query on that table. It is the second safety layer: PostgreSQL itself hides the rows of other cafes, even if the application forgets a `cafe_id` filter. It guards against our own bugs. It does not guard against an attacker who can run any SQL as the application, because that SQL could also change the settings below.
+
+**Tables.** The six tenant tables, each with a `cafe_id` column: `cafe_tables`, `categories`, `menu_items`, `menu_item_variants`, `billing_events`, `menu_view_counts`. Not `cafes`, `subscription_plans`, `users`, or the JWT and cache tables: the login, the lookup of a cafe by its slug and the lookup of `request.user.cafe` happen before any tenant is known.
+
+**Policy.** One policy per table, the same text for all six, for reads and writes (a policy without `WITH CHECK` uses its `USING` condition for new rows too):
+
+```sql
+ALTER TABLE <table> ENABLE ROW LEVEL SECURITY;
+ALTER TABLE <table> FORCE ROW LEVEL SECURITY;   -- without FORCE the table owner skips the policy
+CREATE POLICY tenant_isolation ON <table>
+    USING (
+        cafe_id = NULLIF(current_setting('app.cafe_id', true), '')::bigint
+        OR current_setting('app.rls_bypass', true) = 'on'
+    );
+```
+
+- `app.cafe_id` and `app.rls_bypass` are two custom settings of the database session. `current_setting(name, true)` answers NULL for a setting that was never set.
+- `NULLIF(..., '')`: after a transaction that set `app.cafe_id` ends, PostgreSQL leaves the setting as an empty string, not NULL, on that connection. Without `NULLIF` the next query on the connection would fail with "invalid input syntax for type bigint" instead of seeing no rows.
+- Fail closed: with neither setting, the condition is NULL, so no row is visible and every insert, update and delete is refused or touches nothing.
+- Foreign key checks and cascades of PostgreSQL itself are not subject to policies.
+
+**Setting the tenant: `core/tenancy.py`.** Two context managers; each opens `transaction.atomic()` and sets both settings with `SELECT set_config(name, value, true)`. The `true` makes the value local to the transaction: it ends with the transaction, so it can never leak to the next request that reuses the connection (connections are kept for 60 seconds, `CONN_MAX_AGE`).
+
+| Scope | Sets | Used by |
+|---|---|---|
+| `tenant(cafe)` | `app.cafe_id = <cafe id>`, `app.rls_bypass = off` | Every owner service (`request.user.cafe`); the public menu and the menu open counter, after they found the cafe by its slug |
+| `all_tenants()` | `app.cafe_id = ''`, `app.rls_bypass = on` | Super Admin services (they read and write any cafe); the nightly commands `expire_subscriptions` and `prune_menu_views`; the QR link lookup (UC-GUEST-003), which finds a table by its `qr_token` before any cafe is known |
+
+Rules that follow from this:
+
+1. The scope is opened in the service layer, never in a view, a serializer or a middleware. JWT authentication runs inside the DRF view, after all middleware, so a middleware does not know the cafe yet. `ATOMIC_REQUESTS` is not used: it would keep a database transaction open during an R2 upload, and it would roll back the login throttle counters (they live in `DatabaseCache`) whenever a request fails.
+2. A service returns evaluated data (a list or an object with everything loaded), never a lazy queryset on a tenant table. A queryset that runs later, outside the scope, sees no rows.
+3. Scopes are not nested with a different tenant. An inner scope would change the settings for the rest of the outer transaction.
+4. Code outside both scopes cannot read or write a tenant table. That is the point: a forgotten scope shows up as an empty answer in the tests, not as a leak in production.
+
+**Database roles.**
+
+| Role | Environment | What it is | Used by |
+|---|---|---|---|
+| App role | `DB_USER`, `DB_PASSWORD` | Not a superuser, `NOBYPASSRLS`, owns no table; may only SELECT, INSERT, UPDATE and DELETE rows and use sequences | The `backend` service (every web request) |
+| Owner role | `DB_MIGRATE_USER`, `DB_MIGRATE_PASSWORD` | Owns the tables; the role the `db` service creates on its first start (a superuser, so policies do not apply to it) | `migrate`, `createcachetable`, the command that creates the app role, and the `backup` service (`pg_dump` and the nightly commands) |
+
+- `pg_dump` refuses to dump a table whose policy would hide rows from it, so the backup must run as the owner role.
+- The app role is created once by a management command run as the owner role (`python manage.py create_app_role`): it reads the app role's name and password from the environment, creates or updates the role, and grants the rights above, also for tables that later migrations add (`ALTER DEFAULT PRIVILEGES`). No password is ever written in a migration.
+- Local development keeps one role for everything (the superuser of the development database), so policies are not enforced there. CI enforces them (see Tests).
+
+**Migrations.** Django cannot generate policies, so they are `RunSQL` migrations, each started with `makemigrations --empty` and with `reverse_sql` that drops the policy and disables RLS. This is the one approved exception to "never hand-write a migration" (implementation_plan.md). One migration per app: `cafes` (`billing_events` first, then `cafe_tables`), `menu` (`categories`, `menu_items`, `menu_item_variants`), `analytics` (`menu_view_counts`). A new tenant table must get its policy in the migration that creates it.
+
+**Tests.** CI runs the backend tests as a role that is not a superuser. Because of `FORCE`, the policies apply to it although it owns the test tables. Test fixtures are written with the bypass on; during each HTTP request of a test the bypass is off and the tenant is empty, so only the scopes the services open decide what is visible. Dedicated tests prove, for every tenant table: an unfiltered query inside `tenant(cafe)` returns only that cafe's rows; outside any scope it returns none; inserting a row for another cafe is refused. With a superuser (local development) these dedicated tests are skipped.
+
+**Not built:** the composite foreign key (`menu_items (category_id, cafe_id)` → `categories (id, cafe_id)`). The services already check that an item and its category belong to the same cafe, and the policy now hides a category of another cafe from that check.
