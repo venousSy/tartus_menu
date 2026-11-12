@@ -1,6 +1,6 @@
 # Post-MVP Roadmap
 
-> Status: PROPOSAL (2026-11-09). Not a source of truth. Each phase starts with its own docs turns
+> Status: FINISHED on 2026-11-12. Every item is built except J, which was skipped. Not a source of truth. Each phase starts with its own docs turns
 > (use_cases.md, system_design.md, implementation_plan.md); only then is code written, one step per turn
 > (AGENTS.md §3, build order §4). Out of scope still: ordering, table sessions, CAFE_STAFF, Redis.
 
@@ -238,11 +238,12 @@
   `CONN_HEALTH_CHECKS=True`; no pool (not combinable with `CONN_MAX_AGE`; little gain with sync Gunicorn).
   Do this before K.
 
-### J. Images — size S (recommend skipping for now)
+### J. Images — size S — skipped on 2026-11-12 (the owner's decision)
+- Not built. Come back to it only with a feature that shows the large image (an item detail sheet).
 - Thumbnails exist. Left: the 1200 px image is never shown (only useful with an item detail sheet); an optional
   `logo_thumbnail_url` (512 px logo shown at 48 px). Nothing deployed, so no backfill.
 
-### K. PostgreSQL RLS (implementation_plan step 16) — size L — done 2026-11-12 (branch `feat/rls`)
+### K. PostgreSQL RLS (implementation_plan step 16) — size L — done 2026-11-12 (PR #82)
 - As built, beyond the design: a one-shot Compose service `migrate` runs the migrations, `createcachetable`
   and `create_app_role` as the owner role at every `up`, so no deploy step runs them by hand any more.
 - Designed 2026-11-12 in system_design.md §7.1, which now wins over the notes below. Changes against them:
