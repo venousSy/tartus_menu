@@ -13,10 +13,10 @@ All architectural decisions have been locked in. Below is a summary of every dec
 | Architecture | Modular Monolith |
 | Backend | Django + Django REST Framework |
 | Frontend | Next.js (single app — Route Groups for admin + customer) |
-| Database | PostgreSQL — shared schema, `cafe_id` isolation (RLS post-MVP) |
+| Database | PostgreSQL — shared schema, `cafe_id` isolation, Row-Level Security as the second layer |
 | Auth | JWT via `djangorestframework-simplejwt` — access 15 min, refresh 1 day, rotation + blacklist after rotation; login rate limited (5/min per client IP, `DatabaseCache`); the frontend keeps tokens through a Next.js BFF in HttpOnly cookies |
 | Storage | Cloudflare R2 (10GB free, no egress fees, built-in CDN), served from a custom domain |
-| Multi-tenancy | Shared tables + `cafe_id` FK on every tenant-owned table; PostgreSQL RLS planned post-MVP (system_design.md §7.1) |
+| Multi-tenancy | Shared tables + `cafe_id` FK on every tenant-owned table; PostgreSQL RLS policies on those tables, and an application role that owns no table (system_design.md §7.1) |
 | Localization | Arabic + English, stored as JSONB: `{"ar": "...", "en": "..."}`; `ar` required, `en` optional, display falls back to `ar` |
 | Currency | SYP only — hardcoded, no currency field; new SYP after the 2026-01-01 redenomination; display with Western digits, trailing `.00` hidden |
 | Menu depth | 2 levels: Category → Items |
@@ -51,7 +51,7 @@ All architectural decisions have been locked in. Below is a summary of every dec
 | API errors | Standard DRF format: `{"detail": "..."}` |
 | Deployment | Docker Compose on single VPS (under $20/month) |
 | Reverse proxy | Nginx + Let's Encrypt (Certbot) |
-| CI/CD | GitHub Actions → SSH → `docker-compose up -d` → migrate |
+| CI/CD | GitHub Actions → SSH → `docker compose up -d` (its one-shot `migrate` service runs the migrations first) |
 | DB Backups | Daily `pg_dump` → Cloudflare R2 (30-day retention) |
 
 ---
@@ -97,7 +97,7 @@ The features and improvements after the MVP, in phases, with the owner's decisio
 13. **[x] GitHub Actions CI/CD** — Workflow file, SSH secrets.
 14. **[x] DB backup cron** — Docker service for daily `pg_dump` → R2, plus daily `flushexpiredtokens`.
 15. **[x] End-to-end testing** — Full flow from login to QR scan.
-16. **[ ] Post-MVP: PostgreSQL RLS** — Second isolation layer, designed in system_design.md §7.1 (policies on the six tenant tables, `core/tenancy.py`, an app role without table ownership). Done last (post_mvp_roadmap.md item K).
+16. **[x] Post-MVP: PostgreSQL RLS** — Second isolation layer, designed in system_design.md §7.1 (policies on the six tenant tables, `core/tenancy.py`, an app role without table ownership). Done last (post_mvp_roadmap.md item K).
 
 Post-MVP steps (details in [post_mvp_roadmap.md](post_mvp_roadmap.md); each starts with its own docs turns):
 
