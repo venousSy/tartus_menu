@@ -161,7 +161,8 @@ if EMAIL_HOST:
     if not DEFAULT_FROM_EMAIL:
         raise ImproperlyConfigured("DEFAULT_FROM_EMAIL must be set when EMAIL_HOST is set.")
 elif DEBUG:
-    # Development: the email is printed in the runserver console, so the link can be copied from there.
+    # Development: the email is printed in the runserver console instead of being sent. Its text is
+    # base64 there (it holds Arabic); decode it to read the link, or make one on the admin page.
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 else:
     EMAIL_BACKEND = 'django.core.mail.backends.dummy.EmailBackend'  # sends nothing
