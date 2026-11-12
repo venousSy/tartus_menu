@@ -84,6 +84,11 @@ class ChangePasswordSerializer(serializers.Serializer):
         return attrs
 
 
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """Body of UC-AUTH-006: the address to send a reset link to. Only its shape is checked (A3)."""
+    email = serializers.EmailField(max_length=255)
+
+
 class PasswordResetConfirmSerializer(serializers.Serializer):
     """
     Body of UC-AUTH-005: the two parts of the reset link (uid, token) and the new password.

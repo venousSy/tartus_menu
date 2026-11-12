@@ -32,6 +32,12 @@ x-django-environment: &django-environment
   R2_BUCKET_NAME: ${R2_BUCKET_NAME:?set R2_BUCKET_NAME in .env}
   R2_ENDPOINT_URL: ${R2_ENDPOINT_URL:?set R2_ENDPOINT_URL in .env}
   R2_CUSTOM_DOMAIN: ${R2_CUSTOM_DOMAIN:?set R2_CUSTOM_DOMAIN in .env}
+  # Optional password reset email (UC-AUTH-006): an empty EMAIL_HOST sends nothing.
+  EMAIL_HOST: ${EMAIL_HOST:-}
+  EMAIL_PORT: ${EMAIL_PORT:-}
+  EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+  EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+  DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
   # Optional error tracking (system_design.md §5): empty sends nothing. Reports name the running image.
   SENTRY_DSN: ${SENTRY_DSN:-}
   SENTRY_RELEASE: ${IMAGE_TAG:-latest}

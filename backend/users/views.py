@@ -14,6 +14,7 @@ from .serializers import (
     CustomTokenObtainPairSerializer,
     LogoutSerializer,
     PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
     RefreshTokenSerializer,
 )
 
@@ -95,9 +96,26 @@ class ChangePasswordView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class PasswordResetRequestView(APIView):
+    """
+    UC-AUTH-006: "Forgot password?". Asks for a reset link by email. The answer is 204 for every
+    well-formed address, with or without an account, so it reveals nothing about accounts.
+    """
+    authentication_classes = []  # a stale token header must not turn the answer into a 401
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]  # every request counts (A4)
+    throttle_scope = 'password_reset_email'
+
+    def post(self, request, *args, **kwargs):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.request_password_reset(serializer.validated_data['email'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class PasswordResetConfirmView(APIView):
     """
-    UC-AUTH-005: sets a new password with the one-time link a Super Admin made (UC-ADMIN-010).
+    UC-AUTH-005: sets a new password with a one-time link (UC-ADMIN-010 or UC-AUTH-006).
     The caller has no session; the link's uid and token are the proof. Rate limited like the login.
     """
     authentication_classes = []  # a stale token header must not turn the answer into a 401
