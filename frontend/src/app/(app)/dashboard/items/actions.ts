@@ -16,6 +16,8 @@ export type ItemValues = {
   is_featured: boolean;
   is_new: boolean;
   tags: string[]; // the ticked tag codes (GC 11), sent as they are: Django refuses a code it does not know
+  // The size rows of the form, in the order shown (GC 10). With at least one, no price is sent.
+  variants: { name: { ar: string; en: string }; price: string }[];
 };
 
 /** An item form's state: `values` refill the form after a refused write, `saved` closes the edit dialog. */
@@ -36,8 +38,33 @@ function valuesFrom(formData: FormData): ItemValues {
     // One checkbox per tag, all named "tags": getAll() gives the ticked ones. The list is always
     // sent, so unticking every box sends [] and Django removes the item's tags (GC 11).
     tags: formData.getAll("tags").map(String),
+    variants: variantsFrom(formData),
   };
 }
+
+/**
+ * The size rows: the inputs of row N are named "variants.N.name_ar", "variants.N.name_en" and
+ * "variants.N.price". The rows are read in the order of N; a gap in the numbers does not matter.
+ */
+function variantsFrom(formData: FormData): ItemValues["variants"] {
+  const text = (name: string) => String(formData.get(name) ?? "");
+  const numbers = new Set<number>();
+  for (const name of formData.keys()) {
+    const match = /^variants\.(\d+)\./.exec(name);
+    if (match) numbers.add(Number(match[1]));
+  }
+  return [...numbers].sort((a, b) => a - b).map((n) => ({
+    name: { ar: text(`variants.${n}.name_ar`), en: text(`variants.${n}.name_en`) },
+    price: text(`variants.${n}.price`),
+  }));
+}
+
+/**
+ * The JSON for Django. An item with sizes is sent without "price": Django sets it to the lowest
+ * size price and refuses a price sent with sizes (UC-OWNER-002 A8). JSON leaves an undefined value out.
+ * The list itself is always sent, so removing every row sends [] and Django removes the sizes.
+ */
+const bodyOf = (values: ItemValues) => (values.variants.length > 0 ? { ...values, price: undefined } : values);
 
 /**
  * Create, at the end of its category. The plan limit (A1), an unknown category (A2), the price (A3),
@@ -45,14 +72,14 @@ function valuesFrom(formData: FormData): ItemValues {
  */
 export async function createItem(_previous: ItemFormState, formData: FormData): Promise<ItemFormState> {
   const values = valuesFrom(formData);
-  const error = await writeThenRefresh(ITEMS, { method: "POST", json: values });
+  const error = await writeThenRefresh(ITEMS, { method: "POST", json: bodyOf(values) });
   return error ? { error, values } : { error: null }; // no values: the emptied form is ready for the next one
 }
 
 /** Edit: every field of the form at once. A new category moves the item to the end of that category. */
 export async function updateItem(_previous: ItemFormState, formData: FormData): Promise<ItemFormState> {
   const values = valuesFrom(formData);
-  const error = await writeThenRefresh(pathOf(ITEMS, formData), { method: "PATCH", json: values });
+  const error = await writeThenRefresh(pathOf(ITEMS, formData), { method: "PATCH", json: bodyOf(values) });
   return error ? { error, values } : { error: null, saved: true };
 }
 

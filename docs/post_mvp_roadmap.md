@@ -198,7 +198,14 @@
 - **Frontend:** `lib/tags.ts`; checkboxes in `item-fields.tsx`; `ItemValues` / `valuesFrom` in `items/actions.ts`;
   badges in `item-row.tsx` and `menu-view.tsx`; filter chips in the browser (the cached page stays shared).
 
-### H. Item variants (sizes with prices) — size L
+### H. Item variants (sizes with prices) — size L — done 2026-11-11 (PR #78)
+- **Built with the default, not confirmed by the user:** no plan flag (every plan has variants) and variants do
+  not count toward `max_items`. The user was not available to confirm; changing it later needs a plan flag and
+  a check in `menu/services.py`, no data change.
+- **Decided while building:** the 400 errors of a variant are keyed by its position, like tags
+  (`{"variants": {"1": {"price": [...]}}}`); `variants: []` in a PATCH keeps the item's last price unless `price`
+  is sent too; a variant `id` is not stable (replace-all); the price rule (A8) is the service's, so a create
+  without `price` and without `category_id` now reports `category_id` first.
 - **Design:** table `menu_item_variants`: `item` FK (CASCADE), `cafe` FK (copied, checked in `save()` like
   `MenuItem`), bilingual `name` (max 50), `price` NUMERIC(10,2) CHECK ≥ 0, gapped `sort_order`. Written as a
   nested `variants` list on item create/PATCH, replace-all in one transaction under the cafe lock (GC 8), max 10.

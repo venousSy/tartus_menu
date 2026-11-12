@@ -132,6 +132,11 @@ The customer menu page is cached by Next.js (ISR). To keep it fresh:
 - Prices are in Syrian pounds (SYP) after the redenomination of 2026-01-01 (100 old pounds = 1 new pound; the ISO code stays SYP). The currency is hardcoded; there is no currency field.
 - Stored as NUMERIC(10,2). A price must be 0 or greater. The API returns the price as a string with two decimals, for example "50.00".
 - Display rule (frontend): Western digits (0-9) in both languages, trailing ".00" hidden ("50", "12.50"), followed by the currency label (the Arabic abbreviation of Syrian pound in Arabic, "SYP" in English).
+- Variants: an item can have variants, which are sizes or options with their own price (for example Small 30, Large 45). A variant has a name and a price. The name follows Global Convention 6, but with at most 50 characters per language; the price follows the rules above. An item has 0 to 10 variants, kept in the order the owner sent.
+- The price of an item with variants is not set by the owner: the service stores the lowest variant price as the item's price, and the API returns it. Sending price together with a non-empty variants list is an error (UC-OWNER-002 A8).
+- variants is written together with the item, as a whole list (UC-OWNER-002). In an update (PATCH), variants replaces the whole list: [] removes every variant (the item keeps its last price unless price is sent too); leaving variants out changes nothing. The id of a variant is not stable: every write of the list creates new rows.
+- Variants are available on every plan (no plan flag) and do not count toward max_items: only the item counts.
+- Display rule for an item with variants: the customer menu lists every variant with its price. A place with room for one price only (the owner's item list) shows "from" and the lowest price ("from 30 SYP").
 
 **11. Item tags**
 
@@ -652,19 +657,20 @@ A menu item can carry tags: short labels from a fixed list. The owner cannot inv
 | **Preconditions** | Owner is authenticated; cafe active; category exists and belongs to this cafe |
 | **Postconditions (Success)** | Item created/updated/soft-deleted |
 | **APIs** | POST /api/v1/dashboard/items/ · PATCH /api/v1/dashboard/items/{id}/ · DELETE /api/v1/dashboard/items/{id}/ |
-| **Architectural Note** | cafe_id is denormalized on menu_items for RLS performance. The Service Layer (ItemService) validates: (1) category ownership, (2) item plan limits, (3) image upload permission (plan.allows_images must be true). The plan-limit check and the sort_order assignment run under the cafe row lock (Global Convention 8). name and description follow Global Convention 6; price follows Global Convention 10; tags follows Global Convention 11. image_url, sort_order and cafe are read-only here and ignored if sent: images are set only through UC-OWNER-006, order only through UC-OWNER-004, and the cafe always comes from request.user.cafe. |
+| **Architectural Note** | cafe_id is denormalized on menu_items for RLS performance. The Service Layer (ItemService) validates: (1) category ownership, (2) item plan limits, (3) image upload permission (plan.allows_images must be true). The plan-limit check and the sort_order assignment run under the cafe row lock (Global Convention 8). name and description follow Global Convention 6; price and variants follow Global Convention 10; tags follows Global Convention 11. A write of variants runs in one transaction under the cafe row lock (Global Convention 8). image_url, sort_order and cafe are read-only here and ignored if sent: images are set only through UC-OWNER-006, order only through UC-OWNER-004, and the cafe always comes from request.user.cafe. |
 
 **Main Flow (Create):**
-1. Owner provides: category_id, name (ar/en), description (ar/en), price, is_featured, is_new, tags (optional, default []).
+1. Owner provides: category_id, name (ar/en), description (ar/en), price, is_featured, is_new, tags (optional, default []), variants (optional, default []). Exactly one of price and a non-empty variants list is sent: an item with variants gets the lowest variant price as its price (Global Convention 10).
 2. Service validates category_id belongs to this cafe.
 3. Service checks item limit: if plan.max_items is not NULL and the number of this cafe's items with deleted_at IS NULL is >= plan.max_items, reject.
 4. Service assigns sort_order.
-5. Item saved. Returns item object.
+5. Item saved together with its variants, in the order sent. Returns item object.
 
 **Main Flow (Edit):**
 1. Owner provides partial update fields.
 2. Service validates ownership.
-3. Item updated and returned.
+3. When variants is sent, the service replaces the item's whole variant list with it and, for a non-empty list, sets the item's price to the lowest variant price.
+4. Item updated and returned.
 
 **Main Flow (Delete):**
 1. Service soft-deletes by setting deleted_at = now().
@@ -677,6 +683,8 @@ A menu item can carry tags: short labels from a fixed list. The owner cannot inv
 - **A4 — Invalid name or description:** 400 Bad Request with field-level errors (Global Convention 6).
 - **A5 — Cafe inactive:** 403 Forbidden — {"detail": "Your subscription is inactive. Please contact support."} (Global Convention 5).
 - **A6 — Invalid tags:** 400 Bad Request with a field-level error on tags (Global Convention 11): not a list — {"tags": ["Expected a list of items but got type \"str\"."]}; an unknown code — {"tags": {"0": ["\"halal\" is not a valid choice."]}} (the key is the position in the list).
+- **A7 — Invalid variants:** 400 Bad Request with a field-level error on variants (Global Convention 10). Not a list — {"variants": {"non_field_errors": ["Expected a list of items but got type \"str\"."]}}; more than 10 — {"variants": {"non_field_errors": ["Ensure this field has no more than 10 elements."]}}; an invalid variant — {"variants": {"1": {"price": ["Ensure this value is greater than or equal to 0."]}}} (the key is the position in the list, as in A6; inside it are the errors of that variant's fields).
+- **A8 — Price and variants do not fit together:** 400 Bad Request. price sent for an item that has variants after this request (a non-empty variants list in the same request, or stored variants and no variants in the request) — {"price": ["An item with variants takes its price from them. Do not send price."]}. Create without price and without variants — {"price": ["This field is required."]}.
 
 ---
 
@@ -959,7 +967,7 @@ A menu item can carry tags: short labels from a fixed list. The owner cannot inv
 
 **Main Flow:**
 1. Owner requests the list (optionally with ?category=<id>).
-2. System returns [ { id, category_id, name: {ar, en}, description: {ar, en}, price, image_url, thumbnail_url, is_available, is_featured, is_new, tags, sort_order } ]. Without the filter: sorted by the category's sort_order ascending, then the item's sort_order ascending. With the filter: only that category's items, sorted by sort_order ascending.
+2. System returns [ { id, category_id, name: {ar, en}, description: {ar, en}, price, image_url, thumbnail_url, is_available, is_featured, is_new, tags, variants: [ { id, name: {ar, en}, price } ], sort_order } ]. variants is in the owner's order and is [] for an item without variants (Global Convention 10). Without the filter: sorted by the category's sort_order ascending, then the item's sort_order ascending. With the filter: only that category's items, sorted by sort_order ascending.
 
 **Alternate Flows:**
 - **A1 — No items:** 200 OK with [].
@@ -1057,7 +1065,7 @@ A menu item can carry tags: short labels from a fixed list. The owner cannot inv
 | **Preconditions** | Cafe exists and is_active = true |
 | **Postconditions (Success)** | Full menu rendered: cafe branding, all visible categories, all available items |
 | **API** | GET /api/v1/menu/{slug}/ |
-| **Architectural Note** | No authentication required. Response includes only categories with is_visible = true AND deleted_at IS NULL and, inside them, only items with deleted_at IS NULL AND is_available = true. Plan-gated values (image_url, logo_url, primary_color) are hidden according to Global Convention 7; tags are returned on every plan (Global Convention 11). The table query param is display-only — backend does not validate or store it. The frontend reads it in the browser, not on the server, so the cached page is the same for every table. Next.js renders this with ISR (Incremental Static Regeneration) for performance and keeps it fresh with on-demand revalidation (Global Convention 9). The API is called by the Next.js server, not by the customer's browser, so it is not rate limited per client IP; rate limiting for /menu/ is done in Nginx. The noindex, nofollow meta tag and the X-Robots-Tag response header prevent search engine indexing. |
+| **Architectural Note** | No authentication required. Response includes only categories with is_visible = true AND deleted_at IS NULL and, inside them, only items with deleted_at IS NULL AND is_available = true. Plan-gated values (image_url, logo_url, primary_color) are hidden according to Global Convention 7; tags and variants are returned on every plan (Global Conventions 11 and 10). The table query param is display-only — backend does not validate or store it. The frontend reads it in the browser, not on the server, so the cached page is the same for every table. Next.js renders this with ISR (Incremental Static Regeneration) for performance and keeps it fresh with on-demand revalidation (Global Convention 9). The API is called by the Next.js server, not by the customer's browser, so it is not rate limited per client IP; rate limiting for /menu/ is done in Nginx. The noindex, nofollow meta tag and the X-Robots-Tag response header prevent search engine indexing. |
 
 **Main Flow:**
 1. Customer's browser navigates to /menu/tartus-coffee?table=3.
@@ -1065,8 +1073,9 @@ A menu item can carry tags: short labels from a fixed list. The owner cannot inv
 3. API returns: cafe branding + categories (sorted by sort_order) + items per category (sorted by sort_order, only is_available=true shown to customer).
 4. Frontend renders the menu with the cafe's primary_color as a CSS variable (default theme when primary_color is "").
 5. Customer can toggle language between Arabic and English in the browser (no new request); missing English text falls back to Arabic (Global Convention 6). Prices are displayed as described in Global Convention 10.
-6. Each item shows its tags (Global Convention 11) as small labels; warning tags look different from dietary tags.
-7. Customer can filter by dietary tags. The menu offers a filter button for each dietary tag that at least one item of this menu has. With one or more filters on, only the items that have ALL the chosen tags are shown, and a category without such an item is hidden. Filtering happens in the browser (no new request), so the cached page stays the same for everyone. The choice is not stored: a reload shows the whole menu again.
+6. An item with variants shows every variant with its name and price, in the owner's order, instead of one price (Global Convention 10).
+7. Each item shows its tags (Global Convention 11) as small labels; warning tags look different from dietary tags.
+8. Customer can filter by dietary tags. The menu offers a filter button for each dietary tag that at least one item of this menu has. With one or more filters on, only the items that have ALL the chosen tags are shown, and a category without such an item is hidden. Filtering happens in the browser (no new request), so the cached page stays the same for everyone. The choice is not stored: a reload shows the whole menu again.
 
 **Alternate Flows:**
 - **A1 — Slug not found:** 404 Not Found — frontend shows a generic "Menu not found" page.

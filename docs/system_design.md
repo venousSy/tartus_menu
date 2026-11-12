@@ -132,6 +132,20 @@ menu_items
 
 > JSONB text fields (`name`, `description`) follow use_cases.md Global Convention 6: in `name`, `ar` is required and non-empty and `en` is optional; no other keys are allowed. String fields that can be "none" (`image_url`, `logo_url`, `primary_color`) use `''`, never NULL.
 
+```
+menu_item_variants               -- sizes or options of one item, each with its own price
+├── id          PK
+├── item_id     FK → menu_items.id  (CASCADE DELETE)
+├── cafe_id     FK → cafes.id       (CASCADE DELETE; denormalized for RLS, always the item's cafe)
+├── name        JSONB         -- {"ar":"...", "en":"..."}, at most 50 characters per language
+├── price       NUMERIC(10,2) -- new SYP; CHECK price >= 0
+├── sort_order  INT           -- Gapped: 100, 200, 300, in the order the owner sent
+├── created_at  TIMESTAMPTZ   DEFAULT now()
+└── updated_at  TIMESTAMPTZ   DEFAULT now()
+```
+
+> An item has 0 to 10 variants (use_cases.md Global Convention 10). They are written only as a whole list with their item: the old rows are deleted and the new ones inserted in one transaction, so a variant `id` is not stable. While an item has variants, `menu_items.price` holds the lowest variant price (set by the service), so every reader that needs one price still finds it there.
+
 > `menu_items.tags` is a PostgreSQL array (Django `ArrayField`), not a separate table: the list of codes is fixed and short (6), an item is always read together with its tags, and nothing else refers to a tag. Stored without repeats, in the order of the fixed list; no tags is `'{}'`, never NULL.
 
 ```
@@ -164,6 +178,7 @@ menu_view_counts                 -- app "analytics" (use_cases.md UC-GUEST-004)
 | `cafe_tables` | Deactivate (`is_active = false`); rows are removed only by the cafe CASCADE | `cafe_id` |
 | `categories` | **Soft delete** (`deleted_at`) | `cafe_id` |
 | `menu_items` | **Soft delete** (`deleted_at`) | `cafe_id` |
+| `menu_item_variants` | Hard delete: replaced as a whole list on an item write; with the item or the cafe (CASCADE). No `deleted_at`: a soft-deleted item keeps its rows, hidden with it | `cafe_id` |
 | `billing_events` | Hard delete (audit log, not user-facing) | `cafe_id` |
 | `menu_view_counts` | Hard delete: with the cafe (CASCADE), and by age (400 days) | `cafe_id` |
 
@@ -275,8 +290,8 @@ The cafe object of the admin API carries `subscription_expires_on` (`"2027-02-10
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/api/v1/dashboard/items/` | List items (filter by category) |
-| POST | `/api/v1/dashboard/items/` | Create item (`tags` optional: a list of tag codes) |
-| PATCH | `/api/v1/dashboard/items/{id}/` | Update item (`tags`, when sent, replaces the whole list) |
+| POST | `/api/v1/dashboard/items/` | Create item (`tags` optional: a list of tag codes; `variants` optional: a list of `{name, price}`, sent instead of `price`) |
+| PATCH | `/api/v1/dashboard/items/{id}/` | Update item (`tags` and `variants`, when sent, each replace their whole list) |
 | DELETE | `/api/v1/dashboard/items/{id}/` | Soft delete |
 | POST | `/api/v1/dashboard/items/reorder/` | Bulk reorder |
 | PATCH | `/api/v1/dashboard/items/{id}/availability/` | Toggle `is_available` |
@@ -370,6 +385,10 @@ The cafe object of the admin API carries `subscription_expires_on` (`"2027-02-10
           "is_featured": true,
           "is_new": false,
           "tags": ["vegan", "gluten_free"],
+          "variants": [
+            { "id": 31, "name": { "ar": "صغير", "en": "Small" }, "price": "50.00" },
+            { "id": 32, "name": { "ar": "كبير", "en": "Large" }, "price": "75.00" }
+          ],
           "sort_order": 100
         }
       ]
@@ -380,7 +399,9 @@ The cafe object of the admin API carries `subscription_expires_on` (`"2027-02-10
 
 > When `is_active` is `false`, the API still returns 200 with `is_active: false` so the frontend can display the "Temporarily Unavailable" screen.
 
-> Plan-gated values are hidden in this response (use_cases.md Global Convention 7): `image_url` and `thumbnail_url` are `""` while the plan has `allows_images = false`; `logo_url` and `primary_color` are `""` while it has `allows_branding = false`. `price` is a string with two decimals in new SYP (Global Convention 10). `tags` is never hidden: it holds the item's tag codes on every plan, `[]` without tags (Global Convention 11); the customer filters by the dietary ones in the browser.
+> Plan-gated values are hidden in this response (use_cases.md Global Convention 7): `image_url` and `thumbnail_url` are `""` while the plan has `allows_images = false`; `logo_url` and `primary_color` are `""` while it has `allows_branding = false`. `price` is a string with two decimals in new SYP (Global Convention 10). `tags` is never hidden: it holds the item's tag codes on every plan, `[]` without tags (Global Convention 11); the customer filters by the dietary ones in the browser. `variants` is never hidden either: the item's sizes in the owner's order, `[]` for an item with one price; with variants, `price` is the lowest variant price (Global Convention 10).
+
+> The whole response costs four database queries, whatever the size of the menu: the cafe with its plan, the categories, their items, the items' variants.
 
 > This endpoint is called by the Next.js server (ISR), not by the customer's browser. It is therefore not rate limited per client IP in DRF; Nginx rate-limits the `/menu/` pages instead.
 
@@ -648,7 +669,7 @@ After a downgrade, stored item images, logo and primary color are kept but hidde
 
 **Status:** not part of the MVP. MVP isolation relies on ORM filtering, 404 masking and cross-tenant tests. RLS is the planned second safety layer: PostgreSQL itself hides rows of other cafes, even if the application forgets a filter. Design notes for when it is built:
 
-1. Enable **and force** row-level security on every tenant table (`cafe_tables`, `categories`, `menu_items`, `billing_events`). Without `FORCE ROW LEVEL SECURITY`, the table owner skips the policies.
+1. Enable **and force** row-level security on every tenant table (`cafe_tables`, `categories`, `menu_items`, `menu_item_variants`, `billing_events`, `menu_view_counts`). Without `FORCE ROW LEVEL SECURITY`, the table owner skips the policies.
 2. Policies compare `cafe_id` with `current_setting('app.cafe_id', true)::bigint`. When the setting is missing, no rows are visible (fail closed).
 3. The tenant is set per transaction with `SELECT set_config('app.cafe_id', %s, true)`. A session-wide value could leak to the next request that reuses the same database connection.
 4. JWT authentication runs inside DRF views, after all Django middleware, so the tenant cannot be set in middleware. It must be set after DRF authentication (for example in one shared step at the start of each dashboard view or service), inside `transaction.atomic()`.

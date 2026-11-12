@@ -21,8 +21,9 @@ const MB = 1024 * 1024;
 type Item = {
   id: number; category_id: number; name: { ar: string; en: string }; description: { ar: string; en: string };
   price: string; image_url: string; thumbnail_url: string; is_available: boolean; is_featured: boolean; is_new: boolean;
-  tags: string[]; sort_order: number;
+  tags: string[]; variants: Variant[]; sort_order: number;
 };
+type Variant = { id?: number; name: { ar: string; en: string }; price: string };
 // Django's MenuItem.Tag, in its order (GC 11).
 const TAGS = ["vegan", "vegetarian", "gluten_free", "spicy", "contains_nuts", "contains_dairy"];
 /** The tags answer of the fake Django: DRF's error for the first unknown code, else each code once in the fixed order. */
@@ -31,6 +32,26 @@ function checkTags(sent: unknown): { errors: object } | { tags: string[] } {
   const bad = sent.findIndex((tag) => !TAGS.includes(tag));
   if (bad >= 0) return { errors: { tags: { [bad]: [`"${sent[bad]}" is not a valid choice.`] } } };
   return { tags: TAGS.filter((tag) => sent.includes(tag)) };
+}
+/**
+ * The variants answer of the fake Django (GC 10, UC-OWNER-002 A7 and A8): DRF's errors keyed by the
+ * position of the refused variant; a price sent with variants is refused; else the stored list and
+ * the item's price, which is the lowest variant price.
+ */
+function checkVariants(sent: Variant[], price: unknown): { errors: object } | { variants: Variant[]; price?: string } {
+  const errors: Record<number, object> = {};
+  sent.forEach((variant, n) => {
+    const error = priceError(String(variant.price));
+    if (!variant.name.ar) errors[n] = { name: { ar: ["This field may not be blank."] } };
+    else if (error) errors[n] = { price: [error] };
+  });
+  if (Object.keys(errors).length > 0) return { errors: { variants: errors } };
+  if (sent.length === 0) return { variants: [] };
+  if (price !== undefined) return { errors: { price: ["An item with variants takes its price from them. Do not send price."] } };
+  return {
+    variants: sent.map((variant, n) => ({ id: 100 + n, name: variant.name, price: Number(variant.price).toFixed(2) })),
+    price: Math.min(...sent.map((variant) => Number(variant.price))).toFixed(2),
+  };
 }
 const CATEGORIES = [
   { id: 1, name: { ar: "مشروبات", en: "Drinks" }, sort_order: 100, is_visible: true },
@@ -51,7 +72,8 @@ function seed(categoryId: number, ...names: string[]) {
     const last = Math.max(0, ...fake.items.filter((i) => i.category_id === categoryId).map((i) => i.sort_order));
     fake.items.push({
       id: fake.nextId++, category_id: categoryId, name: { ar, en: "" }, description: { ar: "", en: "" }, price: "10.00",
-      image_url: "", thumbnail_url: "", is_available: true, is_featured: false, is_new: false, tags: [], sort_order: last + 100,
+      image_url: "", thumbnail_url: "", is_available: true, is_featured: false, is_new: false, tags: [], variants: [],
+      sort_order: last + 100,
     });
   }
 }
@@ -75,7 +97,9 @@ const fakeDjango: FakeDjango = async (req, path, body, answer, raw) => {
     return answer(200, [...fake.items].sort((a, b) => rank(a) - rank(b)));
   }
   if (path === "/dashboard/items/" && req.method === "POST") {
-    const error = priceError(String(data.price));
+    const sizes = checkVariants(data.variants ?? [], data.price);
+    if ("errors" in sizes) return answer(400, sizes.errors);
+    const error = sizes.price ? null : priceError(String(data.price));
     if (error) return answer(400, { price: [error] });
     const checked = checkTags(data.tags ?? []);
     if ("errors" in checked) return answer(400, checked.errors);
@@ -84,8 +108,8 @@ const fakeDjango: FakeDjango = async (req, path, body, answer, raw) => {
     }
     seed(Number(data.category_id), data.name!.ar);
     Object.assign(fake.items.at(-1)!, {
-      name: data.name, description: data.description, price: Number(data.price).toFixed(2),
-      is_featured: data.is_featured, is_new: data.is_new, tags: checked.tags,
+      name: data.name, description: data.description, price: sizes.price ?? Number(data.price).toFixed(2),
+      is_featured: data.is_featured, is_new: data.is_new, tags: checked.tags, variants: sizes.variants,
     });
     return answer(201, fake.items.at(-1));
   }
@@ -122,14 +146,19 @@ const fakeDjango: FakeDjango = async (req, path, body, answer, raw) => {
     return answer(200, { id: item.id, is_available: item.is_available });
   }
   if (req.method === "PATCH") {
-    const error = priceError(String(data.price));
+    const sizes = checkVariants(data.variants ?? item.variants, data.price); // PATCH: no "variants" keeps the list
+    if ("errors" in sizes) return answer(400, sizes.errors);
+    const error = sizes.price ? null : priceError(String(data.price));
     if (error) return answer(400, { price: [error] });
     const checked = checkTags(data.tags ?? item.tags); // PATCH: no "tags" keeps the list
     if ("errors" in checked) return answer(400, checked.errors);
     if (Number(data.category_id) !== item.category_id) {
       item.sort_order = Math.max(0, ...fake.items.filter((i) => i.category_id === Number(data.category_id)).map((i) => i.sort_order)) + 100;
     }
-    Object.assign(item, { ...data, category_id: Number(data.category_id), price: Number(data.price).toFixed(2), tags: checked.tags });
+    Object.assign(item, {
+      ...data, category_id: Number(data.category_id), price: sizes.price ?? Number(data.price).toFixed(2),
+      tags: checked.tags, variants: sizes.variants,
+    });
     return answer(200, item);
   }
   fake.items = fake.items.filter((i) => i !== item); // DELETE: soft delete in Django
@@ -147,9 +176,10 @@ const page = async (query = "?category=1", lang = "ar") =>
 const url = (query = "?category=1") => `${PAGE}${query}`;
 const createForm = (html: string) => formsOf(html).find((f) => f.names.includes("price") && !f.names.includes("id"));
 const rowForms = (html: string, id: number) => formsOf(html).filter((f) => f.fields.some(([n, v]) => n === "id" && v === String(id)));
-const editForm = (html: string, id: number) => rowForms(html, id).find((f) => f.names.includes("price"))!;
+// By the name input, not the price: the edit form of an item with sizes has no "price" input (GC 10).
+const editForm = (html: string, id: number) => rowForms(html, id).find((f) => f.names.includes("name_ar"))!;
 const imageForm = (html: string, id: number) => rowForms(html, id).find((f) => f.names.includes("image"));
-const deleteForm = (html: string, id: number) => rowForms(html, id).find((f) => !f.names.includes("price") && !f.names.includes("image"))!;
+const deleteForm = (html: string, id: number) => rowForms(html, id).find((f) => !f.names.includes("name_ar") && !f.names.includes("image"))!;
 const writes = () => fake.calls.filter((call) => !call.startsWith("GET"));
 const refused = (key: string) => ({ error: { form: { key }, fields: {} } });
 
@@ -215,7 +245,7 @@ test("create sends every field as typed; a refused price keeps the typing", asyn
   });
   assert.deepEqual(fake.bodies.at(-1), {
     category_id: "1", name: { ar: "كنافة", en: "Kunafa" }, description: { ar: "بالجبن", en: "" },
-    price: "12.5", is_featured: true, is_new: false, tags: [],
+    price: "12.5", is_featured: true, is_new: false, tags: [], variants: [],
   });
   assert.ok(shown(result.html, "12.50 ل.س"), "the answer shows the item with Django's price");
   result = await submit(url(), cookie, createForm(result.html)!, { name_ar: "شاي", price: "1.234" });
@@ -264,6 +294,55 @@ test("tags (GC 11): a box per tag; the ticked ones go to Django as a list; the r
   result = await submit(url(), cookie, edit, { tags: null });
   assert.deepEqual(actionState(result.html), { error: null, saved: true });
   assert.deepEqual([(fake.bodies.at(-1) as { tags: string[] }).tags, fake.items[0].tags], [[], []]);
+});
+
+/** The size rows of a form as a browser sends them: [name_ar, name_en, price] per row, in the order of N. */
+const sizesOf = (form: Form) => {
+  const rows: string[][] = [];
+  for (const [name, value] of form.fields) {
+    const match = /^variants\.(\d+)\.(name_ar|name_en|price)$/.exec(name);
+    if (match) (rows[Number(match[1])] ??= ["", "", ""])[["name_ar", "name_en", "price"].indexOf(match[2])] = value;
+  }
+  return rows;
+};
+
+test("sizes (GC 10): the rows go to Django as a list, without a price; the row shows the lowest price with 'from'; the edit form starts from them", async () => {
+  const form = createForm(await page())!;
+  assert.deepEqual(sizesOf(form), [], "a new item starts with a price input and no size rows");
+  // What the page sends after the owner added two rows: the price input is gone, the rows are numbered.
+  let result = await submit(url(), cookie, form, {
+    name_ar: "عصير", price: null,
+    "variants.0.name_ar": "كبير", "variants.0.name_en": "Large", "variants.0.price": "45",
+    "variants.1.name_ar": "صغير", "variants.1.price": "30",
+  });
+  const sent = fake.bodies.at(-1) as { price?: string; variants: Variant[] };
+  assert.equal("price" in sent, false, "no price beside sizes (UC-OWNER-002 A8)");
+  assert.deepEqual(sent.variants, [
+    { name: { ar: "كبير", en: "Large" }, price: "45" }, { name: { ar: "صغير", en: "" }, price: "30" },
+  ]);
+  assert.ok(shown(result.html, "من 30 ل.س"), "the lowest price, not the first row's");
+  const edit = editForm(await page(), 1);
+  assert.deepEqual([sizesOf(edit), edit.names.includes("price")], [[["كبير", "Large", "45.00"], ["صغير", "", "30.00"]], false]);
+  // Removing every row brings the price input back: the item gets one price again, and [] removes the sizes.
+  result = await submit(url(), cookie, edit, {
+    "variants.0.name_ar": null, "variants.0.name_en": null, "variants.0.price": null,
+    "variants.1.name_ar": null, "variants.1.name_en": null, "variants.1.price": null, price: "20",
+  });
+  assert.deepEqual(actionState(result.html), { error: null, saved: true });
+  assert.deepEqual([fake.items[0].price, fake.items[0].variants], ["20.00", []]);
+  const html = await page();
+  assert.ok(shown(html, "20 ل.س") && !shown(html, "من 20 ل.س"), "one price again, without 'from'");
+});
+
+test("sizes: a refused size comes back at its row (variants.N.price), the typing kept, nothing saved", async () => {
+  seed(1, "قهوة");
+  const result = await submit(url(), cookie, editForm(await page(), 1), {
+    price: null, "variants.0.name_ar": "صغير", "variants.0.price": "30", "variants.1.name_ar": "كبير", "variants.1.price": "-5",
+  });
+  const state = actionState(result.html) as { error: unknown; values: { variants: Variant[] } };
+  assert.deepEqual(state.error, { form: null, fields: { "variants.1.price": [{ key: "minValue", values: { min: 0 } }] } });
+  assert.deepEqual(state.values.variants.map((variant) => variant.price), ["30", "-5"]);
+  assert.deepEqual([fake.items[0].price, fake.items[0].variants], ["10.00", []]);
 });
 
 test("tags: a code Django does not know (a changed page) comes back as a message at the group, the ticks kept", async () => {

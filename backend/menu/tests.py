@@ -24,7 +24,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 
 from cafes.models import Cafe, SubscriptionPlan
 
-from .models import Category, MenuItem
+from .models import Category, MenuItem, MenuItemVariant
 
 User = get_user_model()
 
@@ -350,7 +350,8 @@ class ItemAPITestCase(CategoryAPITestCase):
         data = {
             'id': self.tea.pk, 'category_id': self.drinks.pk, 'name': {'ar': 'Tea', 'en': ''},
             'description': {'ar': '', 'en': ''}, 'price': '5.00', 'image_url': '', 'thumbnail_url': '',
-            'is_available': True, 'is_featured': False, 'is_new': False, 'tags': [], 'sort_order': 100,
+            'is_available': True, 'is_featured': False, 'is_new': False, 'tags': [], 'variants': [],
+            'sort_order': 100,
         }
         return {**data, **changes}
 
@@ -439,7 +440,8 @@ class CreateItemTests(ItemAPITestCase):
         self.assertEqual(response.data, {
             'id': coffee.pk, 'category_id': self.drinks.pk, 'name': {'ar': 'Coffee', 'en': ''},
             'description': {'ar': '', 'en': ''}, 'price': '12.50', 'image_url': '', 'thumbnail_url': '',
-            'is_available': True, 'is_featured': False, 'is_new': True, 'tags': [], 'sort_order': 200,
+            'is_available': True, 'is_featured': False, 'is_new': True, 'tags': [], 'variants': [],
+            'sort_order': 200,
         })
 
     def test_tags_are_stored_once_each_in_the_fixed_order(self):  # Global Convention 11, on the Basic plan
@@ -531,10 +533,9 @@ class CreateItemTests(ItemAPITestCase):
                 {'name': {'en': ['Ensure this field has no more than 100 characters.']},
                  'description': {'ar': ['Ensure this field has no more than 500 characters.']}},
             ),
-            (
-                {'name': {'ar': 'Soup'}},
-                {'category_id': ['This field is required.'], 'price': ['This field is required.']},
-            ),
+            ({'name': {'ar': 'Soup'}, 'price': '7.00'}, {'category_id': ['This field is required.']}),
+            # A8: no price and no variants. The service's rule, so it is checked after the fields above.
+            ({'category_id': self.food.pk, 'name': {'ar': 'Soup'}}, {'price': ['This field is required.']}),
         ]
         for body, errors in cases:
             with self.subTest(body=body):
@@ -609,6 +610,171 @@ class EditItemTests(ItemAPITestCase):
                 self.assertEqual(response.data, {'detail': 'Not found.'})
         self.tea.refresh_from_db()
         self.assertEqual((self.tea.category_id, self.tea.sort_order), (self.drinks.pk, 100))
+
+
+class ItemVariantTests(ItemAPITestCase):
+    """Global Convention 10 (variants) through UC-OWNER-002 and UC-OWNER-013."""
+
+    SIZES = [
+        {'name': {'ar': 'Large', 'en': 'L'}, 'price': '8'},
+        {'name': {'ar': 'Small'}, 'price': '4.50'},
+        {'name': {'ar': 'Medium'}, 'price': '6.00'},
+    ]
+
+    def set_sizes(self, item, sizes=None):
+        """PATCH the item's variants and return the response."""
+        return self.client.patch(self.item_url(item.pk), {'variants': self.SIZES if sizes is None else sizes},
+                                 format='json')
+
+    @staticmethod
+    def names_and_prices(variants):
+        return [(variant['name']['ar'], variant['price']) for variant in variants]
+
+    def test_create_with_variants_stores_them_in_the_sent_order(self):  # Main flow (create), on the Basic plan
+        body = {'category_id': self.drinks.pk, 'name': {'ar': 'Juice'}, 'variants': self.SIZES}
+
+        response = self.client.post(self.item_list_url, body, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)  # variants need no plan flag
+        stored = list(MenuItemVariant.objects.filter(item_id=response.data['id']))
+        self.assertEqual(response.data['variants'], [
+            {'id': stored[0].pk, 'name': {'ar': 'Large', 'en': 'L'}, 'price': '8.00'},
+            {'id': stored[1].pk, 'name': {'ar': 'Small', 'en': ''}, 'price': '4.50'},
+            {'id': stored[2].pk, 'name': {'ar': 'Medium', 'en': ''}, 'price': '6.00'},
+        ])
+        self.assertEqual(response.data['price'], '4.50')  # the lowest variant price, not the first one
+        self.assertEqual([(v.sort_order, v.cafe_id) for v in stored], [(100, self.cafe.pk), (200, self.cafe.pk),
+                                                                       (300, self.cafe.pk)])
+
+    def test_variants_do_not_count_toward_the_item_limit(self):  # Global Conventions 3 and 10
+        SubscriptionPlan.objects.filter(pk=self.cafe.plan_id).update(max_items=2)  # Tea is the first item
+        body = {'category_id': self.drinks.pk, 'name': {'ar': 'Juice'}, 'variants': self.SIZES}
+
+        second = self.client.post(self.item_list_url, body, format='json')  # 1 item + 3 variants: allowed
+        third = self.client.post(self.item_list_url, body, format='json')
+
+        self.assertEqual((second.status_code, third.status_code), (status.HTTP_201_CREATED, status.HTTP_403_FORBIDDEN))
+        self.assertEqual(MenuItemVariant.objects.filter(cafe=self.cafe).count(), 3)  # the refused item left none
+
+    def test_patch_replaces_the_whole_list_and_keeps_it_when_not_sent(self):  # Main flow (edit)
+        first = self.set_sizes(self.tea)
+        kept = self.client.patch(self.item_url(self.tea.pk), {'is_new': True}, format='json')  # no "variants"
+        swapped = self.set_sizes(self.tea, [{'name': {'ar': 'Pot'}, 'price': '9.00'}])  # not added to the old list
+        cleared = self.set_sizes(self.tea, [])
+
+        self.assertEqual([r.status_code for r in (first, kept, swapped, cleared)], [status.HTTP_200_OK] * 4)
+        self.assertEqual(
+            [self.names_and_prices(r.data['variants']) for r in (first, kept, swapped, cleared)],
+            [[('Large', '8.00'), ('Small', '4.50'), ('Medium', '6.00')]] * 2 + [[('Pot', '9.00')], []],
+        )
+        # The item's price follows the lowest variant; without variants it keeps its last price.
+        self.assertEqual([r.data['price'] for r in (first, kept, swapped, cleared)], ['4.50', '4.50', '9.00', '9.00'])
+        self.assertEqual(MenuItemVariant.objects.filter(item=self.tea).count(), 0)
+
+    def test_price_and_variants_do_not_fit_together(self):  # A8
+        message = {'price': ['An item with variants takes its price from them. Do not send price.']}
+        new = {'category_id': self.drinks.pk, 'name': {'ar': 'Juice'}}
+        self.set_sizes(self.tea)
+
+        both_on_create = self.client.post(self.item_list_url, {**new, 'price': '3.00', 'variants': self.SIZES},
+                                          format='json')
+        neither_on_create = self.client.post(self.item_list_url, {**new, 'variants': []}, format='json')
+        both_on_patch = self.client.patch(self.item_url(self.tea.pk), {'price': '3.00', 'variants': self.SIZES},
+                                          format='json')
+        price_for_stored_variants = self.client.patch(self.item_url(self.tea.pk), {'price': '3.00'}, format='json')
+
+        self.assertEqual(
+            [(r.status_code, r.data) for r in (both_on_create, neither_on_create, both_on_patch,
+                                               price_for_stored_variants)],
+            [(status.HTTP_400_BAD_REQUEST, message), (status.HTTP_400_BAD_REQUEST, {'price': ['This field is required.']}),
+             (status.HTTP_400_BAD_REQUEST, message), (status.HTTP_400_BAD_REQUEST, message)],
+        )
+        self.tea.refresh_from_db()
+        self.assertEqual((self.tea.price, MenuItem.objects.filter(cafe=self.cafe).count()), (Decimal('4.50'), 1))
+
+    def test_price_with_an_empty_list_goes_back_to_one_price(self):  # Global Convention 10
+        self.set_sizes(self.tea)
+
+        response = self.client.patch(self.item_url(self.tea.pk), {'price': '5.50', 'variants': []}, format='json')
+
+        self.assertEqual((response.status_code, response.data['price'], response.data['variants']),
+                         (status.HTTP_200_OK, '5.50', []))
+
+    def test_invalid_variants_return_400_and_change_nothing(self):  # A7
+        self.set_sizes(self.tea, [{'name': {'ar': 'Cup'}, 'price': '5.00'}])
+        good = {'name': {'ar': 'Small'}, 'price': '4.00'}
+        cases = [
+            ('not a list', 'small', {'non_field_errors': ['Expected a list of items but got type "str".']}),
+            ('too many', [good] * 11, {'non_field_errors': ['Ensure this field has no more than 10 elements.']}),
+            # The key is the position in the list, as for tags: the first variant is fine, the second is not.
+            ('negative price', [good, {**good, 'price': '-1'}],
+             {1: {'price': ['Ensure this value is greater than or equal to 0.']}}),
+            # Nothing may be left out, also in a PATCH.
+            ('name and price missing', [{}],
+             {0: {'name': ['This field is required.'], 'price': ['This field is required.']}}),
+            ('name without ar', [{**good, 'name': {'en': 'Small'}}], {0: {'name': {'ar': ['This field is required.']}}}),
+            ('name too long', [{**good, 'name': {'ar': 'x' * 51}}],
+             {0: {'name': {'ar': ['Ensure this field has no more than 50 characters.']}}}),
+            ('null', None, ['This field may not be null.']),
+        ]
+        for label, variants, errors in cases:
+            with self.subTest(label):
+                response = self.client.patch(self.item_url(self.tea.pk), {'variants': variants, 'is_new': True},
+                                             format='json')
+
+                self.assertEqual((response.status_code, response.data),
+                                 (status.HTTP_400_BAD_REQUEST, {'variants': errors}))
+        self.tea.refresh_from_db()
+        self.assertEqual((self.tea.is_new, self.names_and_prices(self.client.get(self.item_list_url).data[0]['variants'])),
+                         (False, [('Cup', '5.00')]))
+
+    def test_ten_variants_are_accepted(self):  # Global Convention 10: the limit itself
+        sizes = [{'name': {'ar': f'Size {n}'}, 'price': str(n)} for n in range(10, 0, -1)]
+
+        response = self.set_sizes(self.tea, sizes)
+
+        self.assertEqual((response.status_code, len(response.data['variants']), response.data['price']),
+                         (status.HTTP_200_OK, 10, '1.00'))
+
+    def test_variants_of_another_cafes_item_cannot_be_changed_or_seen(self):  # tenant isolation, A2
+        MenuItemVariant.objects.create(item=self.foreign_item, cafe=self.other_cafe, name={'ar': 'Theirs', 'en': ''},
+                                       price=Decimal('1.00'))
+
+        response = self.set_sizes(self.foreign_item)
+        listed = self.client.get(self.item_list_url)
+
+        self.assertEqual((response.status_code, response.data), (status.HTTP_404_NOT_FOUND, {'detail': 'Not found.'}))
+        self.assertEqual(self.names_and_prices(MenuItemVariant.objects.filter(cafe=self.other_cafe).values('name', 'price')),
+                         [('Theirs', Decimal('1.00'))])
+        self.assertEqual([item['variants'] for item in listed.data], [[]])  # only Tea, without variants
+
+    def test_a_variant_must_belong_to_its_items_cafe(self):  # the model's own check
+        with self.assertRaises(ValueError):
+            MenuItemVariant.objects.create(item=self.tea, cafe=self.other_cafe, name={'ar': 'Wrong', 'en': ''},
+                                           price=Decimal('1.00'))
+
+    def test_the_list_costs_one_more_query_whatever_the_number_of_items(self):  # UC-OWNER-013, no N+1
+        self.set_sizes(self.tea)
+        self.set_sizes(self.add_item(self.drinks, 'Coffee', sort_order=200), self.SIZES[:2])
+        # The request no longer loads the user and the cafe from the database: only the service's queries are left.
+        self.client.force_authenticate(self.owner)
+
+        # The items, then the variants of all the items.
+        with self.assertNumQueries(2):
+            response = self.client.get(self.item_list_url)
+
+        self.assertEqual([len(item['variants']) for item in response.data], [3, 2])
+
+    def test_reorder_and_delete_keep_the_variants(self):  # UC-OWNER-004 shows them; a soft delete keeps the rows
+        self.set_sizes(self.tea)
+
+        reordered = self.client.post(self.item_reorder_url, {'ordered_ids': [self.tea.pk]}, format='json')
+        deleted = self.client.delete(self.item_url(self.tea.pk))
+
+        self.assertEqual((reordered.status_code, self.names_and_prices(reordered.data[0]['variants'])),
+                         (status.HTTP_200_OK, [('Large', '8.00'), ('Small', '4.50'), ('Medium', '6.00')]))
+        self.assertEqual((deleted.status_code, MenuItemVariant.objects.filter(item_id=self.tea.pk).count()),
+                         (status.HTTP_204_NO_CONTENT, 3))
 
 
 class DeleteItemTests(ItemAPITestCase):
@@ -910,6 +1076,10 @@ class MenuRevalidationTests(CategoryAPITestCase):
                 self.item_image_url(pie.pk), {'image': image_file()}, format='multipart'
             ),
             'ITEM PATCH': lambda: self.client.patch(self.item_url(pie.pk), {'price': '3.50'}, format='json'),
+            # A new variant list alone also changes the public menu (Global Convention 10).
+            'ITEM VARIANTS': lambda: self.client.patch(
+                self.item_url(pie.pk), {'variants': [{'name': {'ar': 'Slice'}, 'price': '2.00'}]}, format='json'
+            ),
             'ITEM DELETE': lambda: self.client.delete(self.item_url(pie.pk)),
             'DELETE': lambda: self.client.delete(self.detail_url(category.pk)),
         }
@@ -999,6 +1169,9 @@ class PublicMenuTests(APITestCase):
         cls.item(cls.drinks, 'Coffee', '6.00', sort_order=200, is_available=False)  # sold out
         cls.item(cls.drinks, 'Juice', '4.00', sort_order=300, deleted_at=timezone.now())
         cls.item(hidden, 'Secret', '1.00')
+        # Soup comes in two sizes, stored here in the opposite order of their ids.
+        cls.bowl = cls.variant(cls.soup, 'Bowl', '9.00', sort_order=200)
+        cls.cup = cls.variant(cls.soup, 'Cup', '7.00', sort_order=100)
         Cafe.objects.create(  # a second cafe; none of its data may appear
             owner=User.objects.create_user(email='other@cafe.com'), plan=cls.pro, slug='other-cafe',
             name={'ar': 'Other Cafe'}, is_active=True,
@@ -1010,19 +1183,25 @@ class PublicMenuTests(APITestCase):
             cafe=category.cafe, category=category, name={'ar': name, 'en': ''}, price=Decimal(price), **fields
         )
 
+    @classmethod
+    def variant(cls, item, name, price, **fields):
+        return MenuItemVariant.objects.create(
+            item=item, cafe=item.cafe, name={'ar': name, 'en': ''}, price=Decimal(price), **fields
+        )
+
     def item_data(self, item, **changes):
         data = {
             'id': item.pk, 'name': {'ar': item.name['ar'], 'en': ''}, 'description': {'ar': '', 'en': ''},
             # Tea has no thumbnail (uploaded before thumbnails existed): the full image stands in.
             'price': str(item.price), 'image_url': item.image_url, 'thumbnail_url': item.thumbnail_url or item.image_url,
             'is_available': True, 'is_featured': item.is_featured, 'is_new': False, 'tags': item.tags,
-            'sort_order': item.sort_order,
+            'variants': [], 'sort_order': item.sort_order,
         }
         return {**data, **changes}
 
     def test_menu_shows_visible_categories_and_available_items(self):  # Main flow
-        # Three queries for the whole menu (cafe with plan, categories, items): no N+1 problem.
-        with self.assertNumQueries(3):
+        # Four queries for the whole menu (cafe with plan, categories, items, variants): no N+1 problem.
+        with self.assertNumQueries(4):
             response = self.client.get(self.url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1034,7 +1213,10 @@ class PublicMenuTests(APITestCase):
             },
             'categories': [
                 {'id': self.food.pk, 'name': {'ar': 'Food', 'en': ''}, 'sort_order': 100,
-                 'items': [self.item_data(self.soup)]},
+                 'items': [self.item_data(self.soup, variants=[  # by sort_order, not by id
+                     {'id': self.cup.pk, 'name': {'ar': 'Cup', 'en': ''}, 'price': '7.00'},
+                     {'id': self.bowl.pk, 'name': {'ar': 'Bowl', 'en': ''}, 'price': '9.00'},
+                 ])]},
                 {'id': self.drinks.pk, 'name': {'ar': 'Drinks', 'en': ''}, 'sort_order': 200,
                  'items': [self.item_data(self.tea)]},
             ],
@@ -1050,6 +1232,8 @@ class PublicMenuTests(APITestCase):
                          [self.item_data(self.tea, image_url='', thumbnail_url='')])
         # Tags are not a plan feature: they stay visible on every plan (Global Convention 11).
         self.assertEqual(response.data['categories'][0]['items'][0]['tags'], ['vegan', 'gluten_free'])
+        # Neither are variants (Global Convention 10).
+        self.assertEqual(len(response.data['categories'][0]['items'][0]['variants']), 2)
 
     def test_inactive_cafe_returns_200_without_categories(self):  # A2, UC-GUEST-002
         Cafe.objects.filter(pk=self.cafe.pk).update(is_active=False)
