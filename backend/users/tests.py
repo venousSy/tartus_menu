@@ -1,14 +1,19 @@
 """
-API integration tests for the auth endpoints (use_cases.md UC-AUTH-001 to UC-AUTH-005).
+API integration tests for the auth endpoints (use_cases.md UC-AUTH-001 to UC-AUTH-006).
 Each test sends real HTTP requests through URL -> view -> serializer -> database.
 """
 
+import re
+import smtplib
+import threading
 from datetime import datetime, timedelta
 from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
+from django.core import mail
 from django.core.cache import cache
+from django.test import override_settings
 from django.urls import reverse
 from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
@@ -17,6 +22,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
 from cafes.models import Cafe, SubscriptionPlan
+from users import services
 
 User = get_user_model()
 
@@ -431,3 +437,132 @@ class PasswordResetTests(APITestCase):
                                     HTTP_AUTHORIZATION='Bearer not-a-token')
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+
+# The test runner already swaps the mail backend for one that keeps messages in mail.outbox.
+@override_settings(PASSWORD_RESET_EMAIL_ENABLED=True)
+class PasswordResetEmailTests(APITestCase):
+    """UC-AUTH-006 - POST /api/v1/auth/password-reset/"""
+
+    url = reverse('users:password-reset-request')
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(email=EMAIL, password=PASSWORD)
+        cls.admin = User.objects.create_user(email='admin@platform.com', password=PASSWORD, role=User.Role.SYSTEM_ADMIN)
+
+    def setUp(self):
+        cache.clear()  # the throttle counters and the per-account cooldown
+
+    def ask(self, email=EMAIL, **extra):
+        return self.client.post(self.url, {'email': email}, format='json', **extra)
+
+    def sent(self):
+        """The emails sent so far. The service sends in a background thread: wait for it first."""
+        for thread in threading.enumerate():
+            if thread.name == services.RESET_EMAIL_THREAD:
+                thread.join()
+        return mail.outbox
+
+    def assert_quiet_204(self, response):
+        """The one answer of the endpoint, and no email behind it."""
+        self.assertEqual((response.status_code, response.content), (status.HTTP_204_NO_CONTENT, b''))
+        self.assertEqual(self.sent(), [])
+
+    def test_an_owner_gets_one_email_with_a_link_that_works(self):  # Main flow, then UC-AUTH-005
+        session = RefreshToken.for_user(self.user)
+
+        response = self.ask()
+
+        self.assertEqual((response.status_code, response.content), (status.HTTP_204_NO_CONTENT, b''))
+        [message] = self.sent()
+        self.assertEqual(message.to, [EMAIL])
+        self.assertEqual(message.subject, 'إعادة تعيين كلمة المرور | Reset your password')
+        # The same link in the Arabic and in the English half, not HTML-escaped.
+        links = re.findall(r'^http://localhost:3000/reset-password#(\S+)\.(\S+)$', message.body, re.MULTILINE)
+        self.assertEqual(len(links), 2)
+        self.assertEqual(links[0], links[1])
+        self.assertIn('24 hours', message.body)
+        # Asking changes nothing: the password and the sessions still work.
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password(PASSWORD))
+        refresh = self.client.post(reverse('users:refresh'), {'refresh': str(session)}, format='json')
+        self.assertEqual(refresh.status_code, status.HTTP_200_OK)
+        # The emailed link sets a new password (UC-AUTH-005).
+        uid, token = links[0]
+        confirm = self.client.post(reverse('users:password-reset-confirm'),
+                                   {'uid': uid, 'token': token, 'new_password': 'An0ther-strong-pass!'}, format='json')
+        self.assertEqual(confirm.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_the_address_is_matched_without_case(self):  # step 3
+        self.ask('OWNER@Cafe.COM')
+
+        self.assertEqual([message.to for message in self.sent()], [[EMAIL]])  # sent to the stored address
+
+    def test_no_account_gets_the_same_answer_and_no_email(self):  # A1
+        inactive = User.objects.create_user(email='gone@cafe.com', password=PASSWORD, is_active=False)
+        for label, email in [('unknown', 'nobody@cafe.com'), ('inactive', inactive.email), ('super admin', self.admin.email)]:
+            with self.subTest(label):
+                self.assert_quiet_204(self.ask(email))
+
+    def test_a_second_request_within_five_minutes_sends_no_second_email(self):  # A2
+        self.ask()
+        again = self.ask()
+
+        self.assertEqual(again.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(len(self.sent()), 1)
+        self.assertEqual(services.RESET_EMAIL_COOLDOWN, 300)
+
+        cache.delete(f'password-reset-email:{self.user.pk}')  # what the cache does itself after 5 minutes
+        self.ask()
+        self.assertEqual(len(self.sent()), 2)
+
+    def test_a_missing_or_malformed_email_returns_400(self):  # A3
+        missing = self.client.post(self.url, {}, format='json')
+        malformed = self.ask('not-an-address')
+
+        self.assertEqual((missing.status_code, missing.data),
+                         (status.HTTP_400_BAD_REQUEST, {'email': ['This field is required.']}))
+        self.assertEqual((malformed.status_code, malformed.data),
+                         (status.HTTP_400_BAD_REQUEST, {'email': ['Enter a valid email address.']}))
+        self.assertEqual(self.sent(), [])
+
+    def test_too_many_requests_return_429(self):  # A4
+        limit, _ = ScopedRateThrottle().parse_rate(ScopedRateThrottle.THROTTLE_RATES['password_reset_email'])
+        for _attempt in range(limit):
+            self.assertEqual(self.ask('nobody@cafe.com').status_code, status.HTTP_204_NO_CONTENT)
+
+        response = self.ask()  # even a real account must wait
+
+        self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertTrue(response.data['detail'].startswith('Request was throttled. Expected available in'))
+        self.assertEqual(self.sent(), [])
+
+    @override_settings(PASSWORD_RESET_EMAIL_ENABLED=False)
+    def test_without_mail_settings_the_answer_is_503_for_every_address(self):  # A5
+        for email in (EMAIL, 'nobody@cafe.com'):
+            response = self.ask(email)
+
+            self.assertEqual((response.status_code, response.data), (status.HTTP_503_SERVICE_UNAVAILABLE, {
+                'detail': 'Password reset by email is not available. Please contact support.',
+            }))
+            self.assertEqual(response['X-Error-Code'], 'email_not_configured')
+        self.assertEqual(self.sent(), [])
+
+    def test_a_mail_server_failure_is_logged_and_the_answer_stays_204(self):  # A6
+        failure = smtplib.SMTPRecipientsRefused({EMAIL: (550, b'mailbox unavailable')})
+        with mock.patch('django.core.mail.EmailMessage.send', side_effect=failure), \
+                self.assertLogs('users.services', level='ERROR') as logs:
+            response = self.ask()
+            self.sent()  # wait for the thread inside the patch
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(logs.output, [
+            'ERROR:users.services:The password reset email could not be sent: SMTPRecipientsRefused',
+        ])  # the kind of error only, not the address
+
+    def test_a_stale_token_header_does_not_cause_a_401(self):
+        response = self.ask(HTTP_AUTHORIZATION='Bearer not-a-token')
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(len(self.sent()), 1)
