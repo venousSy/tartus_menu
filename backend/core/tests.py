@@ -1,7 +1,7 @@
 """
 Tests for the project-wide pieces in core/: the JSON 404 handler (use_cases.md Global Convention 2), the
-health check (system_design.md §3.7), error tracking, the JSON-only API in production, and the daily
-backup command (system_design.md §5, "Scheduled Jobs").
+health check (system_design.md §3.7), error tracking, the JSON-only API in production, the daily
+backup command (system_design.md §5, "Scheduled Jobs") and Row-Level Security (system_design.md §7.1).
 """
 
 import gzip
@@ -13,7 +13,8 @@ import subprocess
 import tempfile
 import threading
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
@@ -21,15 +22,26 @@ from unittest import mock
 import sentry_sdk
 from botocore.exceptions import ClientError
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import OperationalError
+from django.db import DatabaseError, OperationalError, connection, transaction
 from django.test import Client, SimpleTestCase, TestCase, override_settings
 from rest_framework.settings import perform_import
 from rest_framework.views import APIView
 
+from analytics import services as analytics_services
+from analytics.models import MenuViewCount
+from cafes import services as cafe_services
+from cafes.models import BillingEvent, Cafe, CafeTable, SubscriptionPlan
 from core.error_tracking import init_error_tracking, scrub_event
 from core.management.commands import backup_database
+from core.tenancy import all_tenants, tenant
+from core.test_runner import enforced, policies_enforced
+from menu import services as menu_services
+from menu.models import Category, MenuItem, MenuItemVariant
+
+User = get_user_model()
 
 BACKUP_SETTINGS = {
     'R2_BACKUP_BUCKET_NAME': 'tartus-backups',
@@ -368,9 +380,198 @@ class BackupDatabaseTests(TestCase):
 
     @unittest.skipUnless(shutil.which('pg_dump'), 'pg_dump is not installed here (it is in the Docker image)')
     def test_a_real_pg_dump_of_the_test_database(self):
+        if policies_enforced():
+            # pg_dump refuses a table whose policy would hide rows from it. In production the backup
+            # runs as the owner role, a superuser (system_design.md §7.1); CI runs this test as one too.
+            self.skipTest('pg_dump needs a role that the Row-Level Security policies do not bind')
         # Without the fake: the real pg_dump reads the test database (its tables come from the migrations).
         call_command('backup_database', stdout=io.StringIO())
 
         sql = gzip.decompress(self.uploaded['body'].removeprefix(AGE_MARK)).decode()
         self.assertIn('CREATE TABLE public.cafes', sql)
         self.assertNotIn('OWNER TO', sql)
+        # A restore gets the policies back with the tables.
+        self.assertIn('CREATE POLICY tenant_isolation ON public.menu_items', sql)
+
+
+TENANT_TABLES = {'billing_events', 'cafe_tables', 'categories', 'menu_items', 'menu_item_variants', 'menu_view_counts'}
+
+
+class RowLevelSecurityTests(TestCase):
+    """
+    system_design.md §7.1: PostgreSQL itself hides the rows of other cafes. These tests ask the
+    database without any cafe filter, so only the policies and the scopes of core/tenancy.py decide.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        # Written with the bypass that the test runner keeps on outside requests.
+        plan = SubscriptionPlan.objects.create(name=SubscriptionPlan.Name.PRO, allows_detailed_analytics=True)
+        cls.rows = {}  # cafe pk -> one row of each tenant table
+        cls.cafes = []
+        for slug in ('first-cafe', 'second-cafe'):
+            owner = User.objects.create_user(email=f'{slug}@test.local', password='Str0ng-test-pass!')
+            cafe = Cafe.objects.create(owner=owner, plan=plan, slug=slug, name={'ar': slug}, is_active=True,
+                                       subscription_expires_on=date(2020, 1, 1))  # long overdue, for the nightly job
+            category = Category.objects.create(cafe=cafe, name={'ar': 'Drinks'})
+            item = MenuItem.objects.create(cafe=cafe, category=category, name={'ar': 'Tea'}, price=Decimal('5.00'))
+            cls.rows[cafe.pk] = [
+                BillingEvent.objects.create(cafe=cafe, action=BillingEvent.Action.ACTIVATED),
+                CafeTable.objects.create(cafe=cafe, table_number=1),
+                category,
+                item,
+                MenuItemVariant.objects.create(cafe=cafe, item=item, name={'ar': 'Large'}, price=Decimal('7.00')),
+                MenuViewCount.objects.create(cafe=cafe, hour=datetime(2026, 1, 1, 10, tzinfo=timezone.utc), count=3),
+            ]
+            cls.cafes.append(cafe)
+        cls.first, cls.second = cls.cafes
+        cls.models = [type(row) for row in cls.rows[cls.first.pk]]
+
+    def cafes_seen(self):
+        """For each tenant table: the cafes whose rows an unfiltered query returns right now."""
+        return [set(model._base_manager.values_list('cafe_id', flat=True)) for model in self.models]
+
+    def test_every_table_with_a_cafe_id_has_a_forced_policy(self):
+        # Also true for a superuser: it reads the catalog, not the rows. A new tenant table without
+        # a policy in its migration fails here.
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT c.relname, c.relrowsecurity AND c.relforcerowsecurity, p.polname
+                FROM pg_class c
+                JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'cafe_id' AND NOT a.attisdropped
+                LEFT JOIN pg_policy p ON p.polrelid = c.oid
+                WHERE c.relkind = 'r' AND c.relnamespace = 'public'::regnamespace
+            """)
+            found = {table: (forced, policy) for table, forced, policy in cursor.fetchall()}
+
+        self.assertEqual(found, {table: (True, 'tenant_isolation') for table in TENANT_TABLES})
+        self.assertEqual({model._meta.db_table for model in self.models}, TENANT_TABLES)
+
+    def test_outside_a_scope_no_row_exists(self):
+        self.require_enforced_policies()
+        with enforced():
+            self.assertEqual(self.cafes_seen(), [set()] * 6)
+
+    def test_a_tenant_scope_shows_only_that_cafe_and_ends_with_its_block(self):
+        self.require_enforced_policies()
+        with enforced():
+            with tenant(self.first):
+                self.assertEqual(self.cafes_seen(), [{self.first.pk}] * 6)
+            self.assertEqual(self.cafes_seen(), [set()] * 6)
+            with tenant(self.second):
+                self.assertEqual(self.cafes_seen(), [{self.second.pk}] * 6)
+
+    def test_the_all_tenants_scope_shows_every_cafe(self):
+        self.require_enforced_policies()
+        with enforced(), all_tenants():
+            self.assertEqual(self.cafes_seen(), [{self.first.pk, self.second.pk}] * 6)
+
+    def test_an_inner_scope_gives_the_outer_one_back_also_after_an_error(self):
+        self.require_enforced_policies()
+        with enforced(), tenant(self.first):
+            with all_tenants():
+                self.assertEqual(len(self.cafes_seen()[0]), 2)
+            self.assertEqual(self.cafes_seen(), [{self.first.pk}] * 6)
+
+            with self.assertRaises(ZeroDivisionError), tenant(self.second):
+                1 / 0
+            self.assertEqual(self.cafes_seen(), [{self.first.pk}] * 6)
+
+    def test_a_row_for_another_cafe_cannot_be_inserted(self):
+        self.require_enforced_policies()
+        with enforced(), tenant(self.first):
+            # atomic(): the refused INSERT breaks only this savepoint, not the test's transaction.
+            with self.assertRaisesMessage(DatabaseError, 'row-level security policy'), transaction.atomic():
+                CafeTable.objects.create(cafe=self.second, table_number=2)
+            CafeTable.objects.create(cafe=self.first, table_number=2)  # its own cafe: accepted
+
+    def test_rows_of_another_cafe_cannot_be_changed_or_deleted(self):
+        self.require_enforced_policies()
+        foreign = self.rows[self.second.pk]
+        with enforced(), tenant(self.first):
+            for row in foreign:
+                with self.subTest(table=row._meta.db_table):
+                    rows = type(row)._base_manager.filter(pk=row.pk)
+                    self.assertEqual(rows.update(cafe_id=self.first.pk), 0)  # not found, so not moved
+                    self.assertEqual(rows.delete()[0], 0)
+            # A row of its own cafe cannot be handed to another cafe either.
+            with self.assertRaisesMessage(DatabaseError, 'row-level security policy'), transaction.atomic():
+                Category.objects.filter(cafe=self.first).update(cafe_id=self.second.pk)
+        for row in foreign:
+            row.refresh_from_db()  # still there, unchanged (read with the bypass)
+            self.assertEqual(row.cafe_id, self.second.pk)
+
+    def test_services_called_outside_a_request_open_their_own_scope(self):
+        # The nightly commands, the QR link lookup and the menu open counter are called here as the
+        # scheduler and the public views call them: with no scope around them.
+        self.require_enforced_policies()
+        token = CafeTable.objects.get(cafe=self.second).qr_token
+        with enforced():
+            self.assertEqual(cafe_services.resolve_qr_token(token), {'slug': 'second-cafe', 'table_number': 1})
+            analytics_services.record_view('second-cafe', table=1)
+            _, categories = menu_services.get_public_menu('first-cafe')
+            self.assertEqual([category.cafe_id for category in categories], [self.first.pk])
+            self.assertEqual(sorted(cafe_services.expire_due_subscriptions()), ['first-cafe', 'second-cafe'])
+            self.assertEqual(analytics_services.prune_old_views(today=date(2030, 1, 1)), 3)
+
+        self.assertEqual(BillingEvent.objects.filter(action=BillingEvent.Action.EXPIRED).count(), 2)
+        self.assertFalse(MenuViewCount.objects.exists())
+
+    def require_enforced_policies(self):
+        if not policies_enforced():
+            self.skipTest('the tests run as a superuser: PostgreSQL does not apply the policies to it')
+
+
+class CreateAppRoleTests(TestCase):
+    """manage.py create_app_role (system_design.md §7.1, "Database roles"). It needs a role that may create roles."""
+
+    ROLE = 'tartus_app_probe'
+    ENVIRONMENT = {'DB_APP_USER': ROLE, 'DB_APP_PASSWORD': "it's-only-a-test"}  # the quote must not break the SQL
+
+    def one(self, query, *params):
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            return cursor.fetchone()
+
+    def test_the_app_role_may_only_read_and_write_rows_and_the_policies_bind_it(self):
+        if not self.one('SELECT rolsuper OR rolcreaterole FROM pg_roles WHERE rolname = current_user')[0]:
+            self.skipTest('the tests run as a role that may not create roles')
+        plan = SubscriptionPlan.objects.create(name=SubscriptionPlan.Name.BASIC)
+        owner = User.objects.create_user(email='owner@test.local', password='Str0ng-test-pass!')
+        cafe = Cafe.objects.create(owner=owner, plan=plan, slug='probe-cafe', name={'ar': 'Probe'})
+        Category.objects.create(cafe=cafe, name={'ar': 'Drinks'})
+
+        with mock.patch.dict(os.environ, self.ENVIRONMENT):
+            call_command('create_app_role', stdout=io.StringIO())
+            call_command('create_app_role', stdout=io.StringIO())  # again: it updates, it does not fail
+
+        # CREATE ROLE is part of the test's transaction, so the role is gone again after the test.
+        self.assertEqual(
+            self.one('SELECT rolcanlogin, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole FROM pg_roles '
+                     'WHERE rolname = %s', self.ROLE),
+            (True, False, False, False, False),
+        )
+        rights = {right: self.one('SELECT has_table_privilege(%s, %s, %s)', self.ROLE, 'categories', right)[0]
+                  for right in ('SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE')}
+        self.assertEqual(rights, {'SELECT': True, 'INSERT': True, 'UPDATE': True, 'DELETE': True, 'TRUNCATE': False})
+        self.assertTrue(self.one('SELECT has_sequence_privilege(%s, %s, %s)', self.ROLE, 'categories_id_seq', 'USAGE')[0])
+        self.assertNotEqual(self.one("SELECT tableowner FROM pg_tables WHERE tablename = 'categories'")[0], self.ROLE)
+
+        # As that role, PostgreSQL applies the policy: no row without a tenant, the cafe's rows with it.
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET LOCAL ROLE {self.ROLE}')
+            try:
+                with enforced():
+                    self.assertEqual(Category.objects.count(), 0)
+                    with tenant(cafe):
+                        self.assertEqual(Category.objects.count(), 1)
+            finally:
+                cursor.execute('RESET ROLE')
+
+    def test_it_refuses_to_run_without_a_name_and_a_password_or_for_its_own_role(self):
+        with mock.patch.dict(os.environ, {'DB_APP_USER': '', 'DB_APP_PASSWORD': ''}):
+            with self.assertRaisesMessage(CommandError, 'Set DB_APP_USER and DB_APP_PASSWORD'):
+                call_command('create_app_role')
+        own = {'DB_APP_USER': connection.settings_dict['USER'], 'DB_APP_PASSWORD': 'x'}
+        with mock.patch.dict(os.environ, own), self.assertRaisesMessage(CommandError, 'must not be the role'):
+            call_command('create_app_role')
