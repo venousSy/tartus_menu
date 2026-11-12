@@ -489,7 +489,7 @@ Middleware is a list of small layers. Each request goes down the list; each resp
 
 ### 5.7 `DATABASES`
 
-PostgreSQL with defaults for local development; every value can be overridden by `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`. The defaults are for a developer machine only. Production must set real values. `psycopg2-binary` is the Python driver that talks to PostgreSQL.
+PostgreSQL with defaults for local development; every value can be overridden by `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`. The defaults are for a developer machine only. Production must set real values. `psycopg` (version 3, with its `binary` extra) is the Python driver that talks to PostgreSQL. A worker keeps its connection for `DB_CONN_MAX_AGE` seconds (default 60) and checks it before each reuse (`CONN_HEALTH_CHECKS`).
 
 ### 5.8 `AUTH_USER_MODEL = 'users.User'`
 

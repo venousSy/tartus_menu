@@ -227,7 +227,8 @@
 - **Frontend:** "Forgot password?" link on `/login`, a request page, a BFF route in the `login` zone.
 - **deploy/README:** SPF, DKIM, DMARC. **Risk:** owner emails created by the admin may not be real addresses.
 
-### I. psycopg 3 and persistent connections — size S (new dependency)
+### I. psycopg 3 and persistent connections — size S (new dependency) — done 2026-11-12 (branch `chore/psycopg3`)
+- The age comes from `DB_CONN_MAX_AGE` (empty = 60).
 - `psycopg[binary]>=3.2,<4` instead of `psycopg2-binary`; `CONN_MAX_AGE=60` (from the environment),
   `CONN_HEALTH_CHECKS=True`; no pool (not combinable with `CONN_MAX_AGE`; little gain with sync Gunicorn).
   Do this before K.
