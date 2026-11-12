@@ -97,7 +97,7 @@ The features and improvements after the MVP, in phases, with the owner's decisio
 13. **[x] GitHub Actions CI/CD** — Workflow file, SSH secrets.
 14. **[x] DB backup cron** — Docker service for daily `pg_dump` → R2, plus daily `flushexpiredtokens`.
 15. **[x] End-to-end testing** — Full flow from login to QR scan.
-16. **[ ] Post-MVP: PostgreSQL RLS** — Second isolation layer (system_design.md §7.1). Done last, after step 27 (post_mvp_roadmap.md item K).
+16. **[ ] Post-MVP: PostgreSQL RLS** — Second isolation layer, designed in system_design.md §7.1 (policies on the six tenant tables, `core/tenancy.py`, an app role without table ownership). Done last (post_mvp_roadmap.md item K).
 
 Post-MVP steps (details in [post_mvp_roadmap.md](post_mvp_roadmap.md); each starts with its own docs turns):
 

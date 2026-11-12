@@ -220,7 +220,7 @@
 
 ## Phase 5 — Hardening
 
-### E2. Password reset by email — size M — done 2026-11-12 (branch `feat/password-reset-email`)
+### E2. Password reset by email — size M — done 2026-11-12 (PR #80)
 - As built: the email is sent in a background thread (the answer time must not tell whether an account
   exists); only Cafe Owner accounts get one; 5/hour per IP and one email per account per 5 minutes; without
   `EMAIL_HOST` the endpoint answers 503 and only the Super Admin link (E1) works; the page is
@@ -243,6 +243,13 @@
   `logo_thumbnail_url` (512 px logo shown at 48 px). Nothing deployed, so no backfill.
 
 ### K. PostgreSQL RLS (implementation_plan step 16) — size L
+- Designed 2026-11-12 in system_design.md §7.1, which now wins over the notes below. Changes against them:
+  the owner role is the role the `db` service already creates (no new `tartus_owner`), because `pg_dump` needs
+  a role that policies do not apply to; the app role is made by a command, `create_app_role`; the policy uses
+  `NULLIF(current_setting('app.cafe_id', true), '')`; read services return evaluated data; no composite FK.
+- Build order: (1) `core/tenancy.py` and its use in every service, behavior unchanged; (2) the test setup and
+  the CI role; (3) the `RunSQL` migrations, `billing_events` first; (4) `create_app_role`, Compose, `.env.example`,
+  deploy/README; (5) the RLS tests.
 1. Docs: turn system_design §7.1 into a concrete design; add `menu_view_counts` and `menu_item_variants`.
 2. Two DB roles: `tartus_owner` (owns tables, runs `migrate`) and `tartus_app` (NOBYPASSRLS);
    env `DB_MIGRATE_USER` / `DB_MIGRATE_PASSWORD`.
