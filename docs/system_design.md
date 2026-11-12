@@ -29,6 +29,7 @@
 | Public menu caching | Next.js ISR + on-demand revalidation called by Django after commit (§3.5); 5-minute time-based fallback |
 | Frontend auth | BFF: Next.js server routes keep the JWT pair in HttpOnly cookies; single-flight refresh (§3.6) |
 | Rate limiting | Nginx `limit_req` on login paths + DRF `ScopedRateThrottle` (scope `login`, 5/min per client IP) stored in Django `DatabaseCache` (no Redis) |
+| Email | Only the password reset email (UC-AUTH-006): Django's `EmailMessage` over SMTP, settings from the environment (`EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `DEFAULT_FROM_EMAIL`), provider Resend; off when `EMAIL_HOST` is empty (the endpoint then answers 503); development prints the email to the console |
 | Image uploads | Validated by content with Pillow, resized, metadata removed, stored as WebP under random keys (`cafes/<cafe_id>/...`), served from the R2 custom domain; item images also get a 192 px thumbnail for the menu lists |
 | Django admin site | Non-obvious path from env `DJANGO_ADMIN_PATH`, routed by Nginx |
 | Inactive cafe | Every dashboard endpoint except GET settings answers 403 |
@@ -194,6 +195,7 @@ menu_view_counts                 -- app "analytics" (use_cases.md UC-GUEST-004)
 | POST | `/api/v1/auth/refresh/` | Any | Exchange refresh token for a new access + refresh pair (old refresh is blacklisted) |
 | POST | `/api/v1/auth/logout/` | Any | Blacklist refresh token |
 | POST | `/api/v1/auth/change-password/` | Any | Change own password; blacklists all outstanding refresh tokens |
+| POST | `/api/v1/auth/password-reset/` | Cafe Owner (no login) | Ask for a reset link by email (UC-AUTH-006); always `204` for a well-formed address |
 | POST | `/api/v1/auth/password-reset/confirm/` | Cafe Owner (no login) | Set a new password with a one-time reset link (UC-AUTH-005); blacklists all outstanding refresh tokens |
 
 **Login Request:**
@@ -214,6 +216,12 @@ menu_view_counts                 -- app "analytics" (use_cases.md UC-GUEST-004)
 { "uid": "MTI", "token": "d2x4ab-0123456789abcdef0123456789abcdef", "new_password": "a-new-strong-pass" }
 ```
 Answers `204 No Content`. An invalid, expired or used link: `400 {"detail": "This reset link is invalid or has expired."}` with `X-Error-Code: reset_link_invalid`. Throttle scope `password_reset` (5/min per client IP).
+
+**Password Reset Email Request** (UC-AUTH-006):
+```json
+{ "email": "owner@cafe.com" }
+```
+Answers `204 No Content` whether the address has an account or not; an email with the reset link goes only to an active Cafe Owner account, at most once per 5 minutes. Email not set up on the server (`EMAIL_HOST` empty): `503 {"detail": "Password reset by email is not available. Please contact support."}` with `X-Error-Code: email_not_configured`. Throttle scope `password_reset_email` (5/hour per client IP).
 
 ---
 
@@ -470,6 +478,8 @@ Frontend paths. None of them starts with `/api/`, because Nginx sends `/api/` to
 | `/bff/auth/login`, `/bff/auth/logout`, `/bff/auth/change-password` | Browser of a logged-in user | BFF routes for UC-AUTH-001, 003 and 004; they set or clear the cookies |
 | `/reset-password` | Cafe Owner (no login) | The new-password form of UC-AUTH-005. It reads `uid` and `token` from the part of the link after `#` (which the browser never sends to a server), removes them from the address bar, and sends `Referrer-Policy: no-referrer`. Not part of the proxy matcher |
 | `/bff/auth/password-reset` | Browser (no login) | BFF route for UC-AUTH-005; passes the body to Django and sets no cookie |
+| `/forgot-password` | Cafe Owner (no login) | The "Forgot password?" form of UC-AUTH-006, linked from `/login`. Not part of the proxy matcher |
+| `/bff/auth/forgot-password` | Browser (no login) | BFF route for UC-AUTH-006; passes the body to Django and sets no cookie |
 | `/bff/auth/session-ended` | Browser | Clears the cookies and opens `/login` when Django no longer accepts the session |
 | `/bff/dashboard/qr-pdf` | Cafe Owner | Streams the QR codes PDF (UC-OWNER-008) |
 | `/internal/revalidate` | Django only | §3.5 |
@@ -567,7 +577,7 @@ All services run inside Docker Compose on a single VPS.
 ### Nginx Rules
 
 - Every proxied location sets `X-Forwarded-For $proxy_add_x_forwarded_for` and `X-Forwarded-Proto`.
-- `limit_req` (per client IP) on `/api/v1/auth/login/`, the BFF login route `/bff/auth/login` (§3.6), the password reset pair `/api/v1/auth/password-reset/confirm/` and `/bff/auth/password-reset` (same zone as the login) and the Django admin login page.
+- `limit_req` (per client IP) on `/api/v1/auth/login/`, the BFF login route `/bff/auth/login` (§3.6), the password reset pairs `/api/v1/auth/password-reset/confirm/` with `/bff/auth/password-reset` and `/api/v1/auth/password-reset/` with `/bff/auth/forgot-password` (same zone as the login) and the Django admin login page.
 - A separate, generous `limit_req` zone (per client IP) on the `/menu/` pages (§3.4 public menu note), the QR short links `/t/` and the public APIs `/api/v1/menu/` and `/api/v1/qr/`. Many customers of one cafe may share one IP behind its Wi-Fi.
 - Its own `limit_req` zone `views` (1 request per second per client IP, burst 50) on the menu open counter: `/menu/{slug}/views` and `/api/v1/menu/{slug}/views/` (UC-GUEST-004). A full cafe behind one Wi-Fi address still fits; a script cannot write faster than that.
 - `client_max_body_size 3m` (the API limits uploads to 2 MB; larger bodies are rejected before Django).
@@ -655,7 +665,8 @@ After a downgrade, stored item images, logo and primary color are kept but hidde
 | Price scraping | `noindex, nofollow` meta tag + `X-Robots-Tag` header on all customer pages |
 | SQL injection | Django ORM parameterized queries |
 | Login brute force | Nginx `limit_req` + DRF `ScopedRateThrottle` (`login`, 5/min per client IP, `DatabaseCache`, `NUM_PROXIES`) |
-| Password reset link theft or reuse | Only a Super Admin can make a link (UC-ADMIN-010); the secret part sits after `#`, so it reaches no server log and no `Referer` header; valid 24 hours (`PASSWORD_RESET_TIMEOUT`); one-time, because the token is signed over the password hash; one answer for every invalid link; throttle `password_reset` (5/min per client IP) + Nginx `limit_req`; a reset blacklists every refresh token |
+| Password reset email abuse | No user enumeration: one answer (`204`) for every well-formed address, and the email is sent in a background thread, so the answer time does not tell either (UC-AUTH-006); only active Cafe Owner accounts get an email, never a Super Admin; at most one email per account per 5 minutes; throttle `password_reset_email` (5/hour per client IP) + Nginx `limit_req`; the email's link is the one-time link of the row below |
+| Password reset link theft or reuse | A link is made by a Super Admin (UC-ADMIN-010) or sent to the account's own email address (UC-AUTH-006); the secret part sits after `#`, so it reaches no server log and no `Referer` header; valid 24 hours (`PASSWORD_RESET_TIMEOUT`); one-time, because the token is signed over the password hash; one answer for every invalid link; throttle `password_reset` (5/min per client IP) + Nginx `limit_req`; a reset blacklists every refresh token |
 | Customer privacy in analytics | Only counters per cafe, hour and table are stored: no IP address, user agent, cookie or browser storage (UC-GUEST-004); the numbers are shown as approximate |
 | Inflated analytics numbers | The counter endpoint is public by design; Nginx limits it to 1 request per second per client IP (zone `views`), and the dashboard labels the numbers as approximate |
 | Race conditions on limits and ordering | Cafe row lock (`select_for_update`) inside the service transaction (use_cases.md Global Convention 8) |

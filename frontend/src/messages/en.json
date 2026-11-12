@@ -24,7 +24,8 @@
     "missingFields": "Enter your email and password.",
     "throttled": "Too many attempts. Try again in {seconds, plural, one {# second} other {# seconds}}.",
     "serverError": "The server could not be reached. Please try again.",
-    "sessionEnded": "Your session has ended. Please log in again."
+    "sessionEnded": "Your session has ended. Please log in again.",
+    "forgot": "Forgot password?"
   },
   "Session": {
     "logout": "Log out"
@@ -75,7 +76,8 @@
     "datePast": "The date must be today or later.",
     "dateTooFar": "The date must be within 2 years from today.",
     "dateNotLater": "The date must be later than the current last paid day.",
-    "renewInactive": "This cafe's subscription is inactive. Activate it instead."
+    "renewInactive": "This cafe's subscription is inactive. Activate it instead.",
+    "emailNotConfigured": "Password reset by email is not available right now. Contact support to get a reset link."
   },
   "Dashboard": {
     "title": "Cafe dashboard",
@@ -275,6 +277,17 @@
     "changing": "Changing…",
     "changed": "Your password was changed. Log in again with the new password.",
     "logIn": "Log in"
+  },
+  "ForgotPassword": {
+    "title": "Forgot password",
+    "intro": "Enter the email address of your account. We will send you a link to set a new password.",
+    "email": "Email",
+    "send": "Send the link",
+    "sending": "Sending…",
+    "sent": "If this address has an account, we sent a link to it. The link is valid for 24 hours.",
+    "sentHint": "No email after a few minutes? Check the spam folder, or contact support to get a link.",
+    "throttled": "Too many requests. Try again in {minutes, plural, one {# minute} other {# minutes}}.",
+    "backToLogin": "Back to log in"
   },
   "ResetPassword": {
     "title": "Set a new password",

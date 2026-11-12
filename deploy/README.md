@@ -325,6 +325,41 @@ See the real error and its stack trace when a page or the API answers 500, witho
 The reports contain no passwords, cookies, tokens, request bodies or visitor addresses. To stop sending,
 empty `SENTRY_DSN` and run `docker compose up -d` again.
 
+## 15. Password reset email (optional, once)
+
+Lets an owner who forgot the password get a reset link by email ("Forgot password?" on the login page,
+use_cases.md UC-AUTH-006). Without it the page tells the owner to contact support, and you send a link from
+the cafe's admin page (UC-ADMIN-010). The provider is Resend (resend.com); any SMTP server with STARTTLS on
+port 587 works with the same five settings.
+
+1. Create a Resend account and add your domain (Domains → Add domain), for example `menu.domain.com`.
+2. Resend shows DNS records for that domain. Add all of them at your DNS provider, then press "Verify":
+   - **SPF** (a TXT record and an MX record): tells mail servers that Resend may send for your domain.
+   - **DKIM** (a TXT record): a public key; Resend signs every email, and the receiver checks the signature.
+3. Add one more TXT record yourself, named `_dmarc.<your domain>`, with the value `v=DMARC1; p=none;`.
+   **DMARC** tells receivers what to do with mail that fails SPF and DKIM. `p=none` only reports; once real
+   emails arrive well, change it to `p=quarantine`. Without these three records the email lands in spam.
+4. Create an API key with the permission "Sending access" only, limited to that domain.
+5. Fill `.env` and run `docker compose up -d`:
+
+   ```bash
+   EMAIL_HOST=smtp.resend.com
+   EMAIL_PORT=587
+   EMAIL_HOST_USER=resend
+   EMAIL_HOST_PASSWORD=<the API key>
+   DEFAULT_FROM_EMAIL=Tartus Menu <no-reply@menu.domain.com>
+   ```
+
+   The address in `DEFAULT_FROM_EMAIL` must be on the verified domain.
+6. Check: open `https://menu.domain.com/login`, click "Forgot password?" and enter the email address of a test
+   cafe's owner. The email must arrive within a minute, and its link must open the new-password page. If
+   nothing arrives, look at Resend's "Emails" page and at `docker compose logs backend | grep "reset email"`.
+
+Limits to know: an owner gets an email only if the account's email address is a real mailbox, so enter real
+addresses when you create cafes. One address gets at most one email per 5 minutes, and one visitor may ask
+5 times per hour. A Super Admin never gets a reset email; reset that password on the server:
+`docker compose exec backend python manage.py changepassword <email>`.
+
 ## Useful commands
 
 ```bash

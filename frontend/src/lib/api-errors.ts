@@ -13,7 +13,8 @@ export type ApiErrorKey =
   | "listChanged" | "wrongPassword" | "samePassword" | "passwordTooShort" | "passwordTooCommon"
   | "passwordNumeric" | "passwordTooSimilar" | "slugTaken" | "slugFormat" | "emailTaken" | "emailFormat"
   | "unknownPlan" | "alreadyActive" | "alreadyInactive" | "downgradeCategories" | "downgradeItems"
-  | "analyticsNeedPro" | "resetLinkInvalid" | "dateFormat" | "datePast" | "dateTooFar" | "dateNotLater" | "renewInactive";
+  | "analyticsNeedPro" | "resetLinkInvalid" | "dateFormat" | "datePast" | "dateTooFar" | "dateNotLater" | "renewInactive"
+  | "emailNotConfigured";
 
 /** A message to show: a known one by key, translated when the page renders, or Django's own text. */
 export type ApiMessage = { key: ApiErrorKey; values?: Record<string, string | number> } | { text: string };
@@ -59,6 +60,7 @@ const KNOWN: [RegExp, ApiErrorKey, string[]?][] = [
   [/^This password is entirely numeric\.$/, "passwordNumeric"],
   [/^The password is too similar to the .+\.$/, "passwordTooSimilar"], // the field name is English
   [/^This reset link is invalid or has expired\.$/, "resetLinkInvalid"], // UC-AUTH-005 A1
+  [/^Password reset by email is not available\. Please contact support\.$/, "emailNotConfigured"], // UC-AUTH-006 A5
   // UC-ADMIN-001 to 006: the admin serializers (DRF's SlugField, EmailField, SlugRelatedField) and services.
   [/^A cafe with this slug already exists\.$/, "slugTaken"],
   [/^Enter a valid .slug. consisting of letters, numbers, underscores or hyphens\.$/, "slugFormat"], // “slug” in curly quotes
@@ -88,6 +90,7 @@ const CODES: Record<string, ApiErrorKey> = {
   not_found: "notFound", already_active: "alreadyActive", already_inactive: "alreadyInactive",
   downgrade_categories: "downgradeCategories", downgrade_items: "downgradeItems",
   reset_link_invalid: "resetLinkInvalid", renew_inactive: "renewInactive", analytics_need_pro: "analyticsNeedPro",
+  email_not_configured: "emailNotConfigured",
 };
 
 function valuesOf(match: RegExpExecArray, names: string[]) {

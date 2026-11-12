@@ -145,6 +145,29 @@ AUTH_PASSWORD_VALIDATORS = [
 # link by hand (for example by WhatsApp), so it needs more than minutes; Django's default is 3 days.
 PASSWORD_RESET_TIMEOUT = 86400
 
+# Email: only the password reset email (UC-AUTH-006), over SMTP. Optional, like error tracking: without
+# EMAIL_HOST nothing is sent and the endpoint answers 503; the Super Admin's link (UC-ADMIN-010) still works.
+EMAIL_HOST = os.getenv('EMAIL_HOST', '')
+if EMAIL_HOST:
+    EMAIL_PORT = int(os.getenv('EMAIL_PORT') or 587)  # 587 = SMTP with STARTTLS
+    EMAIL_USE_TLS = True
+    EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+    EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+    # Seconds to wait for the mail server. Django's default is no limit at all.
+    EMAIL_TIMEOUT = 10
+    # The sender, for example "Tartus Menu <no-reply@menu.domain.com>". Its domain must be verified at
+    # the provider (deploy/README.md §15), or the mail is refused or lands in spam.
+    DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', '')
+    if not DEFAULT_FROM_EMAIL:
+        raise ImproperlyConfigured("DEFAULT_FROM_EMAIL must be set when EMAIL_HOST is set.")
+elif DEBUG:
+    # Development: the email is printed in the runserver console instead of being sent. Its text is
+    # base64 there (it holds Arabic); decode it to read the link, or make one on the admin page.
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+else:
+    EMAIL_BACKEND = 'django.core.mail.backends.dummy.EmailBackend'  # sends nothing
+PASSWORD_RESET_EMAIL_ENABLED = bool(EMAIL_HOST) or DEBUG
+
 
 # Internationalization
 LANGUAGE_CODE = 'en-us'
@@ -218,6 +241,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'login': os.getenv('LOGIN_THROTTLE_RATE', '5/min'),
         'password_reset': '5/min',  # UC-AUTH-005: tries of a reset link, per client IP
+        'password_reset_email': '5/hour',  # UC-AUTH-006: requests for a reset email, per client IP
     },
     # Number of trusted proxies in front of Django; throttling reads the client IP with it.
     # Production (Nginx): 1. Default 0 ignores X-Forwarded-For, so a client cannot fake its IP.
@@ -280,6 +304,8 @@ LOGGING = {
     'loggers': {
         # Our modules (core.revalidation, core.media_storage) log errors that never fail the request.
         'core': {'handlers': ['console'], 'level': 'INFO'},
+        # users.services logs a password reset email that could not be sent (UC-AUTH-006 A6).
+        'users': {'handlers': ['console'], 'level': 'INFO'},
         # Server errors (5xx) with their traceback. Django's default only e-mails them, and no ADMINS are set.
         # 4xx answers are WARNING and stay out; Nginx logs every request anyway.
         'django.request': {'handlers': ['console'], 'level': 'ERROR', 'propagate': False},

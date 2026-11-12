@@ -1,27 +1,46 @@
 """
-Business rules for accounts (use_cases.md UC-AUTH-004, UC-AUTH-005 and UC-ADMIN-010): ending a user's
-sessions, and the one-time password reset link.
+Business rules for accounts (use_cases.md UC-AUTH-004 to UC-AUTH-006 and UC-ADMIN-010): ending a user's
+sessions, the one-time password reset link, and the email that carries it.
 
 The link's token comes from Django's default_token_generator: a signature over the user's password
 hash and a timestamp. Nothing is stored. A new password changes the hash, so every link made before
 stops working; that is what makes a link one-time.
 """
 
+import logging
+import threading
 from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
+from django.core.cache import cache
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.mail import EmailMessage
 from django.db import transaction
+from django.template.loader import render_to_string
 from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
-from rest_framework.exceptions import ValidationError
+from rest_framework import status
+from rest_framework.exceptions import APIException, ValidationError
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
+
+# UC-AUTH-006: at most one reset email per account in this many seconds.
+RESET_EMAIL_COOLDOWN = 300
+# The name of the thread that sends a reset email; the tests wait for threads with this name.
+RESET_EMAIL_THREAD = 'password-reset-email'
+
+
+class EmailNotConfigured(APIException):
+    """UC-AUTH-006 A5: the server has no mail settings, so no reset email can be sent."""
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = 'Password reset by email is not available. Please contact support.'
+    default_code = 'email_not_configured'
 
 
 def revoke_sessions(user):
@@ -56,6 +75,43 @@ def password_reset_link(user):
         'url': f'{settings.PUBLIC_MENU_BASE_URL}/reset-password#{uid}.{token}',
         'expires_at': timezone.now() + timedelta(seconds=settings.PASSWORD_RESET_TIMEOUT),
     }
+
+
+def request_password_reset(email):
+    """
+    UC-AUTH-006: emails a reset link to the active Cafe Owner account with this address, if there is one.
+
+    It returns nothing in every case, and the caller answers 204: a visitor must not learn which
+    addresses have an account. The email leaves in a background thread for the same reason: talking
+    to the mail server takes far longer than "no such account", and that time would tell.
+    """
+    if not settings.PASSWORD_RESET_EMAIL_ENABLED:
+        raise EmailNotConfigured()  # A5, before the address is looked up
+    # Never a Super Admin: a stolen mailbox must not open the whole platform (A1).
+    user = User.objects.filter(email__iexact=email, is_active=True, role=User.Role.CAFE_OWNER).first()
+    if user is None:
+        return
+    # cache.add() writes only when the key is not there yet, and says whether it wrote: the check and
+    # the mark are one step. The key expires by itself after the cooldown (A2).
+    if not cache.add(f'password-reset-email:{user.pk}', True, RESET_EMAIL_COOLDOWN):
+        return
+    context = {'url': password_reset_link(user)['url'], 'hours': settings.PASSWORD_RESET_TIMEOUT // 3600}
+    message = EmailMessage(
+        subject=render_to_string('users/password_reset_subject.txt').strip(),
+        body=render_to_string('users/password_reset_email.txt', context),
+        to=[user.email],
+    )
+    # Not a daemon thread: a worker that is shutting down waits for the email (at most EMAIL_TIMEOUT).
+    threading.Thread(target=_send, args=(message,), name=RESET_EMAIL_THREAD).start()
+
+
+def _send(message):
+    """Runs in its own thread, where nothing else would catch an error: log it (A6)."""
+    try:
+        message.send()
+    except Exception as exc:  # whatever the mail server or the network did
+        # Only the kind of error: its text can hold the recipient's address.
+        logger.error('The password reset email could not be sent: %s', type(exc).__name__)
 
 
 def reset_password(*, uid, token, new_password):

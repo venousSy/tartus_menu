@@ -34,7 +34,8 @@
 2. **Questions to the user**, answered 2026-11-09: (a) business time zone `Asia/Damascus`
    (`BUSINESS_TIME_ZONE`; `TIME_ZONE` stays UTC); (b) new dependencies approved (D: `sentry-sdk`,
    `@sentry/nextjs`; I: psycopg 3), each still added in its own step; (c) the exception to "never hand-write a
-   migration" for RLS `RunSQL` (K only) is decided later, in Phase 5; (d) the SMTP provider (E2) is asked in Phase 5.
+   migration" for RLS `RunSQL` (K only): approved 2026-11-12, for K only; (d) the SMTP provider (E2): Resend
+   (2026-11-12).
 3. **implementation_plan.md:** decisions table (Analytics, Business time zone, Monitoring, Password recovery,
    Subscription expiry, Approved dependencies), a link to this file, MVP steps 1–15 checked, and build-order
    steps 17–27 in the phase order below; RLS (step 16) is done last. The "QR Code URL" row changes with item A.
@@ -219,7 +220,11 @@
 
 ## Phase 5 — Hardening
 
-### E2. Password reset by email — size M
+### E2. Password reset by email — size M — done 2026-11-12 (branch `feat/password-reset-email`)
+- As built: the email is sent in a background thread (the answer time must not tell whether an account
+  exists); only Cafe Owner accounts get one; 5/hour per IP and one email per account per 5 minutes; without
+  `EMAIL_HOST` the endpoint answers 503 and only the Super Admin link (E1) works; the page is
+  `/forgot-password`, its BFF route `/bff/auth/forgot-password`.
 - **Docs:** new **UC-AUTH-006 "Request Password Reset Email"** (always 204, no user enumeration).
 - **Backend:** `EMAIL_*`, `DEFAULT_FROM_EMAIL`, `EMAIL_TIMEOUT=10` (+ `.env.example`, compose; console backend in
   development); `request_password_reset(email)` sends one bilingual `EmailMessage` reusing E1's token and page;
