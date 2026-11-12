@@ -84,6 +84,19 @@ const fakeDjango: FakeDjango = async (req, path, body, answer) => {
     fake.refresh.clear();
     return answer(204);
   }
+  if (path === "/auth/password-reset/") {
+    // UC-AUTH-006: 204 for every well-formed address; A3, A4 and A5 as Django answers them.
+    if (!String(body.email ?? "").includes("@")) return answer(400, { email: ["Enter a valid email address."] });
+    if (body.email === "throttled@test.local") {
+      return answer(429, { detail: "Request was throttled. Expected available in 1740 seconds." },
+        { "Content-Type": "application/json", "Retry-After": "1740", "X-Error-Code": "throttled" });
+    }
+    if (body.email === "no-mail@test.local") {
+      return answer(503, { detail: "Password reset by email is not available. Please contact support." },
+        { "Content-Type": "application/json", "X-Error-Code": "email_not_configured" });
+    }
+    return answer(204);
+  }
   if (path === "/dashboard/settings/") {
     return signedIn ? answer(200, SETTINGS) : answer(401, notSignedIn);
   }
@@ -240,6 +253,42 @@ test("reset page: open to everyone, never indexed, and it tells no other page wh
     assert.equal(res.headers.get("referrer-policy"), "no-referrer");
     assert.match(await res.text(), /<meta name="robots" content="noindex, nofollow"/);
   }
+  assert.deepEqual(fake.calls, []);
+});
+
+test("forgot-password: no session is needed and none is started; Django gets the address and the IP", async () => {
+  const res = await post("/bff/auth/forgot-password", { body: { email: "owner@test.local" } });
+  assert.equal(res.status, 204);
+  assert.deepEqual(kept(res), {});
+  assert.deepEqual([fake.calls, fake.forwardedFor], [["/auth/password-reset/"], [XFF]]);
+});
+
+test("forgot-password: Django's refusals reach the form; another site and a broken Django do not pass", async () => {
+  const malformed = await post("/bff/auth/forgot-password", { body: { email: "not-an-address" } });
+  assert.deepEqual([malformed.status, await malformed.json()], [400, { email: ["Enter a valid email address."] }]);
+  const throttled = await post("/bff/auth/forgot-password", { body: { email: "throttled@test.local" } });
+  assert.deepEqual([throttled.status, throttled.headers.get("retry-after")], [429, "1740"]);
+  // A5: the one 503 that is an answer, not an outage. The form translates it by its code.
+  const noMail = await post("/bff/auth/forgot-password", { body: { email: "no-mail@test.local" } });
+  assert.equal(noMail.status, 503);
+  assert.deepEqual(toFormError(await noMail.json(), noMail.headers.get("x-error-code")), { form: { key: "emailNotConfigured" }, fields: {} });
+  fake.calls = [];
+  const foreign = await post("/bff/auth/forgot-password", { body: { email: "owner@test.local" }, origin: "https://evil.example" });
+  assert.equal(foreign.status, 403);
+  assert.deepEqual(fake.calls, []);
+  fake.down = true; // a 502 without the code is a failure, not passed on as Django's answer
+  assert.equal((await post("/bff/auth/forgot-password", { body: { email: "owner@test.local" } })).status, 500);
+});
+
+test("forgot page: open to everyone and never indexed; the login page links to it", async () => {
+  for (const cookie of ["", both(issuePair())]) {
+    const res = await fetch(`${SITE}/forgot-password`, { redirect: "manual", headers: { Cookie: cookie } });
+    assert.equal(res.status, 200); // proxy.ts does not run here
+    const html = await res.text();
+    assert.match(html, /<meta name="robots" content="noindex, nofollow"/);
+    assert.match(html, /<input[^>]*name="email"/);
+  }
+  assert.match(await (await fetch(`${SITE}/login`)).text(), /<a[^>]*href="\/forgot-password"/);
   assert.deepEqual(fake.calls, []);
 });
 

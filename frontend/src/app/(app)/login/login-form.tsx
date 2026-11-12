@@ -84,6 +84,8 @@ export function LoginForm() {
         className="min-h-11 rounded-lg bg-primary font-semibold text-on-primary disabled:opacity-60">
         {pending ? t("submitting") : t("submit")}
       </button>
+      {/* UC-AUTH-006: a reset link by email. */}
+      <a href="/forgot-password" className="self-start text-sm underline">{t("forgot")}</a>
     </form>
   );
 }
