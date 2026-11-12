@@ -34,7 +34,8 @@ All architectural decisions have been locked in. Below is a summary of every dec
 | Analytics | Post-MVP (post_mvp_roadmap.md Phase 3, built): menu opens per day/hour and per table, counted by a beacon from the menu page; no cookies or personal data; Basic sees a summary, Pro the detail (plan flag `allows_detailed_analytics`) |
 | Business time zone | `Asia/Damascus` for analytics days/hours and subscription dates; the database and Django `TIME_ZONE` stay UTC |
 | Monitoring (post-MVP) | Health URL `/health` + an external uptime check; error tracking with Sentry or GlitchTip (`sentry-sdk`, `@sentry/nextjs`; active only when a DSN is set) |
-| Password recovery (post-MVP) | A one-time reset link made by the Super Admin (valid 24 hours, sent by hand); self-service email later |
+| Password recovery (post-MVP) | A one-time reset link (valid 24 hours): made by the Super Admin and sent by hand, or sent to the owner's email address on request ("Forgot password?", UC-AUTH-006); SMTP provider Resend, optional (no `EMAIL_HOST` = only the Super Admin link) |
+| Hand-written migrations | Never, with one exception approved on 2026-11-12: the `RunSQL` migrations of PostgreSQL RLS (step 16, roadmap K), started with `makemigrations --empty` |
 | Subscription expiry (post-MVP) | A paid-until date (`subscription_expires_on`, required at activation, moved by "Renew"); a nightly job deactivates expired cafes; a warning 7 days before for the owner and the admin |
 | Approved dependencies (post-MVP) | `sentry-sdk`, `@sentry/nextjs`, psycopg 3 — each added in its own step |
 | Routing | Host `menu.domain.com`; customer page route `/menu/[cafe-slug]` |
@@ -108,6 +109,6 @@ Post-MVP steps (details in [post_mvp_roadmap.md](post_mvp_roadmap.md); each star
 22. **[x] Analytics** (roadmap B) — use_cases.md UC-GUEST-004, UC-OWNER-015, UC-OWNER-016.
 23. **[x] Item tags** (roadmap G) — use_cases.md Global Convention 11.
 24. **[x] Item variants (sizes with prices)** (roadmap H) — use_cases.md Global Convention 10.
-25. **[ ] Password reset by email** (roadmap E2).
+25. **[x] Password reset by email** (roadmap E2) — use_cases.md UC-AUTH-006.
 26. **[x] psycopg 3 and persistent connections** (roadmap I).
 27. **[ ] Images: remaining sizes, optional** (roadmap J).

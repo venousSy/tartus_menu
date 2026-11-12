@@ -8,6 +8,7 @@
 - [UC-AUTH-003] Logout
 - [UC-AUTH-004] Change Password
 - [UC-AUTH-005] Reset Password with Link
+- [UC-AUTH-006] Request Password Reset Email
 
 ### Super Admin
 - [UC-ADMIN-001] Create Cafe
@@ -92,7 +93,7 @@ A table's QR code does not hold this URL. It holds the table's permanent short l
 - The role check runs first, then the active check. A caller who is not a Cafe Owner gets the role error, never the subscription message.
 - A subscription is paid until a date: cafe.subscription_expires_on, a calendar day in the business time zone (Asia/Damascus). The cafe stays active through the whole of that day. In the night after it, a scheduled job deactivates the cafe (UC-ADMIN-012). NULL means "no end date": such a cafe never expires by itself (cafes activated before this rule existed).
 - days_left = subscription_expires_on minus today (business time zone); 0 on the last paid day, negative when the job has not run yet. It is null for an inactive cafe and for a cafe without an end date. The owner dashboard and the admin pages warn when days_left is 7 or less.
-- Auth endpoints (/api/v1/auth/) never check the subscription. The owner of an inactive cafe can still log in, refresh, log out, change the password and reset it with a link (UC-AUTH-005).
+- Auth endpoints (/api/v1/auth/) never check the subscription. The owner of an inactive cafe can still log in, refresh, log out, change the password, ask for a reset email (UC-AUTH-006) and reset the password with a link (UC-AUTH-005).
 
 **6. Bilingual text fields**
 
@@ -277,7 +278,7 @@ A menu item can carry tags: short labels from a fixed list. The owner cannot inv
 | Field | Value |
 |---|---|
 | **Actor** | Cafe Owner (unauthenticated) |
-| **Trigger** | Owner opens the reset link (UC-ADMIN-010) and submits the new-password form |
+| **Trigger** | Owner opens the reset link (made by the Super Admin, UC-ADMIN-010, or sent by email, UC-AUTH-006) and submits the new-password form |
 | **Preconditions** | The link is still valid: made less than 24 hours ago, and the password has not changed since it was made |
 | **Postconditions (Success)** | Password is changed; all outstanding refresh tokens of the user are blacklisted; the link (and every other link made before) stops working; the owner is NOT logged in and must log in with the new password |
 | **Postconditions (Failure)** | Password and sessions are unchanged |
@@ -297,6 +298,36 @@ A menu item can carry tags: short labels from a fixed list. The owner cannot inv
 - **A2 — new_password fails validation:** 400 Bad Request — {"new_password": [<validator messages>]}. The link stays valid; the owner can try again.
 - **A3 — Too many attempts:** 429 Too Many Requests — {"detail": "Request was throttled. Expected available in N seconds."}. Every attempt counts, successful or not.
 - **A4 — Missing fields:** 400 Bad Request with field-level errors.
+
+---
+
+### UC-AUTH-006 — Request Password Reset Email
+
+> **As a Cafe Owner who forgot the password, I want to get a reset link by email so that I can set a new password without waiting for support.**
+
+| Field | Value |
+|---|---|
+| **Actor** | Cafe Owner (unauthenticated) |
+| **Trigger** | Owner clicks "Forgot password?" on the login page and submits an email address |
+| **Preconditions** | Email sending is set up on the server (EMAIL_HOST) |
+| **Postconditions (Success)** | If the address belongs to an active Cafe Owner account, and no reset email was sent to that account in the last 5 minutes, one email with a one-time reset link is sent. Nothing is stored and nothing changes: the current password and sessions keep working until the link is used (UC-AUTH-005) |
+| **API** | POST /api/v1/auth/password-reset/ |
+| **Architectural Note** | No authentication. Service Layer: users/services.py request_password_reset(email). The link is the one of UC-ADMIN-010 (same token, same 24 hours, same page), so UC-AUTH-005 does not change. No user enumeration: every well-formed address gets the same answer, and the email is handed to a background thread, so the answer also takes the same time whether an account exists or not. Rate limits: DRF ScopedRateThrottle (scope "password_reset_email", 5 requests per hour per client IP), one email per account per 5 minutes (a cooldown key in DatabaseCache), and Nginx like the login. The email is one plain-text message in Arabic and English (the account has no language), sent with Django's EmailMessage over SMTP (EMAIL_HOST, EMAIL_PORT, EMAIL_HOST_USER, EMAIL_HOST_PASSWORD, DEFAULT_FROM_EMAIL; EMAIL_TIMEOUT = 10 seconds). Super Admin accounts never get a reset email: a stolen mailbox must not open the whole platform. A Super Admin password is reset on the server (manage.py changepassword). |
+
+**Main Flow:**
+1. Owner sends { email }.
+2. System validates that email is a well-formed address.
+3. System looks for an active account with this address (case-insensitive) and the role CAFE_OWNER.
+4. If there is one, and no reset email was sent to it in the last 5 minutes, System makes a reset link (as in UC-ADMIN-010) and sends it to the address.
+5. System returns 204 No Content. The frontend shows: "If this address has an account, we sent a link to it. The link is valid for 24 hours."
+
+**Alternate Flows:**
+- **A1 — No such account:** 204 No Content, no email. The same for an unknown address, an inactive account (is_active = false) and an account that is not a Cafe Owner.
+- **A2 — An email was sent in the last 5 minutes:** 204 No Content, no second email.
+- **A3 — Missing or malformed email:** 400 Bad Request with a field-level error — {"email": ["Enter a valid email address."]}.
+- **A4 — Too many requests:** 429 Too Many Requests — {"detail": "Request was throttled. Expected available in N seconds."}. Every request counts.
+- **A5 — Email is not set up on the server:** 503 Service Unavailable — {"detail": "Password reset by email is not available. Please contact support."} with the header X-Error-Code: email_not_configured. Answered before the address is looked at, so it reveals nothing about accounts. The Super Admin can still make a link (UC-ADMIN-010).
+- **A6 — The mail server refuses the message or cannot be reached:** the owner still gets 204. The failure is logged (and reported to error tracking when that is on). The owner can ask again after 5 minutes, or ask support for a link.
 
 ---
 
@@ -1168,6 +1199,7 @@ A menu item can carry tags: short labels from a fixed list. The owner cannot inv
 | UC-AUTH-003 | Logout | Any | POST /api/v1/auth/logout/ |
 | UC-AUTH-004 | Change Password | Any | POST /api/v1/auth/change-password/ |
 | UC-AUTH-005 | Reset Password with Link | Cafe Owner | POST /api/v1/auth/password-reset/confirm/ |
+| UC-AUTH-006 | Request Password Reset Email | Cafe Owner | POST /api/v1/auth/password-reset/ |
 | UC-ADMIN-001 | Create Cafe | Super Admin | POST /api/v1/admin/cafes/ |
 | UC-ADMIN-002 | List Cafes | Super Admin | GET /api/v1/admin/cafes/ |
 | UC-ADMIN-003 | View Cafe Details | Super Admin | GET /api/v1/admin/cafes/{id}/ |
