@@ -104,6 +104,15 @@ DATABASES = {
         'PASSWORD': os.getenv('DB_PASSWORD', 'postgres'),
         'HOST': os.getenv('DB_HOST', 'localhost'),
         'PORT': os.getenv('DB_PORT', '5432'),
+        # Persistent connections: a worker keeps its connection for up to this many seconds and reuses
+        # it for the next requests, instead of opening a new one per request. 0 closes it after each request.
+        # "or 60": an empty value in .env means the default too.
+        'CONN_MAX_AGE': int(os.getenv('DB_CONN_MAX_AGE') or 60),
+        # Before reusing a kept connection, Django checks that it still works (for example after a
+        # PostgreSQL restart) and opens a new one if not, so the request does not fail.
+        'CONN_HEALTH_CHECKS': True,
+        # No connection pool (OPTIONS "pool"): Django does not allow it together with CONN_MAX_AGE, and
+        # with sync Gunicorn workers (one request at a time each) one kept connection per worker is enough.
     }
 }
 

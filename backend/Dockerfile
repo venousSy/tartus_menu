@@ -1,5 +1,5 @@
 # Production image for the Django API (system_design.md §5, service "backend").
-# Slim (Debian) instead of Alpine: psycopg2-binary and Pillow install from ready-made wheels, no compiler needed.
+# Slim (Debian) instead of Alpine: psycopg (binary) and Pillow install from ready-made wheels, no compiler needed.
 FROM python:3.14-slim
 
 # No .pyc files, logs go straight to Docker, no pip cache or version check in the image.

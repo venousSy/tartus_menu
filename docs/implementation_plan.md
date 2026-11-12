@@ -109,5 +109,5 @@ Post-MVP steps (details in [post_mvp_roadmap.md](post_mvp_roadmap.md); each star
 23. **[x] Item tags** (roadmap G) — use_cases.md Global Convention 11.
 24. **[x] Item variants (sizes with prices)** (roadmap H) — use_cases.md Global Convention 10.
 25. **[ ] Password reset by email** (roadmap E2).
-26. **[ ] psycopg 3 and persistent connections** (roadmap I).
+26. **[x] psycopg 3 and persistent connections** (roadmap I).
 27. **[ ] Images: remaining sizes, optional** (roadmap J).
