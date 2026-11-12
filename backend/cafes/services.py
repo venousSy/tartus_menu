@@ -5,6 +5,10 @@ the Super Admin's cafe management (UC-ADMIN-001 to UC-ADMIN-011) and the nightly
 
 Owner views pass the cafe from request.user.cafe, never from the request body or URL.
 Super Admin views pass the cafe id from the URL: the admin manages every cafe.
+
+Row-Level Security (system_design.md §7.1): the cafes table itself has no policy, but cafe_tables
+and billing_events do. Owner services that touch tables run in tenant(cafe) (@in_tenant); services
+that work across cafes (Super Admin, nightly expiry, the QR link lookup) run in all_tenants().
 """
 
 from datetime import timedelta
@@ -19,6 +23,7 @@ from core.business_time import business_today
 from core.images import LOGO_MAX_SIDE, process_image
 from core.media_storage import delete_folder_on_commit, delete_image_on_commit, store_image
 from core.revalidation import schedule_menu_revalidation
+from core.tenancy import all_tenants, in_tenant
 from users import services as user_services
 
 from .models import BillingEvent, Cafe, CafeTable, SubscriptionPlan
@@ -86,6 +91,7 @@ def upload_logo(cafe, *, image_file):
     return locked_cafe
 
 
+@in_tenant
 def sync_tables(cafe, table_count):
     """
     UC-OWNER-007 step 2: tables 1..table_count become active, every higher number inactive.
@@ -114,6 +120,7 @@ def sync_tables(cafe, table_count):
     return active_tables(cafe)
 
 
+@in_tenant
 def active_tables(cafe):
     """The cafe's active tables in ascending table_number order (UC-OWNER-007, 008 and 011)."""
     return list(CafeTable.objects.filter(cafe=cafe, is_active=True).order_by('table_number'))
@@ -151,7 +158,9 @@ def resolve_qr_token(token):
     cafe still answers, and its menu page shows the UC-GUEST-002 screen (A2). Raises NotFound (404)
     for a token that belongs to no table (A3); a deleted cafe deleted its tables too.
     """
-    table = CafeTable.objects.select_related('cafe').filter(qr_token=token).first()
+    # The token is all a customer has: no cafe is known yet, so this one lookup reads across cafes.
+    with all_tenants():
+        table = CafeTable.objects.select_related('cafe').filter(qr_token=token).first()
     if table is None:
         raise NotFound()
     return {'slug': table.cafe.slug, 'table_number': table.table_number if table.is_active else None}
@@ -202,6 +211,7 @@ def create_cafe(*, slug, name, plan, owner):
     return get_cafe(cafe.pk)
 
 
+@all_tenants()
 def activate_cafe(cafe_id, *, performed_by, expires_on, notes=''):
     """
     UC-ADMIN-004: is_active = true, subscription_start_at = now, subscription_end_at = null,
@@ -230,6 +240,7 @@ def activate_cafe(cafe_id, *, performed_by, expires_on, notes=''):
     return get_cafe(cafe.pk)
 
 
+@all_tenants()
 def deactivate_cafe(cafe_id, *, performed_by, notes=''):
     """UC-ADMIN-005: is_active = false and subscription_end_at = now. The end date is kept."""
     with transaction.atomic():
@@ -240,6 +251,7 @@ def deactivate_cafe(cafe_id, *, performed_by, notes=''):
     return get_cafe(cafe.pk)
 
 
+@all_tenants()
 def renew_cafe(cafe_id, *, performed_by, expires_on, notes=''):
     """
     UC-ADMIN-011: a later end date for an active cafe, and a BillingEvent 'renewed'. Nothing else
@@ -277,7 +289,8 @@ def expire_due_subscriptions(today=None):
     expired = []
     for cafe_id in list(due.order_by('pk').values_list('pk', flat=True)):
         # One transaction per cafe: a failure at one cafe does not undo the others.
-        with transaction.atomic():
+        # all_tenants(): the job writes a billing event for whichever cafe is due.
+        with all_tenants():
             # Checked again under the lock: an admin may have renewed, deactivated or deleted it meanwhile.
             cafe = due.select_for_update().filter(pk=cafe_id).first()
             if cafe is None:
@@ -316,6 +329,7 @@ def _end_subscription(cafe, *, action, performed_by, notes):
     schedule_menu_revalidation(cafe.slug)
 
 
+@all_tenants()
 def update_cafe(cafe_id, *, performed_by, name=None, slug=None, primary_color=None, plan=None):
     """
     UC-ADMIN-006. PATCH semantics: an argument left as None is not changed. The serializer already
@@ -375,6 +389,7 @@ def _check_plan_limits(cafe, plan):
             }, code=f'downgrade_{label}')
 
 
+@all_tenants()
 def delete_cafe(cafe_id):
     """
     UC-ADMIN-007: hard delete of the cafe and its owner account, in one transaction. Irreversible.
@@ -406,11 +421,14 @@ def password_reset_link(cafe_id):
     return user_services.password_reset_link(get_cafe(cafe_id).owner)
 
 
+@all_tenants()
 def billing_history(cafe_id):
     """UC-ADMIN-008: the cafe's billing events, newest first; an empty list when there are none (A1)."""
     if not Cafe.objects.filter(pk=cafe_id).exists():
         raise NotFound()  # A2
-    return BillingEvent.objects.filter(cafe_id=cafe_id).select_related('performed_by').order_by('-created_at', '-pk')
+    events = BillingEvent.objects.filter(cafe_id=cafe_id).select_related('performed_by')
+    # A list, not a queryset: the rows are read here, inside the scope.
+    return list(events.order_by('-created_at', '-pk'))
 
 
 def platform_stats():

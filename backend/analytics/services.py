@@ -19,6 +19,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied
 
 from cafes.models import Cafe, CafeTable
 from core.business_time import business_today
+from core.tenancy import all_tenants, in_tenant, tenant
 
 from .models import MenuViewCount
 
@@ -39,7 +40,13 @@ def record_view(slug, table=None):
         raise NotFound()
     if not cafe.is_active:
         return
+    # The cafe was found by its slug; its tables and counters are read and written as that tenant.
+    with tenant(cafe):
+        _count_open(cafe, table)
 
+
+def _count_open(cafe, table):
+    """Adds 1 to the counter of (cafe, this hour, table). Runs inside the cafe's tenant scope."""
     known = table is not None and CafeTable.objects.filter(cafe=cafe, table_number=table, is_active=True).exists()
     key = {
         'cafe': cafe,
@@ -61,6 +68,7 @@ def record_view(slug, table=None):
         counter.update(count=F('count') + 1)
 
 
+@in_tenant
 def summary(cafe, days):
     """
     UC-OWNER-015: {"days", "total", "by_day": [{"date", "count"}]} for today and the days - 1 days
@@ -78,6 +86,7 @@ def summary(cafe, days):
     return {'days': days, 'total': sum(entry['count'] for entry in by_day), 'by_day': by_day}
 
 
+@in_tenant
 def detail(cafe, days):
     """
     UC-OWNER-016: {"days", "total", "by_hour": 24 x {"hour", "count"}, "by_table": [{"table_number",
@@ -107,6 +116,7 @@ def detail(cafe, days):
     }
 
 
+@all_tenants()
 def prune_old_views(today=None):
     """Deletes the counters older than RETENTION_DAYS (system_design.md §5). Returns how many rows went."""
     cutoff = _start_of(today or business_today()) - timedelta(days=RETENTION_DAYS)

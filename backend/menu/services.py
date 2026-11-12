@@ -4,10 +4,13 @@ and the public menu UC-GUEST-001 and UC-GUEST-002).
 
 Views pass the cafe from request.user.cafe, never from the request body or URL.
 Callers check role and subscription first (IsCafeOwner, IsActiveCafe).
+
+Row-Level Security (system_design.md §7.1): every service here runs in tenant(cafe), most of them
+through @in_tenant, and returns loaded data, because PostgreSQL shows no row outside that scope.
 """
 
 from django.db import transaction
-from django.db.models import Max, Prefetch
+from django.db.models import Max, Prefetch, prefetch_related_objects
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
@@ -15,6 +18,7 @@ from cafes.models import Cafe
 from core.images import ITEM_IMAGE_MAX_SIDE, ITEM_THUMBNAIL_MAX_SIDE, process_image_sizes
 from core.media_storage import delete_image_on_commit, store_image
 from core.revalidation import schedule_menu_revalidation
+from core.tenancy import in_tenant, tenant
 
 from .models import Category, MenuItem, MenuItemVariant
 
@@ -26,12 +30,15 @@ SORT_ORDER_GAP = 100
 PRICE_WITH_VARIANTS_MESSAGE = 'An item with variants takes its price from them. Do not send price.'
 
 
+@in_tenant
 def list_categories(cafe):
     """UC-OWNER-012: all non-deleted categories of the cafe, hidden ones included."""
     # Category.objects already hides soft-deleted rows (ActiveManager).
-    return Category.objects.filter(cafe=cafe).order_by('sort_order', 'id')
+    # A list, not a queryset: the rows are read here, inside the tenant scope.
+    return list(Category.objects.filter(cafe=cafe).order_by('sort_order', 'id'))
 
 
+@in_tenant
 def create_category(cafe, *, name, is_visible=True):
     """
     UC-OWNER-001 (create). `name` was already validated by the serializer.
@@ -74,6 +81,7 @@ def create_category(cafe, *, name, is_visible=True):
     return category
 
 
+@in_tenant
 def update_category(cafe, category_id, *, name=None, is_visible=None):
     """
     UC-OWNER-001 (edit). PATCH semantics: a field left as None is not changed.
@@ -98,6 +106,7 @@ def update_category(cafe, category_id, *, name=None, is_visible=None):
     return category
 
 
+@in_tenant
 def delete_category(cafe, category_id):
     """
     UC-OWNER-001 (delete): soft-delete the category and its non-deleted items
@@ -118,6 +127,7 @@ def delete_category(cafe, category_id):
         schedule_menu_revalidation(cafe.slug)
 
 
+@in_tenant
 def reorder_categories(cafe, *, ordered_ids):
     """
     UC-OWNER-003: put the cafe's categories in the order of `ordered_ids`
@@ -149,6 +159,7 @@ def reorder_categories(cafe, *, ordered_ids):
     return ordered
 
 
+@in_tenant
 def list_items(cafe, *, category_id=None):
     """
     UC-OWNER-013: the cafe's non-deleted items, unavailable ones included.
@@ -159,13 +170,15 @@ def list_items(cafe, *, category_id=None):
     """
     # ActiveManager: no soft-deleted items. One more query brings the variants of all items (no N+1).
     items = MenuItem.objects.filter(cafe=cafe).prefetch_related('variants')
+    # Lists, not querysets: the rows are read here, inside the tenant scope.
     if category_id is None:
         # category_id keeps each category's items together if two categories share a sort_order.
-        return items.order_by('category__sort_order', 'category_id', 'sort_order', 'id')
+        return list(items.order_by('category__sort_order', 'category_id', 'sort_order', 'id'))
     category = _get_category(cafe, category_id)
-    return items.filter(category=category).order_by('sort_order', 'id')
+    return list(items.filter(category=category).order_by('sort_order', 'id'))
 
 
+@in_tenant
 def create_item(cafe, *, category_id, name, price=None, description=None, is_featured=False, is_new=False,
                 tags=(), variants=()):
     """
@@ -226,9 +239,10 @@ def create_item(cafe, *, category_id, name, price=None, description=None, is_fea
         # Global Convention 9: rebuild the public menu, but only after the commit.
         schedule_menu_revalidation(locked_cafe.slug)
 
-    return item
+    return _with_variants(item)
 
 
+@in_tenant
 def update_item(cafe, item_id, *, category_id=None, name=None, description=None, price=None,
                 is_featured=None, is_new=None, tags=None, variants=None):
     """
@@ -286,9 +300,10 @@ def update_item(cafe, item_id, *, category_id=None, name=None, description=None,
             item.save(update_fields=[*changed, 'updated_at'])
             schedule_menu_revalidation(cafe.slug)
 
-    return item
+    return _with_variants(item)
 
 
+@in_tenant
 def delete_item(cafe, item_id):
     """UC-OWNER-002 (delete): soft delete. Raises NotFound (404) for a missing, deleted or foreign item."""
     with transaction.atomic():
@@ -298,6 +313,7 @@ def delete_item(cafe, item_id):
         schedule_menu_revalidation(cafe.slug)
 
 
+@in_tenant
 def reorder_items(cafe, *, ordered_ids):
     """
     UC-OWNER-004: put the items of one category in the order of `ordered_ids`
@@ -337,6 +353,7 @@ def reorder_items(cafe, *, ordered_ids):
     return ordered
 
 
+@in_tenant
 def set_item_availability(cafe, item_id, *, is_available):
     """
     UC-OWNER-005: change only is_available. Raises NotFound (404) for a missing, deleted
@@ -359,16 +376,18 @@ def upload_item_image(cafe, item_id, *, image_file):
     The file goes to R2 before the transaction, so no row lock is held during the network upload.
     The item row is locked for the URL swap: of two parallel uploads, the second sees the first
     one's URL as its old image and deletes it, so no stored file is left without an item.
+    For the same reason there are two short tenant scopes here, not @in_tenant around the upload.
     """
     if not cafe.plan.allows_images:  # the plan flag, never the plan name
         raise PermissionDenied('Item images require a Pro plan.', code='images_need_pro')
-    _get_item(cafe, item_id)  # 404 before the expensive work
+    with tenant(cafe):
+        _get_item(cafe, item_id)  # 404 before the expensive work
     # The full image and a small copy for the menu lists, from one decode of the upload.
     data, thumbnail = process_image_sizes(image_file, max_sides=(ITEM_IMAGE_MAX_SIDE, ITEM_THUMBNAIL_MAX_SIDE))
     new_url = store_image(data, f'cafes/{cafe.pk}/items')
     new_thumbnail_url = store_image(thumbnail, f'cafes/{cafe.pk}/items')
 
-    with transaction.atomic():
+    with tenant(cafe):  # a transaction of its own
         # Deleted in the meantime: 404, and the new files stay as cheap orphans.
         item = _get_item(cafe, item_id, lock=True)
         old_urls = (item.image_url, item.thumbnail_url)
@@ -378,7 +397,7 @@ def upload_item_image(cafe, item_id, *, image_file):
         for old_url in old_urls:
             delete_image_on_commit(old_url)
         schedule_menu_revalidation(cafe.slug)
-    return item
+        return _with_variants(item)
 
 
 def get_public_menu(slug):
@@ -389,7 +408,8 @@ def get_public_menu(slug):
     Returns (cafe, categories). Only visible, non-deleted categories, sorted by sort_order; each has
     `public_items`: its available, non-deleted items, sorted by sort_order. An inactive cafe gets
     no categories (UC-GUEST-002); that is a 200 answer, not an error.
-    Four queries in total (cafe with plan, categories, items, variants), whatever the menu size.
+    Four queries in total (cafe with plan, categories, items, variants), whatever the menu size,
+    plus the one that opens the tenant scope.
     """
     try:
         cafe = Cafe.objects.select_related('plan').get(slug=slug)
@@ -410,7 +430,18 @@ def get_public_menu(slug):
         .prefetch_related(Prefetch('items', queryset=available_items, to_attr='public_items'))
         .order_by('sort_order', 'id')
     )
-    return cafe, list(categories)
+    # The cafe was found by its slug (the cafes table has no policy); its menu is read as that tenant.
+    with tenant(cafe):
+        return cafe, list(categories)
+
+
+def _with_variants(item):
+    """
+    The item with its variants loaded, for the answer. Without this the serializer would read them
+    after the tenant scope has ended, where PostgreSQL shows no rows: an item without sizes.
+    """
+    prefetch_related_objects([item], 'variants')
+    return item
 
 
 def _lowest_price(variants):
