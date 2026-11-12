@@ -111,4 +111,4 @@ Post-MVP steps (details in [post_mvp_roadmap.md](post_mvp_roadmap.md); each star
 24. **[x] Item variants (sizes with prices)** (roadmap H) — use_cases.md Global Convention 10.
 25. **[x] Password reset by email** (roadmap E2) — use_cases.md UC-AUTH-006.
 26. **[x] psycopg 3 and persistent connections** (roadmap I).
-27. **[ ] Images: remaining sizes, optional** (roadmap J).
+27. **[-] Images: remaining sizes, optional** (roadmap J) — skipped on 2026-11-12: the large image is not shown to customers, so nothing would use it.
