@@ -35,9 +35,11 @@ All architectural decisions have been locked in. Below is a summary of every dec
 | Business time zone | `Asia/Damascus` for analytics days/hours and subscription dates; the database and Django `TIME_ZONE` stay UTC |
 | Monitoring (post-MVP) | Health URL `/health` + an external uptime check; error tracking with Sentry or GlitchTip (`sentry-sdk`, `@sentry/nextjs`; active only when a DSN is set) |
 | Password recovery (post-MVP) | A one-time reset link (valid 24 hours): made by the Super Admin and sent by hand, or sent to the owner's email address on request ("Forgot password?", UC-AUTH-006); SMTP provider Resend, optional (no `EMAIL_HOST` = only the Super Admin link) |
-| Hand-written migrations | Never, with one exception approved on 2026-11-12: the `RunSQL` migrations of PostgreSQL RLS (step 16, roadmap K), started with `makemigrations --empty` |
+| Hand-written migrations | Never, with one exception: the `RunSQL` migrations of PostgreSQL RLS policies, started with `makemigrations --empty`. Approved on 2026-11-12 for step 16 (roadmap K), and on 2026-11-14 for the RLS policies of the new cafe-owned tables of steps 37, 42 and 45 — nothing else |
 | Subscription expiry (post-MVP) | A paid-until date (`subscription_expires_on`, required at activation, moved by "Renew"); a nightly job deactivates expired cafes; a warning 7 days before for the owner and the admin |
-| Approved dependencies (post-MVP) | `sentry-sdk`, `@sentry/nextjs`, psycopg 3 — each added in its own step |
+| Approved dependencies (post-MVP) | `sentry-sdk`, `@sentry/nextjs`, psycopg 3 — each added in its own step. Approved on 2026-11-14, not added yet: `openpyxl` (step 41), `arabic-reshaper` and `python-bidi` (step 43) |
+| Features after the roadmap | 18 features chosen on 2026-11-10 (feature_wishlist.md), every one for all plans; built as steps 28–45. Decided on 2026-11-14: the printable menu is a PDF made by the backend; menu import and export use real Excel files (`.xlsx`); the QR card designs show logo and color only for a plan with `allows_branding`; the customer menu page comes first. No new Django app: new models go into `cafes` or `menu` |
+| Time-dependent menu content | The public menu page is cached and shared, so everything that depends on the current time (open now, announcement dates, sale end, timed categories) is decided in the browser, in the business time zone |
 | Routing | Host `menu.domain.com`; customer page route `/menu/[cafe-slug]` |
 | Theming | Logo (Pro) + Primary Color (Pro) injected as CSS variable |
 | Caching | Next.js ISR + on-demand revalidation triggered by Django after commit; 5-minute time-based fallback (no Redis in MVP) |
@@ -78,6 +80,10 @@ Comparison with similar systems, suggestions and the skills needed. Decisions ta
 The features and improvements after the MVP, in phases, with the owner's decisions. Each phase changes the documents above in its own docs turns before any code.
 → [post_mvp_roadmap.md](post_mvp_roadmap.md)
 
+### 6. Feature Wishlist (proposal — NOT a source of truth)
+The 18 features chosen after the roadmap, with notes and open questions for each. Each feature changes the documents above in its own docs turns before any code.
+→ [feature_wishlist.md](feature_wishlist.md)
+
 ---
 
 ## Next Steps (In Order)
@@ -112,3 +118,24 @@ Post-MVP steps (details in [post_mvp_roadmap.md](post_mvp_roadmap.md); each star
 25. **[x] Password reset by email** (roadmap E2) — use_cases.md UC-AUTH-006.
 26. **[x] psycopg 3 and persistent connections** (roadmap I).
 27. **[-] Images: remaining sizes, optional** (roadmap J) — skipped on 2026-11-12: the large image is not shown to customers, so nothing would use it.
+
+Feature steps (details in [feature_wishlist.md](feature_wishlist.md), by its feature number; each starts with its own docs turns):
+
+28. **[ ] Search inside the menu** (feature 2) — in the browser, Arabic and English.
+29. **[ ] Dark mode on the menu page** (feature 11).
+30. **[ ] Item detail sheet** (feature 3) — the large image and the full description.
+31. **[ ] Cafe info on the menu** (feature 1) — opening hours, "open now", map, phone, WhatsApp and social links.
+32. **[ ] Sold-out items shown greyed** (feature 4) — the owner's choice per cafe.
+33. **[ ] "Rate us on Google" link** (feature 10).
+34. **[ ] Announcement banner** (feature 5) — with a start and an end date.
+35. **[ ] Sale price** (feature 6) — with an optional end date.
+36. **[ ] Time-based categories** (feature 7).
+37. **[ ] "Often ordered with" suggestions** (feature 8) — new cafe-owned table.
+38. **[ ] Duplicate item** (feature 16).
+39. **[ ] Bulk price change** (feature 13) — percentage, rounding, preview.
+40. **[ ] Trash: restore deleted categories and items** (feature 15).
+41. **[ ] Menu import and export as `.xlsx`** (feature 14) — adds `openpyxl`.
+42. **[ ] Private feedback** (feature 9) — new cafe-owned table.
+43. **[ ] Printable menu PDF** (feature 12) — adds `arabic-reshaper`, `python-bidi` and an Arabic font.
+44. **[ ] QR card designs** (feature 18).
+45. **[ ] Change log** (feature 19) — new cafe-owned table; built last, so it records every write.
