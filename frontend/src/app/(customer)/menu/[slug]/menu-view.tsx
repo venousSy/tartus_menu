@@ -8,6 +8,7 @@ import { dirOf, formatPrice, pickText, type Lang } from "@/lib/i18n";
 import { matchesSearch, normalizeSearch, SEARCH_MAX_LENGTH } from "@/lib/search";
 import type { PublicMenu, PublicMenuItem } from "@/lib/server/public-menu";
 import { DIETARY_TAGS, type ItemTag, tagKind } from "@/lib/tags";
+import { readTheme, subscribeTheme, writeTheme } from "@/lib/theme";
 import type en from "@/messages/en.json";
 
 /** The texts the menu needs, in both languages: its own ("Menu") and the tag names ("Tags"). */
@@ -100,6 +101,9 @@ export function MenuView({ slug, menu, messages, manifestHref }: {
   const lang = useSyncExternalStore(subscribe, readLang, () => "ar" as const);
   const table = useSyncExternalStore(noSubscription, readTable, () => null);
   const offline = useSyncExternalStore(subscribeOnline, readOffline, () => false);
+  // UC-GUEST-001 step 10. Only the button's pressed state needs it: the colors come from CSS, which
+  // already shows the right theme before React starts. The server render assumes light.
+  const dark = useSyncExternalStore(subscribeTheme, readTheme, () => "light" as const) === "dark";
   const [unreachable, setUnreachable] = useState(false);
   const t = createTranslator({ locale: lang, messages: messages[lang], namespace: "Menu" });
   const tTags = createTranslator({ locale: lang, messages: messages[lang], namespace: "Tags" });
@@ -189,7 +193,11 @@ export function MenuView({ slug, menu, messages, manifestHref }: {
     : undefined;
 
   return (
-    <div style={theme} className="min-h-dvh bg-stone-50 text-stone-900">
+    // dark:[color-scheme:dark] also darkens what the browser draws itself: the search field's clear
+    // button, the scroll bars.
+    <div style={theme} className="min-h-dvh bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100 dark:[color-scheme:dark]">
+      {/* The cafe's color is only ever a background with its own readable text color (--color-on-primary),
+          so the header, the badges and the buttons read the same in both themes. */}
       <header className="bg-primary text-on-primary">
         <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-4">
           {cafe.logo_url && (
@@ -200,6 +208,14 @@ export function MenuView({ slug, menu, messages, manifestHref }: {
             <h1 dir="auto" className="truncate text-xl font-bold">{pickText(cafe.name, lang)}</h1>
             {table && <p className="text-sm opacity-90">{t("table", { number: table })}</p>}
           </div>
+          {/* A toggle button: its name stays "Dark mode" and aria-pressed tells whether it is on. */}
+          <button type="button" onClick={() => writeTheme(dark ? "light" : "dark")} aria-pressed={dark}
+            aria-label={t("darkMode")} title={t("darkMode")}
+            className="flex size-11 shrink-0 items-center justify-center rounded-full border border-current aria-pressed:bg-on-primary aria-pressed:text-primary">
+            <svg viewBox="0 0 24 24" aria-hidden="true" className="size-5 fill-current">
+              <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
+            </svg>
+          </button>
           <button type="button" onClick={() => writeLang(lang === "ar" ? "en" : "ar")}
             lang={lang === "ar" ? "en" : "ar"}
             className="min-h-11 shrink-0 rounded-full border border-current px-4 text-sm font-semibold">
@@ -220,17 +236,17 @@ export function MenuView({ slug, menu, messages, manifestHref }: {
           <input type="search" value={search} onChange={(event) => setSearch(event.target.value)}
             maxLength={SEARCH_MAX_LENGTH} dir="auto" enterKeyHint="search" autoComplete="off"
             aria-label={t("search")} placeholder={t("search")}
-            className="min-h-11 w-full rounded-full border border-stone-300 bg-white px-4 text-base" />
+            className="min-h-11 w-full rounded-full border border-stone-300 bg-white px-4 text-base dark:border-stone-700 dark:bg-stone-900" />
         </div>
       )}
 
       {offered.length > 0 && (
         <div role="group" aria-label={t("filters")} className="mx-auto flex max-w-2xl flex-wrap items-center gap-2 px-4 pt-3">
-          <span className="text-sm text-stone-600">{t("filters")}</span>
+          <span className="text-sm text-stone-600 dark:text-stone-400">{t("filters")}</span>
           {offered.map((tag) => (
             // aria-pressed makes it a toggle button: a screen reader says "pressed" or "not pressed".
             <button key={tag} type="button" aria-pressed={filters.includes(tag)} onClick={() => toggleFilter(tag)}
-              className="min-h-11 rounded-full border border-emerald-700 px-4 text-sm font-semibold text-emerald-900 aria-pressed:bg-emerald-700 aria-pressed:text-white">
+              className="min-h-11 rounded-full border border-emerald-700 px-4 text-sm font-semibold text-emerald-900 aria-pressed:bg-emerald-700 aria-pressed:text-white dark:border-emerald-500 dark:text-emerald-300 dark:aria-pressed:text-white">
               {tTags(tag)}
             </button>
           ))}
@@ -238,12 +254,12 @@ export function MenuView({ slug, menu, messages, manifestHref }: {
       )}
 
       {menu.categories.length === 0 ? (
-        <p className="px-4 py-16 text-center text-lg text-stone-600">{t("comingSoon")}</p>
+        <p className="px-4 py-16 text-center text-lg text-stone-600 dark:text-stone-400">{t("comingSoon")}</p>
       ) : categories.length === 0 ? (
         // A5: the chosen filters match no item. A6: the search text matches none, alone or together
         // with the filters. The button clears both. role="status": read out when it appears.
         <div role="status" className="flex flex-col items-center gap-3 px-4 py-16 text-center">
-          <p className="text-lg text-stone-600">{t(needle === "" ? "noMatch" : "noSearchMatch")}</p>
+          <p className="text-lg text-stone-600 dark:text-stone-400">{t(needle === "" ? "noMatch" : "noSearchMatch")}</p>
           <button type="button" onClick={showAll}
             className="min-h-11 rounded-full bg-primary px-4 font-semibold text-on-primary">
             {t("clearFilters")}
@@ -251,12 +267,12 @@ export function MenuView({ slug, menu, messages, manifestHref }: {
         </div>
       ) : (
         <>
-          <nav aria-label={t("categories")} className="sticky top-0 z-10 border-b border-stone-200 bg-white/95 backdrop-blur">
+          <nav aria-label={t("categories")} className="sticky top-0 z-10 border-b border-stone-200 bg-white/95 backdrop-blur dark:border-stone-800 dark:bg-stone-900/95">
             <ul className="mx-auto flex max-w-2xl gap-2 overflow-x-auto px-4 py-2">
               {categories.map((category) => (
                 <li key={category.id}>
                   <a href={`#category-${category.id}`} dir="auto"
-                    className="inline-flex min-h-11 items-center whitespace-nowrap rounded-full bg-stone-100 px-4 font-medium">
+                    className="inline-flex min-h-11 items-center whitespace-nowrap rounded-full bg-stone-100 px-4 font-medium dark:bg-stone-800">
                     {pickText(category.name, lang)}
                   </a>
                 </li>
@@ -291,10 +307,10 @@ function MenuItemCard({ item, lang, t, tTags }: {
 }) {
   const description = pickText(item.description, lang);
   return (
-    <li className="flex gap-3 rounded-xl bg-white p-3 shadow-sm">
+    <li className="flex gap-3 rounded-xl bg-white p-3 shadow-sm dark:bg-stone-900">
       {item.thumbnail_url && (
         <Image src={item.thumbnail_url} alt="" width={96} height={96} unoptimized
-          className="size-24 shrink-0 rounded-lg bg-stone-100 object-cover" />
+          className="size-24 shrink-0 rounded-lg bg-stone-100 object-cover dark:bg-stone-800" />
       )}
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-3">
@@ -302,10 +318,10 @@ function MenuItemCard({ item, lang, t, tTags }: {
           {/* <bdi> keeps "50 ل.س" in one piece inside right-to-left text. An item with sizes has no single price. */}
           {item.variants.length === 0 && <bdi className="shrink-0 font-bold">{formatPrice(item.price, lang)}</bdi>}
         </div>
-        {description && <p dir="auto" className="mt-1 text-sm text-stone-600">{description}</p>}
+        {description && <p dir="auto" className="mt-1 text-sm text-stone-600 dark:text-stone-400">{description}</p>}
         {/* GC 10: every size with its own price, in the owner's order. */}
         {item.variants.length > 0 && (
-          <ul className="mt-2 divide-y divide-stone-100">
+          <ul className="mt-2 divide-y divide-stone-100 dark:divide-stone-800">
             {item.variants.map((variant) => (
               <li key={variant.id} className="flex items-baseline justify-between gap-3 py-1">
                 <span dir="auto">{pickText(variant.name, lang)}</span>
@@ -320,7 +336,7 @@ function MenuItemCard({ item, lang, t, tTags }: {
             {item.is_new && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-800">{t("new")}</span>}
             {/* GC 11: a dietary tag as an outlined green label, a warning as a filled red one. */}
             {item.tags.map((tag) => (
-              <span key={tag} className={`rounded-full px-2 py-0.5 ${tagKind(tag) === "dietary" ? "border border-emerald-700 text-emerald-900" : "bg-red-100 text-red-900"}`}>
+              <span key={tag} className={`rounded-full px-2 py-0.5 ${tagKind(tag) === "dietary" ? "border border-emerald-700 text-emerald-900 dark:border-emerald-500 dark:text-emerald-300" : "bg-red-100 text-red-900"}`}>
                 {tTags(tag)}
               </span>
             ))}
