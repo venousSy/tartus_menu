@@ -121,7 +121,7 @@ Post-MVP steps (details in [post_mvp_roadmap.md](post_mvp_roadmap.md); each star
 
 Feature steps (details in [feature_wishlist.md](feature_wishlist.md), by its feature number; each starts with its own docs turns):
 
-28. **[ ] Search inside the menu** (feature 2) — in the browser, Arabic and English.
+28. **[x] Search inside the menu** (feature 2) — in the browser, Arabic and English.
 29. **[ ] Dark mode on the menu page** (feature 11).
 30. **[ ] Item detail sheet** (feature 3) — the large image and the full description.
 31. **[ ] Cafe info on the menu** (feature 1) — opening hours, "open now", map, phone, WhatsApp and social links.

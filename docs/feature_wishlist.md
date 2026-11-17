@@ -30,7 +30,7 @@ column says a plan flag may still limit part of it.
 | # | Feature | What it does | Notes and open questions |
 |---|---|---|---|
 | 1 | Cafe info section | Opening hours, an "Open now / Closed" badge, a map link, a phone / WhatsApp contact button, Instagram and Facebook links. | New cafe fields (hours per weekday, links). The badge must be computed in the browser in `Asia/Damascus` time, because the menu page is cached. The WhatsApp button is for contact only, never for orders. Validate links (only `https://`, known hosts for social links). |
-| 2 | Search inside the menu | The guest types a word and sees matching items in Arabic and English. | Runs in the browser on the data already loaded. No backend change. Arabic search should ignore diacritics and treat أ/إ/آ/ا as the same letter. |
+| 2 | Search inside the menu (**built**: step 28, PR #86) | The guest types a word and sees matching items in Arabic and English. | Runs in the browser on the data already loaded. No backend change. Arabic search should ignore diacritics and treat أ/إ/آ/ا as the same letter. |
 | 3 | Item detail sheet | Tap an item to see a large photo and the full description. | Uses the 1200 px image that exists but is never shown (roadmap item J). Images stay a Pro feature (`allows_images`, GC 7), so a Basic cafe's sheet shows text only. |
 | 4 | Sold-out items shown greyed | Unavailable items show in grey with a "Sold out" label, instead of being hidden. | **Owner's choice** per cafe: hide (today's behavior) or show greyed. Changes UC-GUEST-001, which hides them today. New cafe setting. |
 | 11 | Dark mode | Follows the phone's setting, with a toggle button. | The guest's choice is kept in `localStorage`. The brand color must keep a safe contrast in both themes. |
