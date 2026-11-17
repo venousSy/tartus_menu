@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+/*
+ * `dark:` classes (only the customer menu uses them, UC-GUEST-001 step 10): on when the guest chose
+ * dark (data-theme="dark" on <html>), or when the guest chose nothing and the phone is set to dark.
+ * The choice is set in the browser (src/lib/theme.ts), so the cached page is the same for everyone.
+ */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme]), :root:not([data-theme]) *) {
+      @slot;
+    }
+  }
+}
+
 @theme inline {
   --font-sans: var(--font-cairo);
 }
