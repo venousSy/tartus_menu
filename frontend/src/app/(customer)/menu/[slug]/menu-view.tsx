@@ -5,6 +5,7 @@ import { createTranslator } from "next-intl";
 import { useEffect, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { readableTextColor } from "@/lib/color";
 import { dirOf, formatPrice, pickText, type Lang } from "@/lib/i18n";
+import { matchesSearch, normalizeSearch, SEARCH_MAX_LENGTH } from "@/lib/search";
 import type { PublicMenu, PublicMenuItem } from "@/lib/server/public-menu";
 import { DIETARY_TAGS, type ItemTag, tagKind } from "@/lib/tags";
 import type en from "@/messages/en.json";
@@ -110,14 +111,25 @@ export function MenuView({ slug, menu, messages, manifestHref }: {
   const [filters, setFilters] = useState<ItemTag[]>([]);
   // A filter button only for a dietary tag that at least one item of this menu has (A4: maybe none).
   const offered = DIETARY_TAGS.filter((tag) => menu.categories.some((category) => category.items.some((item) => item.tags.includes(tag))));
-  // With filters on: the items that have ALL the chosen tags, and only the categories that still have one.
-  const categories = filters.length === 0
+  // UC-GUEST-001 step 9: the search text, also only in this component and never sent anywhere.
+  // `needle` is what is compared; "" (an empty field, or spaces only: A7) means "no search".
+  const [search, setSearch] = useState("");
+  const needle = normalizeSearch(search);
+  // An item must pass both: ALL the chosen tags, and the search text in its name or description.
+  // Only the categories that still have an item are shown.
+  const shows = (item: PublicMenuItem) =>
+    filters.every((tag) => item.tags.includes(tag)) && (needle === "" || matchesSearch(item, needle));
+  const categories = filters.length === 0 && needle === ""
     ? menu.categories
     : menu.categories
-        .map((category) => ({ ...category, items: category.items.filter((item) => filters.every((tag) => item.tags.includes(tag))) }))
+        .map((category) => ({ ...category, items: category.items.filter(shows) }))
         .filter((category) => category.items.length > 0);
   const toggleFilter = (tag: ItemTag) =>
     setFilters((chosen) => (chosen.includes(tag) ? chosen.filter((other) => other !== tag) : [...chosen, tag]));
+  const showAll = () => {
+    setFilters([]);
+    setSearch("");
+  };
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -202,6 +214,16 @@ export function MenuView({ slug, menu, messages, manifestHref }: {
         </p>
       )}
 
+      {menu.categories.length > 0 && (
+        <div role="search" className="mx-auto max-w-2xl px-4 pt-3">
+          {/* type="search": phones show a search key, and most browsers add a button that empties the field. */}
+          <input type="search" value={search} onChange={(event) => setSearch(event.target.value)}
+            maxLength={SEARCH_MAX_LENGTH} dir="auto" enterKeyHint="search" autoComplete="off"
+            aria-label={t("search")} placeholder={t("search")}
+            className="min-h-11 w-full rounded-full border border-stone-300 bg-white px-4 text-base" />
+        </div>
+      )}
+
       {offered.length > 0 && (
         <div role="group" aria-label={t("filters")} className="mx-auto flex max-w-2xl flex-wrap items-center gap-2 px-4 pt-3">
           <span className="text-sm text-stone-600">{t("filters")}</span>
@@ -218,10 +240,11 @@ export function MenuView({ slug, menu, messages, manifestHref }: {
       {menu.categories.length === 0 ? (
         <p className="px-4 py-16 text-center text-lg text-stone-600">{t("comingSoon")}</p>
       ) : categories.length === 0 ? (
-        // A5: the chosen filters match no item. role="status": read out when it appears.
+        // A5: the chosen filters match no item. A6: the search text matches none, alone or together
+        // with the filters. The button clears both. role="status": read out when it appears.
         <div role="status" className="flex flex-col items-center gap-3 px-4 py-16 text-center">
-          <p className="text-lg text-stone-600">{t("noMatch")}</p>
-          <button type="button" onClick={() => setFilters([])}
+          <p className="text-lg text-stone-600">{t(needle === "" ? "noMatch" : "noSearchMatch")}</p>
+          <button type="button" onClick={showAll}
             className="min-h-11 rounded-full bg-primary px-4 font-semibold text-on-primary">
             {t("clearFilters")}
           </button>
