@@ -1107,13 +1107,16 @@ A menu item can carry tags: short labels from a fixed list. The owner cannot inv
 6. An item with variants shows every variant with its name and price, in the owner's order, instead of one price (Global Convention 10).
 7. Each item shows its tags (Global Convention 11) as small labels; warning tags look different from dietary tags.
 8. Customer can filter by dietary tags. The menu offers a filter button for each dietary tag that at least one item of this menu has. With one or more filters on, only the items that have ALL the chosen tags are shown, and a category without such an item is hidden. Filtering happens in the browser (no new request), so the cached page stays the same for everyone. The choice is not stored: a reload shows the whole menu again.
+9. Customer can search the menu. A menu with at least one category shows a search field (at most 50 characters). While it holds text, only the items whose name or description contains that text are shown, and a category without such an item is hidden. Both languages are searched, whatever language is displayed. The comparison ignores letter case, Arabic diacritics (tashkeel) and the tatweel, and treats أ, إ, آ and ا as one letter, ى and ي as one letter, and ة and ه as one letter; spaces at the start and end of the text are ignored. Search and the dietary filters of step 8 work together: an item must pass both. Searching happens in the browser (no new request): the text is never sent to the server and is not stored, so a reload shows the whole menu again.
 
 **Alternate Flows:**
 - **A1 — Slug not found:** 404 Not Found — frontend shows a generic "Menu not found" page.
 - **A2 — Cafe is inactive:** 200 OK with is_active: false — frontend shows the inactive cafe screen of UC-GUEST-002 (its text is defined there).
 - **A3 — No categories yet:** Returns empty categories: [] — frontend shows "Menu coming soon" message.
 - **A4 — No item has a dietary tag:** no filter buttons are shown.
-- **A5 — The chosen filters match no item:** frontend shows "No items match your filters." and a button that clears the filters.
+- **A5 — The chosen filters match no item (no search text):** frontend shows "No items match your filters." and a button that clears the filters.
+- **A6 — The search text matches no item:** frontend shows "No items match your search." and a button that clears the search text and the filters. This also covers a search that matches items, none of which passes the chosen filters.
+- **A7 — Only spaces in the search field:** treated as an empty field; the whole menu is shown (with the filters of step 8, if any).
 
 ---
 

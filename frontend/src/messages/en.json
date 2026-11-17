@@ -12,7 +12,9 @@
     "offline": "You are offline. Prices may have changed.",
     "filters": "Show only",
     "noMatch": "No items match your filters.",
-    "clearFilters": "Show all items"
+    "clearFilters": "Show all items",
+    "search": "Search the menu",
+    "noSearchMatch": "No items match your search."
   },
   "Login": {
     "title": "Log in",
